@@ -1,9 +1,12 @@
 //! Tests for per-(backing, D, IntType) `From` and `TryFrom` impls.
 //!
-//! Includes a programmatic truth-table verifier that re-derives the
-//! soundness table and confirms it matches the impls emitted in
-//! `src/from_int.rs`. If the verifier disagrees with the source, fix
-//! the source.
+//! Includes a programmatic `is_sound()` helper that re-derives the
+//! expected soundness table and performs sanity checks on that table.
+//! It does NOT directly verify the presence or absence of the impls
+//! emitted in `src/from_int.rs` — a macro-invocation typo (wrong
+//! IntType in a list, or a list with an unsound IntType) would not be
+//! caught by these tests. See #191 for the hardening that adds
+//! compile-time soundness asserts inside `impl_from_sound!` itself.
 
 use nexus_decimal::{ConvertError, Decimal};
 
