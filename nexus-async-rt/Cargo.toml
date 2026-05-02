@@ -1,6 +1,6 @@
 [package]
 name = "nexus-async-rt"
-version = "0.4.1"
+version = "0.4.2"
 description = "Single-threaded async executor with pre-allocated task storage"
 edition.workspace = true
 rust-version.workspace = true
