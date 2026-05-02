@@ -90,8 +90,15 @@ pub(crate) struct SlabTlsConfig {
     pub(crate) slot_size: usize,
 }
 
-/// Install slab TLS from a config. Returns RAII guard.
-pub(crate) fn install_slab(config: &SlabTlsConfig) -> SlabGuard {
+/// Install slab TLS and return an RAII guard that owns the slab.
+///
+/// The guard restores the previous TLS state on drop (in its manual
+/// Drop body), then releases the slab memory (via field drop). Caller
+/// is responsible for ensuring the guard outlives any code that might
+/// dispatch through TLS — typically by storing it as the LAST field
+/// on the type that owns the runtime state. See BUG-1 (#167) for the
+/// failure mode this prevents.
+pub(crate) fn install_slab(slab: Box<dyn std::any::Any>, config: &SlabTlsConfig) -> SlabGuard {
     let prev_ptr = SLAB_PTR.with(|c| c.replace(config.slab_ptr));
     let prev_claim = SLAB_CLAIM.with(|c| c.replace(config.claim_fn));
     let prev_free = SLAB_FREE.with(|c| c.replace(config.free_fn));
@@ -105,6 +112,7 @@ pub(crate) fn install_slab(config: &SlabTlsConfig) -> SlabGuard {
         prev_try_claim,
         prev_claim_free,
         prev_slot_size,
+        _slab: slab,
     }
 }
 
@@ -116,10 +124,19 @@ pub(crate) struct SlabGuard {
     prev_try_claim: TryClaimFn,
     prev_claim_free: ClaimFreeFn,
     prev_slot_size: usize,
+
+    // Owns the type-erased slab. Drops AFTER the manual Drop body
+    // returns, so TLS is already restored when slab memory is released.
+    // Slab's own Drop touches its own memory only — never the TLS
+    // dispatch path — so this ordering is safe even though prev_* may
+    // point to the no-slab panic stubs at that point.
+    _slab: Box<dyn std::any::Any>,
 }
 
 impl Drop for SlabGuard {
     fn drop(&mut self) {
+        // Restore TLS to whatever was there before this install.
+        // After this body returns, _slab field drops and the slab is freed.
         SLAB_PTR.with(|c| c.set(self.prev_ptr));
         SLAB_CLAIM.with(|c| c.set(self.prev_claim));
         SLAB_FREE.with(|c| c.set(self.prev_free));
