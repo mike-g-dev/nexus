@@ -257,14 +257,20 @@ pub struct Runtime {
     /// Slab allocator + TLS install. Owned via a single guard so that
     /// TLS dispatch stays valid for the Runtime's entire lifetime.
     ///
-    /// **MUST be the last data field**: it drops AFTER `executor`, so
-    /// when `Executor::drop` frees surviving slab tasks via TLS
-    /// dispatch, the slab and its install are still alive. Reordering
-    /// re-introduces BUG-1 (#167) — a panic at `Runtime::drop` from
-    /// surviving slab tasks calling into a cleared TLS dispatch path.
-    /// The `const _: ()` block below this struct enforces the ordering
-    /// at compile time.
+    /// **MUST drop AFTER `executor`**: when `Executor::drop` frees
+    /// surviving slab tasks via TLS dispatch, the slab and its install
+    /// must still be alive. Reordering re-introduces BUG-1 (#167) — a
+    /// panic at `Runtime::drop` from surviving slab tasks calling into
+    /// a cleared TLS dispatch path. The `const _: ()` block below this
+    /// struct enforces the ordering at compile time.
     _slab_guard: Option<crate::alloc::SlabGuard>,
+
+    /// Tracks Runtime presence on the thread. Installed at construction
+    /// (panics if another Runtime is already alive), cleared on drop.
+    /// Declared after `_slab_guard` so the "Runtime alive" flag stays
+    /// set throughout the entire drop sequence — defensive against any
+    /// inner Drop impl trying to construct another Runtime mid-teardown.
+    _runtime_presence: RuntimePresenceGuard,
 
     /// Marker — `Runtime` is intrinsically thread-bound (per-thread TLS
     /// state). `*const ()` is `!Send + !Sync`; the `PhantomData`
@@ -514,6 +520,11 @@ impl<'w> RuntimeBuilder<'w> {
 
     /// Build the runtime.
     pub fn build(self) -> Runtime {
+        // Fail-fast if another Runtime is already alive on this thread.
+        // Done before any resource allocation so we don't leak IoDriver,
+        // mio::Poll, etc. on the panic path.
+        let runtime_presence = RuntimePresenceGuard::install();
+
         let io = IoDriver::new(self.event_capacity, self.token_capacity)
             .expect("failed to create mio::Poll");
         let mut shutdown = crate::ShutdownHandle::new();
@@ -527,10 +538,10 @@ impl<'w> RuntimeBuilder<'w> {
 
         // Create slab if configured and install TLS immediately. The
         // returned guard owns the slab and the TLS install; it lives
-        // on Runtime as the last field so it drops AFTER `executor`
-        // (which frees surviving slab tasks via TLS dispatch). This is
-        // the architectural fix for BUG-1 (#167) — TLS scope now
-        // matches Runtime lifetime instead of run_loop scope.
+        // on Runtime so it drops AFTER `executor` (which frees surviving
+        // slab tasks via TLS dispatch). This is the architectural fix
+        // for BUG-1 (#167) — TLS scope now matches Runtime lifetime
+        // instead of run_loop scope.
         let slab_guard = self.slab_installer.map(|install| {
             let (slab, config) = install();
             crate::alloc::install_slab(slab, &config)
@@ -553,6 +564,7 @@ impl<'w> RuntimeBuilder<'w> {
             cross_thread_drain_limit: self.cross_thread_drain_limit,
             event_interval: self.event_interval,
             _slab_guard: slab_guard,
+            _runtime_presence: runtime_presence,
             _not_thread_safe: PhantomData,
         };
 
@@ -786,6 +798,51 @@ impl RuntimeGuard {
 impl Drop for RuntimeGuard {
     fn drop(&mut self) {
         CURRENT.with(|cell| cell.set(self.prev));
+    }
+}
+
+// =============================================================================
+// RAII guard for Runtime presence on this thread
+// =============================================================================
+//
+// Enforces "at most one Runtime alive per thread" at construction time. This
+// is the right scope because:
+//
+//  - Slab TLS is installed at construction (post BUG-1 fix). A second
+//    construction would silently overwrite the first's slab dispatch state,
+//    corrupting allocator routing for the first Runtime's surviving tasks.
+//  - !Send + !Sync prevents cross-thread coexistence at the type level.
+//    This guard prevents same-thread coexistence at runtime.
+//
+// Different from `RuntimeGuard` above: that one is per-`block_on` for spawn
+// TLS, this one is per-Runtime for existence tracking.
+
+thread_local! {
+    static RUNTIME_PRESENT: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) struct RuntimePresenceGuard;
+
+impl RuntimePresenceGuard {
+    /// Install the Runtime-presence flag. Panics if another Runtime is
+    /// already alive on this thread.
+    fn install() -> Self {
+        assert!(
+            !RUNTIME_PRESENT.with(Cell::get),
+            "nexus-async-rt: another Runtime is already alive on this \
+             thread. Only one Runtime is supported per thread because \
+             thread-local state (slab dispatch, IO/timer drivers, \
+             cross-thread wake context) cannot be shared between \
+             Runtimes. Drop the existing Runtime first."
+        );
+        RUNTIME_PRESENT.with(|c| c.set(true));
+        Self
+    }
+}
+
+impl Drop for RuntimePresenceGuard {
+    fn drop(&mut self) {
+        RUNTIME_PRESENT.with(|c| c.set(false));
     }
 }
 

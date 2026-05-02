@@ -137,3 +137,26 @@ fn multiple_block_on_with_slab_tasks() {
 
     drop(rt);
 }
+
+#[test]
+#[should_panic(expected = "another Runtime is already alive on this thread")]
+fn second_runtime_on_same_thread_panics() {
+    // Runtime presence guard: only one Runtime per thread allowed.
+    // Constructing a second one with the first still alive must panic.
+    let wb = WorldBuilder::new();
+    let mut world = wb.build();
+    let _rt1 = Runtime::builder(&mut world).build();
+    let _rt2 = Runtime::builder(&mut world).build(); // panics here
+}
+
+#[test]
+fn runtime_construct_drop_construct_works() {
+    // After dropping the first Runtime, constructing another on the
+    // same thread must succeed — the presence flag is cleared on drop.
+    let wb = WorldBuilder::new();
+    let mut world = wb.build();
+    {
+        let _rt1 = Runtime::builder(&mut world).build();
+    } // _rt1 dropped here, presence flag cleared
+    let _rt2 = Runtime::builder(&mut world).build(); // must NOT panic
+}
