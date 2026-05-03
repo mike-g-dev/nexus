@@ -1092,7 +1092,10 @@ fn executor_drop_during_unwind_does_not_abort_box() {
 
     // Reaching here at all means the original panic propagated cleanly.
     // If Executor::drop double-panicked, the process would have aborted.
-    assert!(result.is_err(), "block_on panic should propagate, not abort");
+    assert!(
+        result.is_err(),
+        "block_on panic should propagate, not abort"
+    );
     let panic_msg = result
         .unwrap_err()
         .downcast::<&'static str>()
@@ -1123,9 +1126,7 @@ fn executor_drop_during_unwind_does_not_uaf_slab() {
     use nexus_async_rt::spawn_slab;
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let slab = unsafe {
-            nexus_slab::byte::unbounded::Slab::<256>::with_chunk_capacity(8)
-        };
+        let slab = unsafe { nexus_slab::byte::unbounded::Slab::<256>::with_chunk_capacity(8) };
         let wb = WorldBuilder::new();
         let mut world = wb.build();
         let mut rt = Runtime::builder(&mut world).slab_unbounded(slab).build();
@@ -1143,7 +1144,10 @@ fn executor_drop_during_unwind_does_not_uaf_slab() {
 
     // Same as the box variant: reaching here means we didn't abort.
     // Additionally verifies the slab branch (wait + free) didn't UAF.
-    assert!(result.is_err(), "block_on panic should propagate, not abort");
+    assert!(
+        result.is_err(),
+        "block_on panic should propagate, not abort"
+    );
     let panic_msg = result
         .unwrap_err()
         .downcast::<&'static str>()

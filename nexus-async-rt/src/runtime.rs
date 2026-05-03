@@ -219,8 +219,24 @@ pub struct Runtime {
     /// Drops first (declaration order). `Executor::drop` walks
     /// `all_tasks` and frees any survivors via the slab TLS dispatch
     /// path, which requires `_slab_guard` to still be alive — see the
-    /// field-order invariant on `_slab_guard`.
+    /// field-order invariant on `_slab_guard`. Surviving tasks may
+    /// also trigger `TaskRef::Drop → dispose_terminal`, which reads
+    /// the runtime's cross-wake context from TLS — see the field-order
+    /// invariant on `_cross_wake_tls_guard` below.
     executor: Executor,
+
+    /// Clears the runtime's `CURRENT_RUNTIME_CTX` TLS slot on drop.
+    ///
+    /// **MUST drop AFTER `executor`**: when `Executor::drop` walks
+    /// `all_tasks` and frees terminal tasks, any TaskRef::Drop fired
+    /// from cross-thread holders (or local wakers cleaned up during
+    /// teardown) reads `CURRENT_RUNTIME_CTX` via
+    /// `crate::cross_wake::on_owning_executor` to decide whether to
+    /// defer locally or queue cross-thread. If this guard drops before
+    /// `executor`, the on-thread fast path silently misroutes terminal
+    /// frees to the cross-queue. The `const _: ()` block below this
+    /// struct enforces the ordering at compile time.
+    _cross_wake_tls_guard: crate::cross_wake::RuntimeCrossWakeGuard,
 
     /// IO driver (mio). Wrapped in `UnsafeCell` because a raw pointer
     /// is stored in TLS during `block_on`. Task futures access the IO
@@ -290,6 +306,24 @@ const _: () = assert!(
      declared after Runtime::executor so it drops after the executor \
      frees surviving slab tasks. Restore the declaration order or BUG-1 \
      reappears as a panic at Runtime::drop."
+);
+
+// PR 1a (TaskRef + dispose_terminal) invariant: `_cross_wake_tls_guard`
+// MUST drop after `executor`. The executor's drop path runs TaskRef::Drop
+// for any cross-thread holder ref that lands during teardown; those
+// drops route through `dispose_terminal` which checks
+// `CURRENT_RUNTIME_CTX` to pick the on-thread (defer) vs off-thread
+// (queue) branch. If this guard clears the TLS before `executor`
+// finishes, the comparison silently fails and on-thread terminal frees
+// get misrouted to the cross-queue (where nothing drains them — leak,
+// or for slab tasks, eventual UAF when the slab backing storage drops
+// behind `_slab_guard`).
+const _: () = assert!(
+    std::mem::offset_of!(Runtime, _cross_wake_tls_guard) > std::mem::offset_of!(Runtime, executor),
+    "PR 1a invariant violated: Runtime::_cross_wake_tls_guard MUST be \
+     declared after Runtime::executor so the runtime's CURRENT_RUNTIME_CTX \
+     TLS stays installed while Executor::drop runs. Reordering \
+     misroutes terminal TaskRef::Drop calls during teardown."
 );
 
 impl Runtime {
@@ -435,8 +469,8 @@ impl<'w> RuntimeBuilder<'w> {
 
     /// Hand off a growable (unbounded) slab for [`spawn_slab`].
     ///
-    /// `S` is the total slot size in bytes. The task header uses 64 bytes,
-    /// so `Slab<256>` gives 192 bytes for the future. Most async IO
+    /// `S` is the total slot size in bytes. The task header uses 72 bytes,
+    /// so `Slab<256>` gives 184 bytes for the future. Most async IO
     /// futures are 128–256 bytes — `Slab<256>` or `Slab<512>` covers
     /// the common cases.
     ///
@@ -461,8 +495,8 @@ impl<'w> RuntimeBuilder<'w> {
     ) -> Self {
         const {
             assert!(
-                S >= 64,
-                "slab slot size must be at least 64 bytes (TASK_HEADER_SIZE)"
+                S >= 72,
+                "slab slot size must be at least 72 bytes (TASK_HEADER_SIZE)"
             );
         }
         self.slab_installer = Some(Box::new(move || {
@@ -502,8 +536,8 @@ impl<'w> RuntimeBuilder<'w> {
     ) -> Self {
         const {
             assert!(
-                S >= 64,
-                "slab slot size must be at least 64 bytes (TASK_HEADER_SIZE)"
+                S >= 72,
+                "slab slot size must be at least 72 bytes (TASK_HEADER_SIZE)"
             );
         }
         self.slab_installer = Some(Box::new(move || {
@@ -553,8 +587,16 @@ impl<'w> RuntimeBuilder<'w> {
             parked: std::sync::atomic::AtomicBool::new(false),
         });
 
+        // Install the runtime's cross-wake context as the current-thread
+        // owning-executor identity. Lives lifetime-of-Runtime via the
+        // guard field below — `dispose_terminal::on_owning_executor`
+        // reads this slot to decide local-defer vs cross-queue routing
+        // for TaskRef terminal drops.
+        let cross_wake_tls_guard = crate::cross_wake::install_runtime_cross_wake(&cross_wake);
+
         let rt = Runtime {
             executor,
+            _cross_wake_tls_guard: cross_wake_tls_guard,
             io: std::cell::UnsafeCell::new(io),
             timers: std::cell::UnsafeCell::new(TimerDriver::new(64)),
             ctx,

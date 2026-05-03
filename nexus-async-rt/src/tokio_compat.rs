@@ -224,22 +224,17 @@ unsafe fn cross_task_wake(data: *const ()) {
     unsafe { cross_task_wake_by_ref(data) };
     let boxed = unsafe { Box::from_raw(data.cast_mut().cast::<CrossTaskWakerData>()) };
     let task_ptr = boxed.task_ptr;
+    // Release the ref; on terminal, dispose_terminal routes via the
+    // cross-queue (this fires off-thread — tokio worker thread). The
+    // `try_set_queued` gate inside dispose_terminal prevents the
+    // double-push that wake_by_ref above might have already done.
     match unsafe { crate::task::ref_dec(task_ptr) } {
         crate::task::FreeAction::Retain => {}
         crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            // Terminal. Route to executor for free + all_tasks bookkeeping.
-            // Can't free cross-thread: all_tasks (slab::Slab) is not thread-safe,
-            // and slab tasks need TLS for deallocation.
-            // wake_by_ref may have already pushed (if task wasn't completed).
-            // try_set_queued prevents double-push.
-            if unsafe { crate::task::try_set_queued(task_ptr) } {
-                unsafe { boxed.ctx.queue.push(task_ptr) };
-                if boxed.ctx.parked.load(std::sync::atomic::Ordering::Acquire) {
-                    let _ = boxed.ctx.mio_waker.wake();
-                }
-            }
+            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
         }
     }
+    // boxed Drop runs here — releases the Arc<CrossWakeContext>.
 }
 
 /// Wake by ref: push to cross-thread inbox. No refcount change.
@@ -250,22 +245,17 @@ unsafe fn cross_task_wake_by_ref(data: *const ()) {
     }
 }
 
-/// Drop: free box, dec refcount.
+/// Drop: free box, dec refcount. Terminal frees route via dispose_terminal.
 unsafe fn cross_task_drop(data: *const ()) {
     let boxed = unsafe { Box::from_raw(data.cast_mut().cast::<CrossTaskWakerData>()) };
     let task_ptr = boxed.task_ptr;
     match unsafe { crate::task::ref_dec(task_ptr) } {
         crate::task::FreeAction::Retain => {}
         crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            // Terminal. Route to executor — same as cross_task_wake.
-            if unsafe { crate::task::try_set_queued(task_ptr) } {
-                unsafe { boxed.ctx.queue.push(task_ptr) };
-                if boxed.ctx.parked.load(std::sync::atomic::Ordering::Acquire) {
-                    let _ = boxed.ctx.mio_waker.wake();
-                }
-            }
+            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
         }
     }
+    // boxed Drop runs here — releases the Arc<CrossWakeContext>.
 }
 
 // =============================================================================

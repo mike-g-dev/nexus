@@ -156,34 +156,27 @@ impl Drop for RxWakerSlot {
     }
 }
 
-/// Release the slot's ref on `task_ptr`. If terminal, route the pointer
-/// back to the executor via the cross-thread queue (mirrors the pattern
-/// in `tokio_compat::cross_task_wake`). See `mpsc::release_slot_ref`
-/// for the design notes — this is the same code, kept inline rather
-/// than extracted into `channel/common.rs` to minimize PR churn.
+/// Release the slot's ref on `task_ptr`. If terminal, route via
+/// [`crate::cross_wake::dispose_terminal`]. See `mpsc::release_slot_ref`
+/// for the full design rationale — this is the identical pattern.
+///
+/// `cross_ctx` is unused here (dispose_terminal reads ctx from the task
+/// header); kept on the signature for PR 1a consistency.
 ///
 /// # Safety
 ///
 /// `task_ptr` must point to a task on which `register` previously called
-/// `ref_inc`. `cross_ctx` must point to a valid `CrossWakeContext`.
+/// `ref_inc`.
 unsafe fn release_slot_ref(
     task_ptr: *mut u8,
-    cross_ctx: *const crate::cross_wake::CrossWakeContext,
+    _cross_ctx: *const crate::cross_wake::CrossWakeContext,
 ) {
     match unsafe { crate::task::ref_dec(task_ptr) } {
         crate::task::FreeAction::Retain => {}
         crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            // SAFETY: cross_ctx is valid (caller guarantee).
-            let ctx = unsafe { &*cross_ctx };
-            // SAFETY: task_ptr was alive until ref_dec; for a terminal
-            // result it's still alive (we haven't freed it ourselves).
-            if unsafe { crate::task::try_set_queued(task_ptr) } {
-                // SAFETY: task_ptr valid; QUEUED set, safe in queue.
-                unsafe { ctx.queue.push(task_ptr) };
-                if ctx.parked.load(Ordering::Acquire) {
-                    let _ = ctx.mio_waker.wake();
-                }
-            }
+            // SAFETY: task_ptr was alive until ref_dec; on terminal it's
+            // still alive (dispose_terminal does the routing).
+            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
         }
     }
 }

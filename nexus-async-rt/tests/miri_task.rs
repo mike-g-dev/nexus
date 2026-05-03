@@ -287,7 +287,7 @@ fn output_larger_than_future() {
 #[test]
 fn storage_offset_matches_header() {
     // For Task<()>, storage should be at TASK_HEADER_SIZE.
-    assert_eq!(TASK_HEADER_SIZE, 64);
+    assert_eq!(TASK_HEADER_SIZE, 72);
     // The storage_offset field is set from offset_of! at construction.
     // This test verifies the accessor reads the correct value by
     // spawning a task and checking the output is at the right place.

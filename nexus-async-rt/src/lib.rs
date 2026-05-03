@@ -80,8 +80,8 @@ use waker::set_poll_context;
 
 /// Recommended minimum slab slot size.
 ///
-/// The actual minimum depends on the task: header (64 bytes) + `max(size_of::<F>(),
-/// size_of::<T>())`. ZST futures need only 64 bytes. 128 is a conservative default
+/// The actual minimum depends on the task: header (72 bytes) + `max(size_of::<F>(),
+/// size_of::<T>())`. ZST futures need only 72 bytes. 128 is a conservative default
 /// that covers most small futures.
 pub const MIN_SLOT_SIZE: usize = 128;
 
@@ -178,7 +178,13 @@ impl Executor {
             u32::try_from(tracker_key).is_ok(),
             "more than 4 billion concurrent tasks — tracker_key overflow"
         );
-        let ptr = task::box_spawn_joinable(future, tracker_key as u32);
+        // Read the runtime's cross-wake context from TLS — installed at
+        // RuntimeBuilder::build, lifetime of Runtime. Null when no
+        // Runtime is alive (e.g., direct Executor use in tests); the
+        // task header's cross_wake_ctx becomes null and dispose_terminal
+        // routes those tasks via its null-ctx fallback.
+        let cross_wake_ctx = crate::cross_wake::current_runtime_ctx();
+        let ptr = task::box_spawn_joinable(future, tracker_key as u32, cross_wake_ctx);
 
         self.enqueue(ptr);
         task::JoinHandle::new(ptr)
@@ -486,8 +492,8 @@ impl Drop for Executor {
                     //   — the original SIGABRT we were trying to avoid,
                     //   but UAF would be worse.
                     if unsafe { task::is_slab_allocated(ptr) } {
-                        let deadline = std::time::Instant::now()
-                            + std::time::Duration::from_millis(100);
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_millis(100);
                         while unsafe { task::ref_count(ptr) } > 0
                             && std::time::Instant::now() < deadline
                         {

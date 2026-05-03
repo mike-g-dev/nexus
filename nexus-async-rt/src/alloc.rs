@@ -162,7 +162,9 @@ where
     F: Future + 'static,
     F::Output: 'static,
 {
-    let task = crate::task::new_joinable_slab(future, tracker_key, slab_free_task);
+    // See Executor::spawn_boxed for the cross_wake_ctx contract.
+    let cross_wake_ctx = crate::cross_wake::current_runtime_ctx();
+    let task = crate::task::new_joinable_slab(future, tracker_key, slab_free_task, cross_wake_ctx);
     let size = std::mem::size_of_val(&task);
     let src = std::ptr::from_ref(&task).cast::<u8>();
 
@@ -218,7 +220,10 @@ impl SlabClaim {
     {
         crate::runtime::with_executor(|exec| {
             let tracker_key = exec.next_tracker_key();
-            let task = crate::task::new_joinable_slab(future, tracker_key, slab_free_task);
+            // See Executor::spawn_boxed for the cross_wake_ctx contract.
+            let cross_wake_ctx = crate::cross_wake::current_runtime_ctx();
+            let task =
+                crate::task::new_joinable_slab(future, tracker_key, slab_free_task, cross_wake_ctx);
             let size = std::mem::size_of_val(&task);
 
             assert!(

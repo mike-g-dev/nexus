@@ -181,40 +181,29 @@ impl Drop for RxWakerSlot {
 }
 
 /// Release the slot's ref on `task_ptr`. If this turns out to be the
-/// terminal ref, route the pointer back to the executor for free +
-/// bookkeeping via the cross-thread queue. Mirrors the pattern in
-/// `tokio_compat::cross_task_wake` — the executor's `drain_cross_thread`
-/// recognizes terminal entries and routes them to `deferred_free`.
+/// terminal ref, route via [`crate::cross_wake::dispose_terminal`] —
+/// defers locally on the owning executor's thread (preserves
+/// `Executor::all_tasks` bookkeeping), queues cross-thread otherwise.
+///
+/// The `cross_ctx` parameter is unused now that dispose_terminal reads
+/// the context from the task header. Kept on the caller signature for
+/// PR 1a (slot consolidation in PR 1b removes the slot type entirely).
 ///
 /// # Safety
 ///
 /// `task_ptr` must point to a task on which `register` previously called
-/// `ref_inc`. `cross_ctx` must point to a valid `CrossWakeContext`.
+/// `ref_inc`.
 unsafe fn release_slot_ref(
     task_ptr: *mut u8,
-    cross_ctx: *const crate::cross_wake::CrossWakeContext,
+    _cross_ctx: *const crate::cross_wake::CrossWakeContext,
 ) {
     match unsafe { crate::task::ref_dec(task_ptr) } {
         crate::task::FreeAction::Retain => {}
         crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            // Terminal. Route to the executor: try_set_queued + push +
-            // conditional mio wake. Slab tasks need executor-thread TLS
-            // to free; box tasks could be freed here directly, but routing
-            // both keeps `all_tasks` bookkeeping consistent (the executor
-            // removes the task from `all_tasks` when it processes the
-            // terminal entry).
-            // SAFETY: cross_ctx is valid (caller guarantee).
-            let ctx = unsafe { &*cross_ctx };
-            // SAFETY: task_ptr was alive until ref_dec; for a terminal
-            // result it's still alive (we haven't freed it ourselves).
-            if unsafe { crate::task::try_set_queued(task_ptr) } {
-                // SAFETY: task_ptr valid; QUEUED is now set so it can
-                // safely live in the cross-thread queue's intrusive list.
-                unsafe { ctx.queue.push(task_ptr) };
-                if ctx.parked.load(Ordering::Acquire) {
-                    let _ = ctx.mio_waker.wake();
-                }
-            }
+            // SAFETY: caller guarantees task_ptr was alive until the
+            // ref_dec above; on terminal it's still alive (we don't
+            // free it here, dispose_terminal does).
+            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
         }
     }
 }

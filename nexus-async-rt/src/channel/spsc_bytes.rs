@@ -160,31 +160,27 @@ impl Drop for RxWakerSlot {
     }
 }
 
-/// Release the slot's ref on `task_ptr`. If terminal, route to executor
-/// via the cross-thread queue. See `mpsc::release_slot_ref` for design
-/// notes — duplicated here to keep the PR focused on the fix.
+/// Release the slot's ref on `task_ptr`. If terminal, route via
+/// [`crate::cross_wake::dispose_terminal`]. See `mpsc::release_slot_ref`
+/// for the full design rationale.
+///
+/// `cross_ctx` is unused (dispose_terminal reads ctx from the task
+/// header); kept on the signature for PR 1a consistency.
 ///
 /// # Safety
 ///
 /// `task_ptr` must point to a task on which `try_register_local`
-/// previously called `ref_inc`. `cross_ctx` must be valid.
+/// previously called `ref_inc`.
 unsafe fn release_slot_ref(
     task_ptr: *mut u8,
-    cross_ctx: *const crate::cross_wake::CrossWakeContext,
+    _cross_ctx: *const crate::cross_wake::CrossWakeContext,
 ) {
     match unsafe { crate::task::ref_dec(task_ptr) } {
         crate::task::FreeAction::Retain => {}
         crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            // SAFETY: cross_ctx is valid (caller guarantee).
-            let ctx = unsafe { &*cross_ctx };
-            // SAFETY: terminal but not yet freed (we own the last ref).
-            if unsafe { crate::task::try_set_queued(task_ptr) } {
-                // SAFETY: task_ptr valid; QUEUED set, safe in queue.
-                unsafe { ctx.queue.push(task_ptr) };
-                if ctx.parked.load(Ordering::Acquire) {
-                    let _ = ctx.mio_waker.wake();
-                }
-            }
+            // SAFETY: task_ptr was alive until ref_dec; terminal but
+            // not yet freed (dispose_terminal does the routing).
+            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
         }
     }
 }

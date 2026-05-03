@@ -22,7 +22,7 @@
 
 use std::task::{RawWaker, RawWakerVTable, Waker};
 
-use crate::task;
+use crate::task::{self, TaskRef};
 
 // =============================================================================
 // Thread-local ready queue for wakers
@@ -89,8 +89,11 @@ pub(crate) static VTABLE: RawWakerVTable =
 /// `ptr` must point to a live task with `ref_count >= 1`.
 #[inline]
 pub(crate) unsafe fn task_waker(ptr: *mut u8) -> Waker {
-    unsafe { task::ref_inc(ptr) };
-    let raw = RawWaker::new(ptr.cast(), &VTABLE);
+    // Acquire a TaskRef (ref_inc), then forget it — the RawWaker now
+    // owns the ref. drop_fn calls TaskRef::from_owned + drop to release.
+    let task_ref = unsafe { TaskRef::acquire(ptr) };
+    let raw = RawWaker::new(task_ref.as_ptr().cast(), &VTABLE);
+    std::mem::forget(task_ref);
     unsafe { Waker::from_raw(raw) }
 }
 
@@ -106,26 +109,25 @@ pub(crate) fn task_ptr_from_local_waker(waker: &Waker) -> Option<*mut u8> {
     }
 }
 
-/// Clone: increment refcount, copy the pointer.
+/// Clone: increment refcount, copy the pointer. The new RawWaker owns
+/// the new ref; its drop_fn will release it.
 unsafe fn clone_fn(data: *const ()) -> RawWaker {
-    // SAFETY: data points to a live (or completed) task.
-    unsafe { task::ref_inc(data as *mut u8) };
-    RawWaker::new(data, &VTABLE)
+    // SAFETY: data points to a live (or completed) task with refcount >= 1
+    // (the original waker holds a ref).
+    let task_ref = unsafe { TaskRef::acquire(data as *mut u8) };
+    let raw = RawWaker::new(task_ref.as_ptr().cast(), &VTABLE);
+    std::mem::forget(task_ref);
+    raw
 }
 
-/// Wake (by value): push to ready queue, decrement refcount (consumes waker).
-/// If the task is completed and refcount hits 0, signals slot can be freed.
+/// Wake (by value): push to ready queue, decrement refcount (consumes
+/// waker). TaskRef::Drop routes terminal state through dispose_terminal,
+/// which defers to DEFERRED_FREE on the executor thread.
 unsafe fn wake_fn(data: *const ()) {
     // SAFETY: data is a valid task pointer.
     unsafe { wake_impl(data) };
-    // Consume: decrement refcount. If terminal, free via TLS deferred path.
-    // Executor thread — slab TLS always available.
-    match unsafe { task::ref_dec(data as *mut u8) } {
-        task::FreeAction::Retain => {}
-        task::FreeAction::FreeBox | task::FreeAction::FreeSlab => {
-            unsafe { free_completed_slot(data as *mut u8) };
-        }
-    }
+    // Consume the ref via TaskRef::Drop.
+    drop(unsafe { TaskRef::from_owned(data as *mut u8) });
 }
 
 /// Wake (by ref): push to ready queue. Does NOT decrement refcount
@@ -135,15 +137,9 @@ unsafe fn wake_by_ref_fn(data: *const ()) {
     unsafe { wake_impl(data) };
 }
 
-/// Drop (without waking): decrement refcount. If the task is completed
-/// and refcount hits 0, free the slot.
+/// Drop (without waking): decrement refcount via TaskRef::Drop.
 unsafe fn drop_fn(data: *const ()) {
-    match unsafe { task::ref_dec(data as *mut u8) } {
-        task::FreeAction::Retain => {}
-        task::FreeAction::FreeBox | task::FreeAction::FreeSlab => {
-            unsafe { free_completed_slot(data as *mut u8) };
-        }
-    }
+    drop(unsafe { TaskRef::from_owned(data as *mut u8) });
 }
 
 #[cfg(test)]
@@ -172,44 +168,38 @@ mod tests {
     }
 }
 
-/// Queue a completed task slot for deferred freeing.
+/// Push a terminal task pointer onto the executor's `DEFERRED_FREE`
+/// list. Returns `true` if the push succeeded, `false` if the TLS is
+/// null (called outside a poll cycle).
 ///
-/// Called when the last reference drops (refcount hits 0) — either from
-/// a waker drop or from JoinHandle::Drop.
+/// On `false`, the caller's task slot is not enqueued for cleanup —
+/// `Executor::drop` will eventually iterate `all_tasks` and reclaim it.
+/// This is the established "leak until shutdown" fallback for
+/// terminal frees that fire outside `block_on`.
 ///
-/// If called outside a poll cycle (DEFERRED_FREE TLS is null), the slot
-/// is **not freed** — it will be reclaimed by `Executor::drop`. This is
-/// acceptable for correctness but means tasks whose last ref drops outside
-/// `block_on` are cleaned up lazily.
-///
-/// # Safety
-///
-/// `ptr` must point to a completed task slot.
-#[cold]
-#[inline(never)]
-pub(crate) unsafe fn defer_free(ptr: *mut u8) {
-    unsafe { free_completed_slot(ptr) };
-}
-
-/// Queue a completed task slot for deferred freeing. Called when the
-/// last waker clone drops (refcount hits 0).
+/// Used by `crate::cross_wake::dispose_terminal` for the on-executor
+/// branch (TaskRef::Drop on the runtime's owning thread). The deferred
+/// path keeps `Executor::all_tasks` bookkeeping consistent — the next
+/// poll cycle's drain reads `tracker_key` then frees + removes from
+/// `all_tasks` in the right order (see `Executor::poll`).
 ///
 /// # Safety
 ///
-/// `ptr` must point to a completed task slot.
+/// `ptr` must point to a terminal task slot (refcount 0, COMPLETED set,
+/// lifecycle flags clear).
 #[cold]
 #[inline(never)]
-unsafe fn free_completed_slot(ptr: *mut u8) {
+pub(crate) unsafe fn try_defer_free(ptr: *mut u8) -> bool {
     DEFERRED_FREE.with(|cell| {
         let list_ptr = cell.get();
-        if !list_ptr.is_null() {
-            // SAFETY: list_ptr valid — set by set_poll_context.
-            let list = unsafe { &mut *list_ptr };
-            list.push(ptr);
+        if list_ptr.is_null() {
+            return false;
         }
-        // If null (outside poll cycle), the slot leaks. This is
-        // acceptable — it will be cleaned up on Executor::drop.
-    });
+        // SAFETY: list_ptr valid — set by set_poll_context.
+        let list = unsafe { &mut *list_ptr };
+        list.push(ptr);
+        true
+    })
 }
 
 /// Shared wake implementation.
