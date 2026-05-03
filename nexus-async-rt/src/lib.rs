@@ -456,11 +456,34 @@ impl Drop for Executor {
             // Task is completed but not TERMINAL — outstanding refs exist.
             let rc = unsafe { task::ref_count(ptr) };
             if rc > 0 {
+                // Don't panic if we're already unwinding from another panic
+                // — that would be a double-panic and abort the process
+                // (SIGABRT). Drop impls must not panic during unwinding,
+                // per Rust convention. The user-error sanity check is only
+                // useful when shutdown is the FIRST thing happening; if a
+                // panic is in flight, the user already has a bug to fix
+                // and we shouldn't compound it by aborting.
+                //
+                // Resources held by the task have already been released
+                // by `drop_task_future` above (Aeron publishers, sockets,
+                // file handles all run their Drop impls there). What
+                // leaks here is just the task allocation + waker
+                // bookkeeping — small bounded memory, freed at process
+                // exit.
                 #[cfg(debug_assertions)]
-                panic!(
-                    "executor dropped with {rc} outstanding reference(s) — \
-                     all wakers and JoinHandles must be dropped before the Runtime"
-                );
+                if std::thread::panicking() {
+                    eprintln!(
+                        "nexus-async-rt: executor dropped with {rc} outstanding \
+                         reference(s) during unwinding — suppressing panic to avoid \
+                         abort. Task resources were released via drop_task_future; \
+                         leaking task allocation + waker bookkeeping memory."
+                    );
+                } else {
+                    panic!(
+                        "executor dropped with {rc} outstanding reference(s) — \
+                         all wakers and JoinHandles must be dropped before the Runtime"
+                    );
+                }
                 #[cfg(not(debug_assertions))]
                 eprintln!(
                     "nexus-async-rt: executor dropped with {rc} outstanding task \

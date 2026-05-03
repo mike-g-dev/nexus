@@ -326,6 +326,29 @@ impl Interval {
 ///
 /// Returns `Pending` on first poll, wakes itself, completes on second poll.
 /// Other ready tasks get a turn before this task resumes.
+///
+/// # Caveat: cross-thread waits
+///
+/// `yield_now` is a *cooperative* yield within the executor. It does not
+/// park the executor or yield CPU to other OS threads. On a single-threaded
+/// runtime, a tight wait loop like
+///
+/// ```ignore
+/// while !cross_thread_state_ready() {
+///     yield_now().await;
+/// }
+/// ```
+///
+/// will busy-spin and starve other OS threads (a tokio worker thread, an
+/// Aeron media driver, a separate sender thread) of CPU. The producer
+/// can't fire its wake in time, the loop appears hung even though the
+/// external work would have completed eventually.
+///
+/// For cross-thread waits, use a parking primitive instead:
+/// - `await rx.recv()` on a channel — parks until the sender wakes
+/// - `await notify.notified()` on a `Notify` — parks until `notify_one()`
+/// - mix `yield_now` with periodic `sleep` — bounded park gives the OS
+///   time to schedule producer threads
 pub struct YieldNow(pub(crate) bool);
 
 impl Future for YieldNow {
