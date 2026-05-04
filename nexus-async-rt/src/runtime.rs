@@ -306,6 +306,80 @@ pub struct Runtime {
     _not_thread_safe: PhantomData<*const ()>,
 }
 
+// =============================================================================
+// Runtime field ordering — invariants
+// =============================================================================
+//
+// Field declaration order in `struct Runtime` is load-bearing. Each
+// field has a position relative to others enforced by the requirements
+// below. Rust's default layout doesn't guarantee declaration order,
+// but `#[repr(C)]` + the `const _: ()` asserts below catch any
+// reordering at compile time regardless of layout.
+//
+// Order (top → bottom = first → last drop):
+//
+//   executor              ← drops first; frees tasks
+//   _cross_wake_tls_guard ← drops second; clears CURRENT_RUNTIME_CTX TLS
+//   io                    ← UnsafeCell, no Drop concerns
+//   timers                ← UnsafeCell, no Drop concerns
+//   ctx                   ← WorldCtx, holds raw pointer to user's World
+//   event_time            ← Cell<Instant>, trivial
+//   shutdown              ← clone of ShutdownHandle, has Arc inside
+//   cross_wake            ← Arc<CrossWakeContext>; off-thread holders may
+//                           still exist; Arc keeps it alive past Runtime drop
+//   cross_thread_drain_limit, event_interval ← trivial
+//   _slab_guard           ← MUST drop AFTER executor (invariant 1)
+//   _runtime_presence     ← MUST drop AFTER everything (invariant 3)
+//   _not_thread_safe      ← PhantomData, no Drop
+//
+// Invariants:
+//
+// 1. `_slab_guard` after `executor`
+//    Reason: BUG-1 (#167). When `Executor::drop` walks `all_tasks`
+//    and encounters slab-allocated survivors, it dispatches their
+//    `free_fn` through TLS. The TLS install lives on `_slab_guard`.
+//    If `_slab_guard` drops first, slab tasks see the no-slab panic
+//    stub.
+//    Enforced: `const _:` offset assert below (added pre-PR-1a).
+//
+// 2. `_cross_wake_tls_guard` after `executor`
+//    Reason: PR 1a. When `Executor::drop` walks `all_tasks` and
+//    triggers `TaskRef::Drop`, the terminal-drop routing in
+//    `dispose_terminal` reads `CURRENT_RUNTIME_CTX` to decide
+//    on-thread (defer) vs off-thread (queue). If `_cross_wake_tls_guard`
+//    drops first, the on-thread fast path silently misroutes terminal
+//    frees to the cross-queue, where nothing drains them — leak,
+//    OR for slab tasks, eventual UAF when `_slab_guard` releases
+//    the slab backing storage.
+//    FAILURE MODE: silent UAF in production for slab tasks.
+//    Enforced: `const _:` offset assert below (added in PR 1a).
+//
+// 3. `_runtime_presence` after everything else
+//    Reason: defensive. Some inner Drop impl might attempt to construct
+//    another Runtime mid-teardown. With `_runtime_presence` dropping
+//    last, the "Runtime alive" flag remains set, and that nested
+//    construction panics rather than silently corrupting TLS.
+//    Enforced: convention. No const_assert because there are too many
+//    fields to assert against; relies on the doc-block + code review.
+//
+// 4. `cross_wake` outlives off-thread holders implicitly via Arc
+//    Reason: cross-thread wakers (channel slots, tokio_compat) hold an
+//    Arc<CrossWakeContext>. The Arc keeps the queue alive after Runtime
+//    drops. When the LAST off-thread waker drops its Arc, the queue is
+//    finally freed. Off-thread `dispose_terminal` calling
+//    `try_set_queued + push` on a queue whose Runtime has been dropped
+//    is safe: the queue is alive, we push to it, but no consumer
+//    drains. The terminal task pointer leaks (memory, not UAF). PR 2
+//    §2.3's `ShutdownStats` will surface this as a counter.
+//
+// Adding new fields:
+// - Place trivial fields anywhere; non-trivial fields go to the
+//   bottom of the appropriate group.
+// - If your field has a Drop with cross-thread implications, document
+//   the invariant here AND add an `offset_of` assert next to the
+//   existing ones.
+// - When in doubt, add to the bottom and document.
+
 // BUG-1 (#167) invariant: `_slab_guard` MUST drop after `executor`.
 // Field drop order is declaration order, and offset is a proxy: a
 // later-declared field has a higher offset (modulo alignment padding,

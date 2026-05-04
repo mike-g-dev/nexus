@@ -31,210 +31,12 @@
 
 use std::cell::UnsafeCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Poll, Waker};
 
 use std::ops::{Deref, DerefMut};
 
-// =============================================================================
-// Waker primitives (same pattern as spsc_bytes / mpsc typed)
-// =============================================================================
-
-const EMPTY: u8 = 0;
-const STORED: u8 = 1;
-const REGISTERING: u8 = 2;
-
-struct RxWakerSlot {
-    task_ptr: std::sync::atomic::AtomicPtr<u8>,
-    cross_ctx: *const crate::cross_wake::CrossWakeContext,
-    state: AtomicU8,
-}
-
-unsafe impl Send for RxWakerSlot {}
-unsafe impl Sync for RxWakerSlot {}
-
-impl RxWakerSlot {
-    fn new(cross_ctx: *const crate::cross_wake::CrossWakeContext) -> Self {
-        Self {
-            task_ptr: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
-            cross_ctx,
-            state: AtomicU8::new(EMPTY),
-        }
-    }
-
-    /// Register the receiver's task pointer. Single-registerer only.
-    fn register(&self, task_ptr: *mut u8) {
-        debug_assert!(
-            !task_ptr.is_null(),
-            "RxWakerSlot::register called with null task_ptr"
-        );
-        let prev = self.state.swap(REGISTERING, Ordering::Acquire);
-        debug_assert_ne!(prev, REGISTERING);
-
-        // BUG-2 (#168) fix: hold a refcount on the task while
-        // registered so a sender that captures the pointer
-        // mid-`wake()` can't have it freed underneath. Matched by
-        // ref_dec in wake/clear/Drop.
-        // SAFETY: caller (RecvFut::poll) just received task_ptr from
-        // the active receiver task whose refcount is >= 1; the
-        // debug_assert above catches the null case in development.
-        unsafe { crate::task::ref_inc(task_ptr) };
-
-        // Release any prior registration's ref. Always check prev_ptr —
-        // not gated on `prev == STORED` — because a sender's `wake()` CAS
-        // may have transitioned state STORED→EMPTY without yet taking
-        // the task_ptr (the swap is the second step). In that race
-        // window, prev_ptr is still non-null even though state was
-        // EMPTY. Skipping the release leaks the ref. (BUG-2 follow-up.)
-        //
-        // SAFETY: prev_ptr (if non-null) was registered with a ref_inc;
-        // we own that ref now and must release it.
-        let prev_ptr = self.task_ptr.swap(task_ptr, Ordering::AcqRel);
-        if !prev_ptr.is_null() {
-            unsafe { release_slot_ref(prev_ptr, self.cross_ctx) };
-        }
-
-        self.state.store(STORED, Ordering::Release);
-    }
-
-    fn try_register_local(&self, waker: &Waker) -> bool {
-        crate::waker::task_ptr_from_local_waker(waker).is_some_and(|task_ptr| {
-            self.register(task_ptr);
-            true
-        })
-    }
-
-    fn wake(&self) -> bool {
-        if self
-            .state
-            .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-        {
-            let task_ptr = self.task_ptr.swap(std::ptr::null_mut(), Ordering::Acquire);
-            if !task_ptr.is_null() {
-                // SAFETY: task_ptr is alive because `try_register_local`
-                // ref_inc'd before storing — that ref keeps the task
-                // allocated through the dispatch (see BUG-2 #168).
-                let ctx = unsafe { &*self.cross_ctx };
-                unsafe { crate::cross_wake::wake_task_cross_thread(task_ptr, ctx) };
-
-                // BUG-2 fix: release the ref `try_register_local`
-                // acquired. AFTER wake_task_cross_thread so the task is
-                // alive for its deref.
-                // SAFETY: we own the ref from `try_register_local`.
-                unsafe { release_slot_ref(task_ptr, self.cross_ctx) };
-                return true;
-            }
-        }
-        false
-    }
-
-    fn has_waker(&self) -> bool {
-        self.state.load(Ordering::Acquire) == STORED
-    }
-
-    fn clear(&self) {
-        if self
-            .state
-            .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-        {
-            let task_ptr = self.task_ptr.swap(std::ptr::null_mut(), Ordering::Acquire);
-            if !task_ptr.is_null() {
-                // BUG-2 fix: release the ref `try_register_local` acquired.
-                // SAFETY: we own the ref.
-                unsafe { release_slot_ref(task_ptr, self.cross_ctx) };
-            }
-        }
-    }
-}
-
-impl Drop for RxWakerSlot {
-    fn drop(&mut self) {
-        // BUG-2 (#168) fix: if still registered when dropped, release
-        // our ref. See mpsc.rs for the full rationale.
-        if *self.state.get_mut() == STORED {
-            let task_ptr = *self.task_ptr.get_mut();
-            if !task_ptr.is_null() {
-                // SAFETY: we own the ref from `try_register_local`.
-                unsafe { release_slot_ref(task_ptr, self.cross_ctx) };
-            }
-        }
-    }
-}
-
-/// Release the slot's ref on `task_ptr`. If terminal, route via
-/// [`crate::cross_wake::dispose_terminal`]. See `mpsc::release_slot_ref`
-/// for the full design rationale.
-///
-/// `cross_ctx` is unused (dispose_terminal reads ctx from the task
-/// header); kept on the signature for PR 1a consistency.
-///
-/// # Safety
-///
-/// `task_ptr` must point to a task on which `try_register_local`
-/// previously called `ref_inc`.
-unsafe fn release_slot_ref(
-    task_ptr: *mut u8,
-    _cross_ctx: *const crate::cross_wake::CrossWakeContext,
-) {
-    match unsafe { crate::task::ref_dec(task_ptr) } {
-        crate::task::FreeAction::Retain => {}
-        crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            // SAFETY: task_ptr was alive until ref_dec; terminal but
-            // not yet freed (dispose_terminal does the routing).
-            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
-        }
-    }
-}
-
-struct FallbackWaker {
-    state: AtomicU8,
-    waker: UnsafeCell<Option<Waker>>,
-}
-
-unsafe impl Send for FallbackWaker {}
-unsafe impl Sync for FallbackWaker {}
-
-impl FallbackWaker {
-    fn new() -> Self {
-        Self {
-            state: AtomicU8::new(EMPTY),
-            waker: UnsafeCell::new(None),
-        }
-    }
-
-    fn register(&self, waker: &Waker) {
-        let prev = self.state.swap(REGISTERING, Ordering::Acquire);
-        debug_assert_ne!(prev, REGISTERING);
-        unsafe { *self.waker.get() = Some(waker.clone()) };
-        self.state.store(STORED, Ordering::Release);
-    }
-
-    fn wake(&self) -> bool {
-        if self
-            .state
-            .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-        {
-            if let Some(w) = unsafe { (*self.waker.get()).take() } {
-                w.wake();
-                return true;
-            }
-        }
-        false
-    }
-
-    fn has_waker(&self) -> bool {
-        self.state.load(Ordering::Acquire) == STORED
-    }
-}
-
-impl Drop for FallbackWaker {
-    fn drop(&mut self) {
-        *self.waker.get_mut() = None;
-    }
-}
+use crate::cross_wake::{FallbackWaker, TaskWakerSlot};
 
 // =============================================================================
 // Sender waiter list (intrusive, same pattern as mpsc typed)
@@ -398,7 +200,7 @@ impl SenderWaitList {
 // =============================================================================
 
 struct Inner {
-    rx_slot: RxWakerSlot,
+    rx_slot: TaskWakerSlot,
     rx_fallback: FallbackWaker,
     tx_waiters: SenderWaitList,
     _cross_wake_owner: Arc<crate::cross_wake::CrossWakeContext>,
@@ -576,7 +378,7 @@ pub fn channel(capacity: usize) -> (Sender, Receiver) {
         .expect("mpsc_bytes::channel() requires runtime context");
 
     let (producer, consumer) = nexus_logbuf::queue::mpsc::new(capacity);
-    let rx_slot = RxWakerSlot::new(Arc::as_ptr(&cross_ctx));
+    let rx_slot = TaskWakerSlot::new(Arc::as_ptr(&cross_ctx));
 
     let inner = Arc::new(Inner {
         rx_slot,
@@ -826,7 +628,7 @@ mod tests {
         });
 
         let (producer, consumer) = nexus_logbuf::queue::mpsc::new(capacity);
-        let rx_slot = RxWakerSlot::new(Arc::as_ptr(&cross_ctx));
+        let rx_slot = TaskWakerSlot::new(Arc::as_ptr(&cross_ctx));
 
         let inner = Arc::new(Inner {
             rx_slot,
@@ -1019,191 +821,30 @@ mod tests {
 }
 
 // =============================================================================
-// BUG-2 (#168) — UAF white-box test, same shape as mpsc.rs
+// BUG-2 (#168) — cross-thread wake-path UAF regression tests
 // =============================================================================
 //
-// See `mpsc.rs::uaf_tests` for the full rationale. This file's
-// `RxWakerSlot` shares the same fix and is verified by the same scenario.
+// Tests live in `crate::cross_wake::uaf_scenarios` (one canonical body
+// per scenario, shared across all four channels). These per-channel
+// `#[test]` wrappers exist for `cargo test mpsc_bytes::uaf_tests`
+// output visibility and to verify the consolidated `TaskWakerSlot`
+// works identically across channel modules.
 #[cfg(test)]
 mod uaf_tests {
-    use super::*;
-    use crate::cross_wake::wake_task_cross_thread;
-    use crate::task::{self, FreeAction, Task};
-    use std::future::Future;
-    use std::pin::Pin;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
-    use std::task::{Context, Poll};
-
-    struct UafNoop;
-    impl Future for UafNoop {
-        type Output = ();
-        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
-            Poll::Ready(())
-        }
-    }
-
-    fn make_uaf_task() -> *mut u8 {
-        let task = Box::new(Task::new_boxed(UafNoop, 0));
-        Box::into_raw(task) as *mut u8
-    }
-
-    fn make_uaf_cross_ctx() -> Arc<crate::cross_wake::CrossWakeContext> {
-        let poll = mio::Poll::new().unwrap();
-        let mio_waker = Arc::new(mio::Waker::new(poll.registry(), mio::Token(usize::MAX)).unwrap());
-        Arc::new(crate::cross_wake::CrossWakeContext {
-            queue: crate::cross_wake::CrossWakeQueue::new(),
-            mio_waker,
-            parked: AtomicBool::new(false),
-        })
-    }
+    use crate::cross_wake::uaf_scenarios as h;
 
     #[test]
     fn waker_slot_uaf_when_task_freed_mid_dispatch() {
-        let cross_ctx = make_uaf_cross_ctx();
-        let task_ptr = make_uaf_task();
-        assert_eq!(unsafe { task::ref_count(task_ptr) }, 1);
-
-        let slot = RxWakerSlot::new(Arc::as_ptr(&cross_ctx));
-        slot.register(task_ptr);
-
-        assert!(
-            slot.state
-                .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-        );
-        let captured = slot.task_ptr.swap(std::ptr::null_mut(), Ordering::Acquire);
-        assert_eq!(captured, task_ptr);
-
-        let pre_fix = match unsafe { task::complete_and_unref(task_ptr) } {
-            FreeAction::FreeBox => {
-                // PRE-FIX path: under regular cargo test, fail early
-                // (avoid segfault from the deref below). Under miri,
-                // trigger the UAF so the diagnostic trace fires.
-                #[cfg(not(miri))]
-                panic!(
-                    "BUG-2 regression detected: register skipped ref_inc. \
-                     Run under miri for the full UAF trace."
-                );
-                #[cfg(miri)]
-                {
-                    unsafe { task::free_task(task_ptr) };
-                    true
-                }
-            }
-            FreeAction::Retain => false,
-            FreeAction::FreeSlab => panic!("box test must not yield FreeSlab"),
-        };
-
-        unsafe { wake_task_cross_thread(captured, &cross_ctx) };
-
-        if !pre_fix {
-            match unsafe { task::ref_dec(captured) } {
-                FreeAction::FreeBox => unsafe { task::free_task(captured) },
-                _ => panic!("post-fix cleanup must terminate the box task"),
-            }
-        }
-
-        drop(slot);
+        h::waker_slot_uaf_when_task_freed_mid_dispatch();
     }
 
-    /// Sensitive to the fix via explicit refcount assertions. FAILS pre-fix
-    /// because `register` skips ref_inc and there's no Drop impl. PASSES
-    /// post-fix because register ref_incs and Drop ref_decs.
     #[test]
     fn slot_drop_releases_ref_when_still_registered() {
-        let cross_ctx = make_uaf_cross_ctx();
-        let task_ptr = make_uaf_task();
-        unsafe { task::ref_inc(task_ptr) };
-        let action = unsafe { task::complete_and_unref(task_ptr) };
-        assert!(matches!(action, FreeAction::Retain));
-        let baseline_refcount = unsafe { task::ref_count(task_ptr) };
-        assert_eq!(baseline_refcount, 1, "after complete_and_unref, refcount=1");
-
-        let slot = RxWakerSlot::new(Arc::as_ptr(&cross_ctx));
-        slot.register(task_ptr);
-        let after_register = unsafe { task::ref_count(task_ptr) };
-
-        drop(slot);
-        let after_drop = unsafe { task::ref_count(task_ptr) };
-
-        assert_eq!(
-            after_register,
-            after_drop + 1,
-            "Post-fix Drop must release the ref that register acquired."
-        );
-        assert_eq!(
-            after_register,
-            baseline_refcount + 1,
-            "Post-fix register must bump refcount by 1 — BUG-2 root cause."
-        );
-
-        // Cleanup: refcount = 1 + COMPLETED → final ref_dec yields FreeBox.
-        let action = unsafe { task::ref_dec(task_ptr) };
-        match action {
-            FreeAction::FreeBox => unsafe { task::free_task(task_ptr) },
-            other => panic!("expected FreeBox on final ref_dec, got {other:?}"),
-        }
+        h::slot_drop_releases_ref_when_still_registered();
     }
 
-    /// Race regression for John's review item 1 (BUG-2 follow-up).
-    /// See `mpsc.rs::uaf_tests::register_during_wake_does_not_leak_ref`
-    /// for the full design notes.
     #[test]
     fn register_during_wake_does_not_leak_ref() {
-        let cross_ctx = make_uaf_cross_ctx();
-        let task_ptr = make_uaf_task();
-
-        unsafe { task::ref_inc(task_ptr) };
-        let action = unsafe { task::complete_and_unref(task_ptr) };
-        assert!(matches!(action, FreeAction::Retain));
-        let baseline = unsafe { task::ref_count(task_ptr) };
-        assert_eq!(baseline, 1);
-
-        let slot = RxWakerSlot::new(Arc::as_ptr(&cross_ctx));
-
-        slot.register(task_ptr);
-        assert_eq!(
-            unsafe { task::ref_count(task_ptr) },
-            baseline + 1,
-            "initial register must take a ref"
-        );
-
-        // Wake first half: CAS only.
-        assert!(
-            slot.state
-                .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
-                .is_ok()
-        );
-
-        // Race: re-register during the wake window.
-        slot.register(task_ptr);
-        assert_eq!(
-            unsafe { task::ref_count(task_ptr) },
-            baseline + 1,
-            "race register must net to baseline+1; pre-fix this is baseline+2 (the leak)"
-        );
-
-        // Wake second half: swap + release.
-        let captured = slot.task_ptr.swap(std::ptr::null_mut(), Ordering::Acquire);
-        assert_eq!(captured, task_ptr);
-        unsafe { release_slot_ref(captured, Arc::as_ptr(&cross_ctx)) };
-        assert_eq!(
-            unsafe { task::ref_count(task_ptr) },
-            baseline,
-            "post-wake refcount must be at baseline; pre-fix this is baseline+1"
-        );
-
-        drop(slot);
-        assert_eq!(
-            unsafe { task::ref_count(task_ptr) },
-            baseline,
-            "Drop on STORED-but-null slot is a no-op for refcount"
-        );
-
-        match unsafe { task::ref_dec(task_ptr) } {
-            FreeAction::FreeBox => unsafe { task::free_task(task_ptr) },
-            other => panic!("expected FreeBox, got {other:?}"),
-        }
+        h::register_during_wake_does_not_leak_ref();
     }
 }

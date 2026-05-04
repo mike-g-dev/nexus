@@ -78,7 +78,6 @@ const FLAG_MASK: usize = 0b11_1111;
 /// One reference count unit (bit 6).
 const REF_ONE: usize = 1 << 6;
 /// Mask for refcount bits (6+).
-#[allow(dead_code)]
 const REF_MASK: usize = !FLAG_MASK;
 
 /// Lifecycle flags: must be cleared before a task can reach terminal.
@@ -391,14 +390,6 @@ where
 /// The pointer is stable for the task's lifetime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TaskId(pub(crate) *mut u8);
-
-impl TaskId {
-    /// Returns the raw pointer to the task.
-    #[allow(dead_code)]
-    pub(crate) fn as_ptr(&self) -> *mut u8 {
-        self.0
-    }
-}
 
 // =============================================================================
 // JoinHandle
