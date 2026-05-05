@@ -151,13 +151,13 @@ fn shutdown_quiesce_timeout() {
                 remaining_outstanding_refs >= 1,
                 "expected >= 1 outstanding refs, got {remaining_outstanding_refs}"
             );
-            // The cross-queue isn't expected to have entries here
-            // (we haven't done any cross-thread wakes), but the field
-            // is part of the diagnostic shape and zero is a valid
-            // observation.
-            assert!(
-                remaining_cross_queue == 0 || remaining_cross_queue >= 1,
-                "remaining_cross_queue is observable, got {remaining_cross_queue}"
+            // No cross-thread wakes were performed in this scenario,
+            // so the cross-queue should be empty. (PR2-John-review
+            // item 4: pre-fix this was a tautological
+            // `== 0 || >= 1` always-true assertion.)
+            assert_eq!(
+                remaining_cross_queue, 0,
+                "no cross-thread wakes performed; remaining_cross_queue must be 0"
             );
             assert!(
                 elapsed >= Duration::from_millis(40),
@@ -171,4 +171,67 @@ fn shutdown_quiesce_timeout() {
     // Leak the runtime in this test scenario; in production the user
     // would investigate before dropping.
     std::mem::forget(rt);
+}
+
+#[test]
+fn shutdown_quiesce_completed_task_held_by_join_handle_times_out() {
+    // PR2-John-review item 2 regression test.
+    //
+    // Pre-fix: shutdown_quiesce checked `task_count() == 0`
+    // (`live_count`), which decrements unconditionally on completion.
+    // A completed task held by a JoinHandle has `live_count -= 1` but
+    // is still in `all_tasks` (rc=1, COMPLETED, HAS_JOIN). Quiesce
+    // returned `Ok(())`. User dropped Runtime → `Executor::drop`
+    // walked `all_tasks`, found the rc=1 task → fired
+    // `drop_outstanding_normal` → debug-panic / release-leak +
+    // `unbalanced_normal_shutdowns++`. Quiesce's contract ("after Ok,
+    // dropping is clean") was violated.
+    //
+    // Post-fix: quiesce checks `outstanding_tasks() == 0`
+    // (`all_tasks.len()`). The held task is still tracked → quiesce
+    // returns `Err(QuiesceTimeout)` with `remaining_outstanding_refs >= 1`.
+    let mut wb = WorldBuilder::new();
+    let mut world = wb.build();
+    let mut rt = Runtime::new(&mut world);
+
+    // `block_on` returns the future's output. JoinHandle is `!Send`
+    // but the runtime is single-threaded — block_on has no Send bound,
+    // so we can return the handle directly out of the async block and
+    // hold it past block_on.
+    let kept_handle: nexus_async_rt::JoinHandle<u32> = rt.block_on(async {
+        let h = nexus_async_rt::spawn_boxed(async { 42u32 });
+        // Yield so the task gets polled to completion (state =
+        // COMPLETED, rc=1 because handle still holds its ref).
+        nexus_async_rt::yield_now().await;
+        // Don't await the handle — we want a completed-but-held task
+        // to feed quiesce.
+        h
+    });
+
+    // Task is now COMPLETED + tracked in all_tasks (JoinHandle ref).
+    // shutdown_quiesce SHOULD return Err(QuiesceTimeout) — the task
+    // holds a ref that would fire `unbalanced_normal_shutdowns` if
+    // we dropped Runtime now.
+    let r = rt.shutdown_quiesce(Duration::from_millis(50));
+    match r {
+        Err(QuiesceTimeout {
+            remaining_outstanding_refs,
+            ..
+        }) => {
+            assert_eq!(
+                remaining_outstanding_refs, 1,
+                "completed task held by JoinHandle should count as outstanding"
+            );
+        }
+        Ok(()) => panic!(
+            "PR2-John-review item 2: quiesce mis-claimed clean shutdown for a \
+             completed-but-held task. The user's subsequent drop would fire \
+             unbalanced_normal_shutdowns."
+        ),
+    }
+
+    // Cleanup: drop the held handle (frees its ref), then drop the
+    // runtime cleanly.
+    drop(kept_handle);
+    drop(rt);
 }

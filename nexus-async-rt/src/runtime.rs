@@ -852,17 +852,28 @@ impl Runtime {
             // Poll any ready tasks (drains the local ready queue).
             self.executor.poll();
 
-            // Quiesced means: no live tasks (everything completed), no
-            // ready work pending, no cross-queue entries drained THIS
-            // pass. Live tasks that are parked-but-not-ready also
-            // count as not-quiesced — they're holding refs that
-            // prevent a clean Runtime drop, even if they're not making
-            // progress. The user must either drive them to completion
-            // (cancel-and-poll) or accept QuiesceTimeout and
-            // investigate.
+            // Quiesced means: `all_tasks` is empty (no tasks with
+            // outstanding refs — completed-but-held tasks would still
+            // fire the abnormal-shutdown branches in `Executor::drop`),
+            // no ready work pending, no cross-queue entries drained
+            // THIS pass. Live or parked tasks that are still in
+            // `all_tasks` count as not-quiesced — they're holding
+            // refs that prevent a clean Runtime drop, even if they're
+            // not making progress.
+            //
+            // Use `outstanding_tasks` (`all_tasks.len()`), NOT
+            // `task_count` (`live_count`). `live_count` decrements
+            // unconditionally on completion; `all_tasks` only loses an
+            // entry when its refcount actually hits zero. A completed
+            // task with a held `JoinHandle` has `live_count -= 1` but
+            // is still in `all_tasks` — quiesce-as-Ok with
+            // `task_count == 0` would mis-claim quiesced and the
+            // user's subsequent drop would fire the
+            // `unbalanced_normal_shutdowns` branch
+            // (PR2-John-review item 2).
             let has_ready = self.executor.has_ready();
-            let no_live_tasks = self.executor.task_count() == 0;
-            if !has_ready && drained_this_pass == 0 && no_live_tasks {
+            let all_tasks_empty = self.executor.outstanding_tasks() == 0;
+            if !has_ready && drained_this_pass == 0 && all_tasks_empty {
                 return Ok(());
             }
 
@@ -877,7 +888,7 @@ impl Runtime {
                     as u64;
                 return Err(QuiesceTimeout {
                     remaining_cross_queue,
-                    remaining_outstanding_refs: self.executor.task_count() as u64,
+                    remaining_outstanding_refs: self.executor.outstanding_tasks() as u64,
                     elapsed: start.elapsed(),
                 });
             }

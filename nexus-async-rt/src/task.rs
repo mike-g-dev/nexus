@@ -467,6 +467,16 @@ impl<T> JoinHandle<T> {
         // takes the join waker, and decrements refcount.
         was_running
     }
+
+    /// Test-only raw pointer accessor for white-box scenarios that
+    /// need to drive the underlying task allocation directly (e.g.,
+    /// the cross_wake UAF regression test in PR 2). Avoids the
+    /// `repr(Rust)` layout assumption that `mem::transmute_copy`
+    /// would otherwise rely on.
+    #[cfg(test)]
+    pub(crate) fn raw_ptr(&self) -> *mut u8 {
+        self.ptr
+    }
 }
 
 impl<T> Drop for JoinHandle<T> {

@@ -1296,4 +1296,103 @@ mod tests {
             crate::task::free_task(ptr);
         }
     }
+
+    /// PR2-John-review item 1 regression test.
+    ///
+    /// Reproduces the race that caused a UAF in `Executor::drop` step
+    /// 3:
+    ///
+    /// 1. A task with rc=1 is registered with the executor (in
+    ///    `all_tasks`). State is COMPLETED — set up to mirror
+    ///    "task ran to completion, off-thread waker holds the last
+    ///    ref."
+    /// 2. The off-thread waker drops terminal AFTER the runtime's
+    ///    last `drain_cross_thread` call but BEFORE `Executor::drop`
+    ///    starts: `dispose_terminal` does
+    ///    `try_set_queued(T) + ctx.queue.push(T)`. T's rc is now 0,
+    ///    QUEUED is set, allocation is alive.
+    /// 3. `Executor::drop` runs. Pre-fix step 2 (all_tasks walk)
+    ///    would see `is_terminal(T) = false` (QUEUED set blocks
+    ///    terminal), fall to the rc=0 branch, free T's allocation.
+    ///    Then pre-fix step 3's `cross_queue.pop()` would deref
+    ///    `cross_next` at offset 32 of freed memory. **UAF.**
+    ///
+    /// This test orchestrates exactly that ordering and verifies no
+    /// UAF under tree-borrows miri. Post-fix `Executor::drop` step 1
+    /// drains cross_queue first, routing T to deferred_free; step 2
+    /// frees T cleanly + removes from all_tasks; step 3's walk sees
+    /// nothing.
+    ///
+    /// Run pre-fix (UAF expected):
+    ///   MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
+    ///     cargo +nightly miri test -p nexus-async-rt --lib \
+    ///     cross_wake::tests::executor_drop_handles_terminal_in_cross_queue
+    #[test]
+    fn executor_drop_handles_terminal_in_cross_queue() {
+        use crate::Executor;
+
+        let ctx = make_ctx();
+        let mut exec = Executor::new(8);
+        exec.install_cross_wake_for_drop(Arc::clone(&ctx));
+
+        // Spawn a Box task — registered in all_tasks. The future
+        // returns Ready immediately so the next poll completes it.
+        struct OnceFuture;
+        impl std::future::Future for OnceFuture {
+            type Output = ();
+            fn poll(self: std::pin::Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
+                Poll::Ready(())
+            }
+        }
+
+        let handle = exec.spawn_boxed(OnceFuture);
+        // Immediately drop the JoinHandle — task becomes detached
+        // (HAS_JOIN cleared, rc → 1: just executor's ref).
+        drop(handle);
+
+        // Poll once → task completes via the joinable-but-detached
+        // path: drop_future + complete_and_unref. With no JoinHandle
+        // the executor's ref is the LAST ref, so complete_and_unref
+        // returns FreeBox and the task is freed + removed from
+        // all_tasks immediately. To set up the UAF scenario we need
+        // a task that survives completion in all_tasks with a
+        // cross-thread holder. Easier path: use a JoinHandle that
+        // we keep alive past completion to pin the task in
+        // all_tasks, then simulate the cross-queue race directly.
+        exec.poll();
+
+        // Fresh setup: spawn another task and keep its handle.
+        let kept_handle = exec.spawn_boxed(OnceFuture);
+        exec.poll();
+        // Task is now COMPLETED with rc=1 (just the JoinHandle).
+
+        let task_ptr = kept_handle.raw_ptr();
+
+        // Simulate "off-thread holder dropped TaskRef terminal": we
+        // emulate by manually dropping the JoinHandle's ref + setting
+        // QUEUED + pushing to cross_queue. The drop sequence:
+        //   - clear HAS_JOIN, take_join_waker (no waker), ref_dec
+        //     → rc 1 → 0, COMPLETED, no lifecycle → terminal.
+        //   - On a real off-thread holder, dispose_terminal would push
+        //     to cross_queue. We bypass JoinHandle::Drop's TaskRef
+        //     route (which goes through dispose_terminal locally) and
+        //     manually push to simulate the off-thread case.
+        std::mem::forget(kept_handle);
+        unsafe {
+            crate::task::clear_has_join(task_ptr);
+            let action = crate::task::ref_dec(task_ptr);
+            assert!(matches!(action, crate::task::FreeAction::FreeBox));
+        }
+        // Task is now in TERMINAL state, allocation alive, in all_tasks.
+        // Set QUEUED + push to cross_queue to mirror the off-thread
+        // dispose_terminal scenario.
+        unsafe {
+            assert!(crate::task::try_set_queued(task_ptr));
+            ctx.queue.push(task_ptr);
+        }
+
+        // Drop the executor. Pre-fix this UAFs. Post-fix it cleans
+        // up via step 1's pre-walk drain.
+        drop(exec);
+    }
 }

@@ -208,8 +208,9 @@ impl ShutdownStatsAtomics {
 /// # Example
 ///
 /// ```ignore
-/// let stats = runtime.shutdown_stats();
-/// drop(runtime);
+/// let handle = runtime.shutdown_stats();   // Arc<ShutdownStatsAtomics>
+/// drop(runtime);                            // counters fire during drop
+/// let stats = handle.snapshot();            // plain ShutdownStats for matching
 /// if stats.aborted_unwinds != 0
 ///     || stats.leaked_box_tasks != 0
 ///     || stats.unbalanced_normal_shutdowns != 0
@@ -420,6 +421,22 @@ impl Executor {
         self.live_count
     }
 
+    /// Number of tasks tracked in the executor's `all_tasks` slab.
+    /// Includes COMPLETED-but-still-referenced tasks (a `JoinHandle`
+    /// or cross-thread waker holds a ref) — distinguishing it from
+    /// `task_count()` which decrements `live_count` unconditionally on
+    /// completion.
+    ///
+    /// `shutdown_quiesce` uses this for its quiesce check: a task that
+    /// completed but has outstanding refs WILL fire one of the
+    /// abnormal-shutdown branches in `Executor::drop` (debug-panic
+    /// "outstanding references" or release-eprintln + counter
+    /// increment). Quiesce-as-`Ok` requires `all_tasks` to be empty,
+    /// not just `live_count == 0`. (PR2-John-review item 2.)
+    pub(crate) fn outstanding_tasks(&self) -> usize {
+        self.all_tasks.len()
+    }
+
     /// Number of completed task slots awaiting deferred free.
     #[cfg(test)]
     pub fn deferred_free_count(&self) -> usize {
@@ -586,13 +603,47 @@ impl Executor {
 
 impl Drop for Executor {
     fn drop(&mut self) {
-        // Step 1: drain any tasks whose last ref dropped before this
-        // shutdown — they're already completed and waiting for
-        // reclamation. Updates `all_tasks` bookkeeping in the right
-        // order (read tracker_key BEFORE free_task).
+        // Step 1 (PR 2 §2.3, fixed in PR2-John-review item 1): drain
+        // the cross-thread queue FIRST, before walking `all_tasks`.
+        //
+        // **Why first.** An off-thread holder dropping a TaskRef
+        // terminal between the runtime's last drain and `Executor::drop`
+        // start enqueues a TERMINAL task pointer in `cross_queue`
+        // (`try_set_queued + push`). The task allocation is alive (we
+        // haven't freed it yet) but rc=0, COMPLETED set, QUEUED set.
+        //
+        // If we walked `all_tasks` BEFORE draining cross_queue:
+        //   - `is_terminal` returns false (QUEUED bit is set, mask
+        //     `INERT_MASK` doesn't clear it).
+        //   - Falls through to the rc=0 branch → `free_task(ptr)`.
+        //   - Step 3's pop then derefs `cross_next` at offset 32 of
+        //     the freed allocation. **UAF.**
+        //
+        // By draining cross_queue first, `drain_cross_thread` clears
+        // QUEUED and routes the terminal entry to `deferred_free`
+        // (state is now just COMPLETED → `is_terminal` returns true
+        // there). Step 2's deferred_free drain frees + removes from
+        // `all_tasks`. Step 3's all_tasks walk no longer sees it.
+        //
+        // Entries that arrive AFTER step 1 (off-thread holder pushes
+        // mid-drop) leave a stale pointer in cross_queue. No one pops
+        // it post-drop (no executor) so no UAF; the leak is bounded
+        // by the lifetime of `Arc<CrossWakeContext>` and the entry
+        // is freed-then-pointer-leaked when the last Arc clone drops.
+        let undrained = self.cross_wake_for_drop.take().map_or(0u64, |ctx| {
+            self.drain_cross_thread(&ctx.queue, usize::MAX) as u64
+        });
+        if undrained > 0 {
+            self.record_cross_queue_undrained(undrained);
+        }
+
+        // Step 2: drain deferred-free (now includes any terminals
+        // routed by step 1's cross-queue drain). Updates `all_tasks`
+        // bookkeeping in the right order (read tracker_key BEFORE
+        // free_task).
         self.drop_drain_deferred_free();
 
-        // Step 2: walk surviving tasks. Each task hits one of four
+        // Step 3: walk surviving tasks. Each task hits one of four
         // branches: TERMINAL (free directly), not-completed (try to
         // complete + maybe free), outstanding-refs (route to unwinding
         // or normal-shutdown handlers), or zero-refs (free).
@@ -620,29 +671,6 @@ impl Drop for Executor {
             }
 
             unsafe { task::free_task(ptr) };
-        }
-
-        // Step 3 (PR 2 §2.3): tally undrained cross-queue entries.
-        // Anything still in the cross-thread queue at this point will
-        // never be drained by this runtime — off-thread holders may
-        // continue pushing while their Arc keeps the queue alive, but
-        // no executor will dequeue. Drain what's there now (clearing
-        // QUEUED on each so off-thread holders don't see a stale flag),
-        // count, record. Wired only when the runtime installed a
-        // cross-wake context (`install_cross_wake_for_drop`); bare
-        // Executor use in tests has no cross-queue to inspect.
-        if let Some(ctx) = self.cross_wake_for_drop.take() {
-            let mut count = 0u64;
-            while let Some(task_ptr) = ctx.queue.pop() {
-                // Clear QUEUED so off-thread holders' future pushes
-                // (if any) get the dedup signal, even though no one
-                // will drain them after this point.
-                unsafe { task::clear_queued(task_ptr) };
-                count = count.saturating_add(1);
-            }
-            if count > 0 {
-                self.record_cross_queue_undrained(count);
-            }
         }
     }
 }
