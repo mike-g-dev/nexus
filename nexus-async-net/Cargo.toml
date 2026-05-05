@@ -31,7 +31,7 @@ tokio-rustls = { version = "0.26", optional = true }
 socket2 = { version = "0.5", optional = true }
 futures-core = { version = "0.3", optional = true }
 futures-sink = { version = "0.3", optional = true }
-nexus-async-rt = { version = "0.4.0", path = "../nexus-async-rt", optional = true }
+nexus-async-rt = { version = "0.5.0", path = "../nexus-async-rt", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
