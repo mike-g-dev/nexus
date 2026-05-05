@@ -442,6 +442,45 @@ impl Runtime {
     pub fn task_count(&self) -> usize {
         self.executor.task_count()
     }
+
+    /// Returns a handle to the abnormal-shutdown counter atomics.
+    /// **Hold the handle past `drop(runtime)`** to inspect final
+    /// values — the counters fire DURING `Executor::drop`, so a
+    /// snapshot taken before drop will show all zeros for the
+    /// shutdown-only counters.
+    ///
+    /// Useful as a signal — if any counter is non-zero, the shutdown
+    /// hit a defensive path that should be investigated.
+    ///
+    /// ```ignore
+    /// let stats_handle = runtime.shutdown_stats();
+    /// drop(runtime);
+    /// let stats = stats_handle.snapshot();
+    /// if stats.aborted_unwinds != 0
+    ///     || stats.leaked_box_tasks != 0
+    ///     || stats.unbalanced_normal_shutdowns != 0
+    ///     || stats.cross_queue_undrained != 0
+    /// {
+    ///     // user's own observability — log to wherever they want
+    ///     my_logger::warn!("nexus runtime shutdown: {stats:?}");
+    /// }
+    /// ```
+    ///
+    /// Per PR 2's design (CALLOUT 5 of the plan), the runtime emits no
+    /// log events of its own when these counters fire — users own
+    /// their observability stack. The PR 1a `eprintln!` calls in the
+    /// slab-unwinding-abort path remain (the only signal at the
+    /// moment of process abort) but new abnormal paths added in PR 2
+    /// are pure counter increments.
+    ///
+    /// # Counters
+    ///
+    /// See [`ShutdownStats`](crate::ShutdownStats) for what each
+    /// counter signifies, and [`ShutdownStatsAtomics::snapshot`] for
+    /// the read API on the returned handle.
+    pub fn shutdown_stats(&self) -> std::sync::Arc<crate::ShutdownStatsAtomics> {
+        self.executor.shutdown_stats()
+    }
 }
 
 // =============================================================================
@@ -672,6 +711,13 @@ impl<'w> RuntimeBuilder<'w> {
             parked: std::sync::atomic::AtomicBool::new(false),
         });
 
+        // Wire the cross-wake context into the executor for the
+        // shutdown-time `cross_queue_undrained` tally (PR 2 §2.3).
+        // Bare Executor use in tests has no Runtime, no cross-wake
+        // context, no tally — we install it here for the Runtime
+        // path only.
+        executor.install_cross_wake_for_drop(std::sync::Arc::clone(&cross_wake));
+
         // Install the runtime's cross-wake context as the current-thread
         // owning-executor identity. Lives lifetime-of-Runtime via the
         // guard field below — `dispose_terminal::on_owning_executor`
@@ -726,6 +772,120 @@ impl Runtime {
         F: Future + 'static,
     {
         self.run_loop(future, ParkMode::Spin)
+    }
+
+    /// Drive the executor until pending cross-thread work has settled,
+    /// before shutdown. The canonical "quiesce" step before
+    /// `drop(runtime)` — see `docs/SHUTDOWN.md` for the full pattern.
+    ///
+    /// Loops while:
+    /// 1. The cross-thread queue has entries (drains them).
+    /// 2. The local ready queue has entries (polls them).
+    ///
+    /// Returns `Ok(())` once both are empty (or detected to no longer
+    /// receive new entries). Returns `Err(QuiesceTimeout)` if `timeout`
+    /// elapses first; the error contains diagnostic counts useful for
+    /// determining which producer didn't release its refs.
+    ///
+    /// **This is for clean shutdown, not panic-during-shutdown.** The
+    /// 100ms unwinding-wait in `Executor::drop` remains as
+    /// defense-in-depth for the panic case (where this method can't
+    /// be called).
+    ///
+    /// **The `timeout` parameter has no default — callers must pick a
+    /// budget deliberately.** PR 2 §2.4 open-item 4 evaluated `100ms`
+    /// (matches the unwinding defense), `500ms` (forgiving), and
+    /// "parameter-only" — chose parameter-only to force the user to
+    /// pick a budget appropriate for their producer landscape (a
+    /// trading-system shutdown sequence with multiple Aeron drivers
+    /// plus tokio futures plus channel senders has very different
+    /// settling characteristics than a unit test).
+    ///
+    /// # Canonical shutdown sequence
+    ///
+    /// ```ignore
+    /// // 1. Stop producers of cross-thread refs:
+    /// //    - Drop tokio runtime (or shutdown_timeout)
+    /// //    - Stop Aeron driver thread
+    /// //    - Drop external channel senders
+    ///
+    /// // 2. Quiesce.
+    /// runtime.shutdown_quiesce(Duration::from_millis(500))?;
+    ///
+    /// // 3. Drop the Runtime. Outstanding-ref panic paths in
+    /// //    Executor::drop should be unreachable in normal operation.
+    /// drop(runtime);
+    /// ```
+    ///
+    /// If step 2 returns `QuiesceTimeout`, a producer hasn't released
+    /// its refs. Investigate before letting Runtime drop — the
+    /// unwind-abort path in `Executor::drop` is defensive, not
+    /// desired.
+    pub fn shutdown_quiesce(&mut self, timeout: Duration) -> Result<(), QuiesceTimeout> {
+        // Install the same TLS context block_on uses, so any cross-thread
+        // wakes that fire during quiesce still find a runtime.
+        let _ctx_guard = crate::context::install(
+            self.ctx.as_ptr(),
+            self.io.get(),
+            self.timers.get(),
+            &raw const self.event_time,
+            std::sync::Arc::as_ptr(&self.shutdown.flag_ptr()),
+            std::ptr::from_ref(&self.shutdown.task_waker),
+        );
+        let _cross_wake_guard = crate::cross_wake::install_cross_wake(&self.cross_wake);
+        let _spawn_guard = RuntimeGuard::enter(&raw mut self.executor);
+        let (ready, deferred) = self.executor.poll_context_ptrs();
+        let _ready_guard = crate::waker::set_poll_context(ready, deferred);
+
+        let cross_queue = &*self.cross_wake;
+        let start = Instant::now();
+
+        loop {
+            // Drain whatever's in the cross-thread queue. The returned
+            // count tells us if anything was pending (a non-consuming
+            // "is empty" check on the Vyukov queue would race the
+            // producer; drain-and-count is the right primitive).
+            let drained_this_pass = self
+                .executor
+                .drain_cross_thread(&cross_queue.queue, self.cross_thread_drain_limit);
+
+            // Poll any ready tasks (drains the local ready queue).
+            self.executor.poll();
+
+            // Quiesced means: no live tasks (everything completed), no
+            // ready work pending, no cross-queue entries drained THIS
+            // pass. Live tasks that are parked-but-not-ready also
+            // count as not-quiesced — they're holding refs that
+            // prevent a clean Runtime drop, even if they're not making
+            // progress. The user must either drive them to completion
+            // (cancel-and-poll) or accept QuiesceTimeout and
+            // investigate.
+            let has_ready = self.executor.has_ready();
+            let no_live_tasks = self.executor.task_count() == 0;
+            if !has_ready && drained_this_pass == 0 && no_live_tasks {
+                return Ok(());
+            }
+
+            if start.elapsed() >= timeout {
+                // Final drain to count what's left in the cross-queue
+                // for the diagnostic. Anything after this drain is a
+                // post-timeout race — not counted (and at this point
+                // the user is about to investigate or drop).
+                let remaining_cross_queue = self
+                    .executor
+                    .drain_cross_thread(&cross_queue.queue, usize::MAX)
+                    as u64;
+                return Err(QuiesceTimeout {
+                    remaining_cross_queue,
+                    remaining_outstanding_refs: self.executor.task_count() as u64,
+                    elapsed: start.elapsed(),
+                });
+            }
+
+            // Avoid a tight spin on transient "queue popped a stub"
+            // states. yield_now is a hint to the scheduler.
+            std::thread::yield_now();
+        }
     }
 
     fn run_loop<F>(&mut self, future: F, mode: ParkMode) -> F::Output
@@ -874,6 +1034,58 @@ impl Runtime {
         }
     }
 }
+
+// =============================================================================
+// QuiesceTimeout — error type for `Runtime::shutdown_quiesce`
+// =============================================================================
+
+/// Returned by [`Runtime::shutdown_quiesce`] when the timeout elapses
+/// before the executor reaches a quiesced state.
+///
+/// The diagnostic fields help identify which producer didn't release
+/// its refs:
+///
+/// - `remaining_cross_queue`: number of cross-thread queue entries
+///   still pending at the moment of timeout. Non-zero indicates a
+///   producer thread is still pushing wakes faster than quiesce can
+///   drain them, OR a final-drain wake landed after the last drain
+///   pass — investigate which off-thread producer is still active.
+/// - `remaining_outstanding_refs`: number of tasks still in
+///   `Executor::all_tasks` at the moment of timeout. Each represents a
+///   task with outstanding cross-thread refs (or a held JoinHandle).
+/// - `elapsed`: how long quiesce ran before timing out.
+///
+/// PR 2 §2.4 open-item 5 noted that finer-grained diagnostics
+/// ("which task ID had the outstanding ref") could be added if
+/// implementation revealed them as cheap to surface. The implementation
+/// uses `Executor::task_count()` which doesn't enumerate tasks; adding
+/// per-task data here would require new accessors. Out of scope for
+/// initial PR 2; future enhancement.
+#[derive(Debug)]
+pub struct QuiesceTimeout {
+    /// Number of cross-thread queue entries still pending at timeout.
+    /// Non-zero means a producer is racing the drain loop.
+    pub remaining_cross_queue: u64,
+    /// Number of tasks still alive at the moment of timeout. Each is
+    /// a candidate for "producer hasn't released its refs."
+    pub remaining_outstanding_refs: u64,
+    /// Time elapsed inside `shutdown_quiesce` before returning timeout.
+    /// Approximately equal to the input `timeout`.
+    pub elapsed: Duration,
+}
+
+impl std::fmt::Display for QuiesceTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Runtime::shutdown_quiesce timed out after {:?} with {} outstanding tasks, \
+             {} cross-queue entries pending",
+            self.elapsed, self.remaining_outstanding_refs, self.remaining_cross_queue
+        )
+    }
+}
+
+impl std::error::Error for QuiesceTimeout {}
 
 // =============================================================================
 // Park mode

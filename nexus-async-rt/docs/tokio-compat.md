@@ -246,3 +246,6 @@ shutdown, etc.
   hot-path loop
 - [Integration with nexus-rt](integration-with-nexus-rt.md) — updating
   the World from tokio-bridged tasks
+- [Shutdown](SHUTDOWN.md) — canonical shutdown sequence when mixing
+  tokio + nexus runtimes; covers `shutdown_quiesce` and `ShutdownStats`
+  for observability

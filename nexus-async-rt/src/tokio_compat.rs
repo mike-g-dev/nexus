@@ -174,18 +174,36 @@ fn make_cross_waker(cx: &Context<'_>) -> Waker {
     )
 }
 
-/// Cross-thread waker data. Heap-allocated, pointed to by `RawWaker::data`.
-/// Uses a custom vtable (not the `Wake` trait) so that clone/drop properly
-/// track the task's `ref_count` — matching the contract in `waker.rs`.
-struct CrossTaskWakerData {
-    task_ptr: *mut u8,
+/// Cross-thread waker inner. Arc-allocated, shared across all
+/// `Waker::clone`s. `RawWaker::data` is `Arc::into_raw(Arc<Self>)`.
+///
+/// Uses a custom vtable (not the `Wake` trait) so that the clone path
+/// is `Arc::clone` (one atomic increment) instead of allocating a fresh
+/// per-clone struct. Tokio clones wakers freely (e.g. on every IO
+/// register); per-clone malloc was the hot-path cost PR 2 §2.1
+/// eliminated.
+///
+/// **Field order matters.** `task_ref` is declared BEFORE `ctx` so it
+/// drops first. When the last `Arc` drops, `Inner::drop` runs the
+/// fields in declaration order: `task_ref` first → `TaskRef::Drop` →
+/// `ref_dec` → if terminal, `dispose_terminal` reads the
+/// `CrossWakeContext` pointer from the task header (heap-allocated,
+/// kept alive transitively by our still-alive `ctx: Arc<...>`). Then
+/// `ctx` drops, decrementing the `CrossWakeContext` Arc's refcount.
+struct CrossTaskWakerInner {
+    /// Drops FIRST. See the type doc-comment for why.
+    task_ref: crate::task::TaskRef,
+    /// Drops SECOND. Keeps `CrossWakeContext` alive while `task_ref`
+    /// drops, so `dispose_terminal` can read the ctx pointer from the
+    /// task header without it dangling.
     ctx: std::sync::Arc<crate::cross_wake::CrossWakeContext>,
 }
 
-// SAFETY: task_ptr is only used for atomic operations (try_set_queued,
-// is_completed, ref_inc/ref_dec) and queue push — all thread-safe.
-unsafe impl Send for CrossTaskWakerData {}
-unsafe impl Sync for CrossTaskWakerData {}
+// SAFETY: TaskRef is Send (see task.rs). Arc<CrossWakeContext> is Send
+// + Sync. Sync is required because tokio's RawWaker passes &Self to
+// `wake_by_ref` and may share clones across threads.
+unsafe impl Send for CrossTaskWakerInner {}
+unsafe impl Sync for CrossTaskWakerInner {}
 
 use std::task::RawWaker;
 use std::task::RawWakerVTable;
@@ -201,61 +219,62 @@ fn make_cross_task_waker(
     task_ptr: *mut u8,
     ctx: std::sync::Arc<crate::cross_wake::CrossWakeContext>,
 ) -> Waker {
-    // Increment task refcount — this waker holds a reference.
-    unsafe { crate::task::ref_inc(task_ptr) };
-    let data = Box::into_raw(Box::new(CrossTaskWakerData { task_ptr, ctx }));
-    let raw = RawWaker::new(data.cast::<()>(), &CROSS_TASK_VTABLE);
+    // SAFETY: caller (make_cross_waker → task_ptr_from_local_waker)
+    // returned task_ptr from a live local waker, refcount >= 1.
+    let inner = std::sync::Arc::new(CrossTaskWakerInner {
+        task_ref: unsafe { crate::task::TaskRef::acquire(task_ptr) },
+        ctx,
+    });
+    let raw = RawWaker::new(
+        std::sync::Arc::into_raw(inner).cast::<()>(),
+        &CROSS_TASK_VTABLE,
+    );
     unsafe { Waker::from_raw(raw) }
 }
 
-/// Clone: new Box, Arc::clone ctx, inc task refcount.
+/// Clone: bump the Arc refcount. No allocation, no task-level ref_inc
+/// (the inner already holds one TaskRef shared by all clones).
 unsafe fn cross_task_clone(data: *const ()) -> RawWaker {
-    let orig = unsafe { &*data.cast::<CrossTaskWakerData>() };
-    unsafe { crate::task::ref_inc(orig.task_ptr) };
-    let cloned = Box::new(CrossTaskWakerData {
-        task_ptr: orig.task_ptr,
-        ctx: orig.ctx.clone(),
-    });
-    RawWaker::new(Box::into_raw(cloned).cast::<()>(), &CROSS_TASK_VTABLE)
+    // Reconstruct the Arc from the raw pointer. We MUST NOT drop it —
+    // the original Arc still belongs to whoever holds the RawWaker we
+    // were derived from.
+    let arc = unsafe { std::sync::Arc::from_raw(data.cast::<CrossTaskWakerInner>()) };
+    let cloned = std::sync::Arc::clone(&arc);
+    // Hand the original Arc back to its owner (the source RawWaker).
+    let _ = std::sync::Arc::into_raw(arc);
+    RawWaker::new(
+        std::sync::Arc::into_raw(cloned).cast::<()>(),
+        &CROSS_TASK_VTABLE,
+    )
 }
 
-/// Wake by value: push to inbox, free box, dec refcount.
+/// Wake by value: dispatch the wake, then drop our Arc. If we held the
+/// last ref, `Inner::drop` runs — `task_ref` drops first (releasing the
+/// task ref via `dispose_terminal` if terminal), then `ctx` drops.
 unsafe fn cross_task_wake(data: *const ()) {
-    unsafe { cross_task_wake_by_ref(data) };
-    let boxed = unsafe { Box::from_raw(data.cast_mut().cast::<CrossTaskWakerData>()) };
-    let task_ptr = boxed.task_ptr;
-    // Release the ref; on terminal, dispose_terminal routes via the
-    // cross-queue (this fires off-thread — tokio worker thread). The
-    // `try_set_queued` gate inside dispose_terminal prevents the
-    // double-push that wake_by_ref above might have already done.
-    match unsafe { crate::task::ref_dec(task_ptr) } {
-        crate::task::FreeAction::Retain => {}
-        crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
-        }
-    }
-    // boxed Drop runs here — releases the Arc<CrossWakeContext>.
-}
-
-/// Wake by ref: push to cross-thread inbox. No refcount change.
-unsafe fn cross_task_wake_by_ref(data: *const ()) {
-    let waker_data = unsafe { &*data.cast::<CrossTaskWakerData>() };
+    let arc = unsafe { std::sync::Arc::from_raw(data.cast::<CrossTaskWakerInner>()) };
+    // SAFETY: arc.task_ref holds one ref on the task — alive across
+    // this call. Same for arc.ctx (Arc).
     unsafe {
-        crate::cross_wake::wake_task_cross_thread(waker_data.task_ptr, &waker_data.ctx);
+        crate::cross_wake::wake_task_cross_thread(arc.task_ref.as_ptr(), &arc.ctx);
+    }
+    // Drop arc here. If last ref, inner drops → task_ref drops →
+    // ref_dec → dispose_terminal (if terminal) → ctx drops.
+}
+
+/// Wake by ref: dispatch only. No Arc takeover, no ref change.
+unsafe fn cross_task_wake_by_ref(data: *const ()) {
+    let inner = unsafe { &*data.cast::<CrossTaskWakerInner>() };
+    unsafe {
+        crate::cross_wake::wake_task_cross_thread(inner.task_ref.as_ptr(), &inner.ctx);
     }
 }
 
-/// Drop: free box, dec refcount. Terminal frees route via dispose_terminal.
+/// Drop: drop our Arc. If we held the last ref, `Inner::drop` runs —
+/// see `cross_task_wake` for the cascade.
 unsafe fn cross_task_drop(data: *const ()) {
-    let boxed = unsafe { Box::from_raw(data.cast_mut().cast::<CrossTaskWakerData>()) };
-    let task_ptr = boxed.task_ptr;
-    match unsafe { crate::task::ref_dec(task_ptr) } {
-        crate::task::FreeAction::Retain => {}
-        crate::task::FreeAction::FreeBox | crate::task::FreeAction::FreeSlab => {
-            unsafe { crate::cross_wake::dispose_terminal(task_ptr) };
-        }
-    }
-    // boxed Drop runs here — releases the Arc<CrossWakeContext>.
+    let _arc = unsafe { std::sync::Arc::from_raw(data.cast::<CrossTaskWakerInner>()) };
+    // _arc drops at end of scope.
 }
 
 // =============================================================================
@@ -406,5 +425,219 @@ impl std::fmt::Debug for TokioJoinError {
 impl std::error::Error for TokioJoinError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.0.source()
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod arc_tests {
+    //! White-box tests for §2.1's `Arc<CrossTaskWakerInner>` semantics.
+    //!
+    //! Pre-§2.1 each per-clone `Box<CrossTaskWakerData>` carried its own
+    //! task-level `ref_inc` and matching `ref_dec`. Under Arc, the
+    //! single `TaskRef` lives in `Inner` — N Arc clones share it,
+    //! producing exactly one task-level `ref_inc` (at construction) and
+    //! one task-level `ref_dec` (at last-Arc drop, via `Inner::drop`
+    //! → `TaskRef::Drop`). These tests pin that contract.
+
+    use super::*;
+    use crate::cross_wake::{CrossWakeContext, CrossWakeQueue};
+    use crate::task::{self, Task};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc as StdArc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll};
+
+    struct ArcNoop;
+    impl Future for ArcNoop {
+        type Output = ();
+        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<()> {
+            Poll::Ready(())
+        }
+    }
+
+    fn make_test_task() -> *mut u8 {
+        let task = Box::new(Task::new_boxed(ArcNoop, 0));
+        Box::into_raw(task) as *mut u8
+    }
+
+    fn make_test_ctx() -> StdArc<CrossWakeContext> {
+        let poll = mio::Poll::new().expect("mio::Poll");
+        let waker = StdArc::new(
+            mio::Waker::new(poll.registry(), mio::Token(usize::MAX)).expect("mio::Waker"),
+        );
+        StdArc::new(CrossWakeContext {
+            queue: CrossWakeQueue::new(),
+            mio_waker: waker,
+            parked: AtomicBool::new(false),
+        })
+    }
+
+    /// CALLOUT 1: N Arc clones produce ONE task-level `ref_inc` (at
+    /// construction) and ONE `ref_dec` (at last-Arc drop).
+    #[test]
+    fn multi_clone_arc_terminal_ref_count() {
+        let ctx = make_test_ctx();
+        let task_ptr = make_test_task();
+
+        // Baseline: rc = 1 (Task::new_boxed initial executor-style ref).
+        assert_eq!(unsafe { task::ref_count(task_ptr) }, 1);
+
+        // Construct the cross-task waker. ONE task-level ref_inc fires
+        // here (TaskRef::acquire inside make_cross_task_waker).
+        let waker0 = make_cross_task_waker(task_ptr, StdArc::clone(&ctx));
+        assert_eq!(
+            unsafe { task::ref_count(task_ptr) },
+            2,
+            "make_cross_task_waker must take exactly one task-level ref"
+        );
+
+        // Clone N times via tokio's Waker::clone path → vtable
+        // cross_task_clone → Arc::clone (atomic only, no task-level
+        // ref_inc).
+        let waker1 = waker0.clone();
+        let waker2 = waker0.clone();
+        let waker3 = waker0.clone();
+        let waker4 = waker0.clone();
+        assert_eq!(
+            unsafe { task::ref_count(task_ptr) },
+            2,
+            "Arc::clone must NOT bump task-level refcount"
+        );
+
+        // Drop in arbitrary order. Each drop is Arc::from_raw + drop —
+        // atomic decrement only — until the LAST drop runs Inner::drop.
+        drop(waker2);
+        drop(waker4);
+        drop(waker0);
+        drop(waker1);
+        assert_eq!(
+            unsafe { task::ref_count(task_ptr) },
+            2,
+            "intermediate Arc drops must NOT decrement task-level refcount"
+        );
+
+        // Final Arc drop → Inner::drop → task_ref drops → ref_dec
+        // → if terminal, dispose_terminal (here: not terminal because
+        // the original executor-style ref still exists, so rc 2 → 1).
+        drop(waker3);
+        assert_eq!(
+            unsafe { task::ref_count(task_ptr) },
+            1,
+            "last Arc drop must produce exactly ONE task-level ref_dec"
+        );
+
+        // Cleanup: drop the executor-style ref via complete_and_unref →
+        // terminal → free.
+        unsafe {
+            task::drop_task_future(task_ptr);
+            assert!(matches!(
+                task::complete_and_unref(task_ptr),
+                task::FreeAction::FreeBox
+            ));
+            task::free_task(task_ptr);
+        }
+    }
+
+    /// Wake-by-value also produces the right ref count: it consumes the
+    /// Waker (one Arc drop) but does not extra-decrement.
+    #[test]
+    fn wake_by_value_consumes_one_arc_only() {
+        let ctx = make_test_ctx();
+        let task_ptr = make_test_task();
+
+        let waker0 = make_cross_task_waker(task_ptr, StdArc::clone(&ctx));
+        let waker1 = waker0.clone();
+
+        // After construction + clone: task rc=2, Arc strong=2.
+        assert_eq!(unsafe { task::ref_count(task_ptr) }, 2);
+
+        // wake() consumes waker0 → cross_task_wake → Arc::from_raw +
+        // wake_task_cross_thread + Arc drop. Since waker1 still holds
+        // an Arc, Inner::drop does NOT run; task ref_count unchanged.
+        waker0.wake();
+        assert_eq!(
+            unsafe { task::ref_count(task_ptr) },
+            2,
+            "wake-by-value with surviving sibling Arc must not ref_dec the task"
+        );
+
+        // Drop the survivor → last Arc → Inner::drop → ref_dec.
+        drop(waker1);
+        assert_eq!(unsafe { task::ref_count(task_ptr) }, 1);
+
+        // After wake(), the task is in the cross-queue. Drain it so
+        // Drop on ctx doesn't leak the entry. (Stub-aware pop.)
+        let _ = ctx.queue.pop();
+        // Clear queued so cleanup works.
+        if unsafe { task::is_queued(task_ptr) } {
+            unsafe { task::clear_queued(task_ptr) };
+        }
+
+        unsafe {
+            task::drop_task_future(task_ptr);
+            assert!(matches!(
+                task::complete_and_unref(task_ptr),
+                task::FreeAction::FreeBox
+            ));
+            task::free_task(task_ptr);
+        }
+    }
+
+    /// Performance benchmark for §2.1's per-clone improvement. Run with:
+    ///
+    /// ```bash
+    /// cargo test -p nexus-async-rt --features tokio-compat --release \
+    ///     --lib tokio_compat::arc_tests::bench_cross_task_clone \
+    ///     -- --ignored --nocapture
+    /// ```
+    ///
+    /// Pre-§2.1 (per-clone Box): ~50ns under glibc malloc.
+    /// Post-§2.1 (Arc::clone): ~5ns atomic.
+    ///
+    /// Same convention as `lib.rs::tests::dispatch_latency`. Not a
+    /// criterion bench because the existing `benches/` files are stale
+    /// and don't build (pre-existing breakage; out of scope for PR 2).
+    #[test]
+    #[ignore = "performance benchmark, run with --release --nocapture"]
+    fn bench_cross_task_clone() {
+        use std::time::Instant;
+
+        let ctx = make_test_ctx();
+        let task_ptr = make_test_task();
+        let waker = make_cross_task_waker(task_ptr, StdArc::clone(&ctx));
+
+        // Warmup.
+        let warmup: Vec<Waker> = (0..10_000).map(|_| waker.clone()).collect();
+        drop(warmup);
+
+        // Measure: clone N times into a Vec, then drop the Vec.
+        const ITERS: usize = 1_000_000;
+        let mut clones = Vec::with_capacity(ITERS);
+        let start = Instant::now();
+        for _ in 0..ITERS {
+            clones.push(waker.clone());
+        }
+        let clone_elapsed = start.elapsed();
+
+        let drop_start = Instant::now();
+        drop(clones);
+        let drop_elapsed = drop_start.elapsed();
+
+        let ns_per_clone = clone_elapsed.as_nanos() / ITERS as u128;
+        let ns_per_drop = drop_elapsed.as_nanos() / ITERS as u128;
+        println!("cross_task_waker: clone={ns_per_clone}ns, drop={ns_per_drop}ns ({ITERS} iters)");
+
+        // Cleanup.
+        drop(waker);
+        unsafe {
+            task::drop_task_future(task_ptr);
+            let _ = task::complete_and_unref(task_ptr);
+            task::free_task(task_ptr);
+        }
     }
 }

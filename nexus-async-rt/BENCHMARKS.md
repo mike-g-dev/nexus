@@ -202,3 +202,43 @@ echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 sudo taskset -c 0 cargo test ...
 echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 ```
+
+---
+
+## tokio_compat: cross-task waker clone (PR 2 §2.1)
+
+PR 2 §2.1 rewrote the tokio bridge's `cross_task_clone` from per-clone
+`Box<CrossTaskWakerData>` allocation to `Arc::clone` on a shared
+`Arc<CrossTaskWakerInner>`. The old shape allocated on every waker
+clone (tokio clones wakers on every IO register and freely during
+scheduling). The new shape is one heap allocation at construction
+plus atomic refcount bumps per clone.
+
+Measured on the same desktop-class processor:
+
+| Operation              | Pre-§2.1 (Box)     | Post-§2.1 (Arc)    |
+|------------------------|--------------------|--------------------|
+| `Waker::clone`         | ~50 ns (glibc malloc, plan estimate) | **9 ns** (Arc::clone — measured) |
+| `Waker::drop`          | ~25 ns (glibc free, plan estimate)   | **5 ns** (atomic decrement — measured) |
+
+The pre-§2.1 numbers are from the plan's stated estimates (glibc
+malloc latency); a controlled before/after measurement requires
+running the bench against the pre-§2.1 commit. The post-§2.1
+numbers were measured by:
+
+```bash
+cargo test -p nexus-async-rt --features tokio-compat --release \
+    --lib tokio_compat::arc_tests::bench_cross_task_clone \
+    -- --ignored --nocapture
+```
+
+The bench measures 1,000,000 iterations of `waker.clone()` followed
+by 1,000,000 drops, after a 10K-iteration warmup. The runtime
+allocator is glibc's default (no jemalloc/tcmalloc).
+
+Note: the `benches/cross_thread_wake.rs` criterion target referenced
+by the PR 2 plan was not added — the existing `benches/` files
+(`executor.rs`, `channel.rs`) don't build against the current crate
+API (pre-existing breakage, out of PR 2 scope). The §2.1 perf
+measurement uses a `#[test] #[ignore]` bench instead, matching the
+convention of `lib.rs::tests::dispatch_latency`.

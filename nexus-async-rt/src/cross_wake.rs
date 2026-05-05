@@ -668,6 +668,64 @@ impl Drop for FallbackWaker {
     }
 }
 
+/// Sender waker slot — single-sender, single-receiver, no intrusive list
+/// needed. Used by SPSC channels (typed and bytes) for the sender side
+/// of the wake handshake. Same EMPTY/STORED/REGISTERING coordination
+/// as `TaskWakerSlot` and `FallbackWaker`.
+///
+/// Single-registerer (the lone sender), single-waker (the lone
+/// receiver) — coordination is simpler than `TaskWakerSlot` which
+/// fields multi-thread access on the wake side.
+pub(crate) struct TxWakerSlot {
+    state: std::sync::atomic::AtomicU8,
+    waker: UnsafeCell<Option<std::task::Waker>>,
+}
+
+unsafe impl Send for TxWakerSlot {}
+unsafe impl Sync for TxWakerSlot {}
+
+impl TxWakerSlot {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: std::sync::atomic::AtomicU8::new(EMPTY),
+            waker: UnsafeCell::new(None),
+        }
+    }
+
+    /// Register. Called by the single sender — no concurrent register.
+    pub(crate) fn register(&self, waker: &std::task::Waker) {
+        let prev = self.state.swap(REGISTERING, Ordering::Acquire);
+        debug_assert_ne!(prev, REGISTERING);
+        unsafe { *self.waker.get() = Some(waker.clone()) };
+        self.state.store(STORED, Ordering::Release);
+    }
+
+    /// Wake. Called by receiver (single thread).
+    pub(crate) fn wake(&self) -> bool {
+        if self
+            .state
+            .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            if let Some(w) = unsafe { (*self.waker.get()).take() } {
+                w.wake();
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn has_waker(&self) -> bool {
+        self.state.load(Ordering::Acquire) == STORED
+    }
+}
+
+impl Drop for TxWakerSlot {
+    fn drop(&mut self) {
+        *self.waker.get_mut() = None;
+    }
+}
+
 // =============================================================================
 // Cross-thread waker test scenarios — shared by all four channels' uaf_tests
 // =============================================================================

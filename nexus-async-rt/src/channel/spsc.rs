@@ -19,75 +19,14 @@
 //! let val = rx.recv().await.unwrap();
 //! ```
 
-use std::cell::UnsafeCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 
 use super::{RecvError, SendError, TryRecvError, TrySendError};
-use crate::cross_wake::{FallbackWaker, TaskWakerSlot};
-
-// Local state constants used by `TxWakerSlot` below. (RxWakerSlot's
-// constants moved to `cross_wake` with the slot consolidation in PR
-// 1b. TxWakerSlot is single-sender / single-receiver — out of scope
-// for the cross-thread slot consolidation since it's not duplicated
-// across all channels — and keeps its own copy.)
-const EMPTY: u8 = 0;
-const STORED: u8 = 1;
-const REGISTERING: u8 = 2;
-
-/// Sender waker slot — single sender, no intrusive list needed.
-struct TxWakerSlot {
-    state: AtomicU8,
-    waker: UnsafeCell<Option<Waker>>,
-}
-
-unsafe impl Send for TxWakerSlot {}
-unsafe impl Sync for TxWakerSlot {}
-
-impl TxWakerSlot {
-    fn new() -> Self {
-        Self {
-            state: AtomicU8::new(EMPTY),
-            waker: UnsafeCell::new(None),
-        }
-    }
-
-    /// Register. Called by the single sender — no concurrent register.
-    fn register(&self, waker: &Waker) {
-        let prev = self.state.swap(REGISTERING, Ordering::Acquire);
-        debug_assert_ne!(prev, REGISTERING);
-        unsafe { *self.waker.get() = Some(waker.clone()) };
-        self.state.store(STORED, Ordering::Release);
-    }
-
-    /// Wake. Called by receiver (single thread).
-    fn wake(&self) -> bool {
-        if self
-            .state
-            .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-        {
-            if let Some(w) = unsafe { (*self.waker.get()).take() } {
-                w.wake();
-                return true;
-            }
-        }
-        false
-    }
-
-    fn has_waker(&self) -> bool {
-        self.state.load(Ordering::Acquire) == STORED
-    }
-}
-
-impl Drop for TxWakerSlot {
-    fn drop(&mut self) {
-        *self.waker.get_mut() = None;
-    }
-}
+use crate::cross_wake::{FallbackWaker, TaskWakerSlot, TxWakerSlot};
 
 // =============================================================================
 // Shared state
