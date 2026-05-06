@@ -116,6 +116,22 @@ fn no_allocation_on_repoll_across_wakers() {
     // heap traffic, so we count it OUTSIDE the no-alloc assertion.
     assert!(matches!(poll_with(fut.as_mut(), &wakers[0]), Poll::Pending));
 
+    // Warmup: cycle through every waker twice before measurement.
+    // Some platforms (notably glibc with per-thread `tcache`) lazily
+    // initialize allocator state on first access to a given size
+    // class, and the standard library can lazily initialize per-waker
+    // vtable resolution caches. Without warmup, the first transition
+    // to each new waker can record a one-time allocation that has
+    // nothing to do with `Cancelled`'s loop. With warmup, every
+    // codepath the counted loop will hit has been exercised at least
+    // once, so the counted region measures genuine steady-state
+    // allocation behavior — which should be zero.
+    for _ in 0..2 {
+        for waker in wakers.iter() {
+            assert!(matches!(poll_with(fut.as_mut(), waker), Poll::Pending));
+        }
+    }
+
     // Now the heavy loop. Pre-PR-3 this would Box::new a fresh
     // WaiterNode every iteration where the waker changed (effectively
     // every iteration since we cycle through 5 distinct wakers).
