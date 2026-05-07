@@ -77,7 +77,16 @@ impl<S: Read + Write> TlsStream<S> {
             if self.codec.wants_read() {
                 // read_tls_from drives one per-call read against the
                 // Read trait and processes the resulting records.
-                self.codec.read_tls_from(&mut self.stream)?;
+                // Ok(0) means the peer closed mid-handshake — surface
+                // explicitly so we don't loop forever with
+                // is_handshaking() still true.
+                let n = self.codec.read_tls_from(&mut self.stream)?;
+                if n == 0 {
+                    return Err(super::TlsError::Io(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "connection closed during TLS handshake",
+                    )));
+                }
             }
         }
         // Flush any remaining handshake data (client Finished, etc).

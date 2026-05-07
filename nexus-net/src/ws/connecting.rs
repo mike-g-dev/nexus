@@ -185,7 +185,15 @@ impl<S: Read + Write> Connecting<S> {
                         .as_mut()
                         .expect("TLS codec must exist in TLS handshake state");
                     match tls.read_tls_from(&mut *self.stream) {
-                        Ok(0) => return Err(Error::Handshake(HandshakeError::MalformedHttp)),
+                        Ok(0) => {
+                            // Peer closed mid-TLS-handshake — not a
+                            // malformed-HTTP condition (we haven't sent
+                            // the HTTP upgrade yet).
+                            return Err(Error::Io(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "connection closed during TLS handshake",
+                            )));
+                        }
                         Ok(_) => {}
                         Err(TlsError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {
                             return Ok(None);

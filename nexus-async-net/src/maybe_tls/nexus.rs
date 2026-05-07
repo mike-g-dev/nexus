@@ -52,8 +52,9 @@ use nexus_net::tls::{TlsBufferCapacities, TlsCodec, TlsError};
 ///
 /// Trading workloads with small frequent messages can reduce the
 /// `pending_write` capacity via the connection builder's
-/// `tls_buffer_capacities([`TlsBufferCapacities`]) setter — 8–16 KiB
-/// is sufficient for most order-entry and market-data clients.
+/// `tls_buffer_capacities` setter (takes a [`TlsBufferCapacities`])
+/// — 8–16 KiB is sufficient for most order-entry and market-data
+/// clients.
 pub enum MaybeTls {
     /// Plain TCP (ws://, http://).
     Plain(TcpStream),
@@ -140,7 +141,15 @@ impl TlsInner {
                 }
                 let n = self.codec.write_tls_to(&mut self.pending_write.spare())?;
                 if n == 0 {
-                    break;
+                    // wants_write said yes, spare was non-empty (checked
+                    // above), yet rustls produced 0 bytes. Contract
+                    // violation — silent break would loop the outer
+                    // while forever with wants_write still true.
+                    return Err(TlsError::Io(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "rustls reported wants_write but produced 0 bytes \
+                         into a non-empty buffer during handshake",
+                    )));
                 }
                 self.pending_write.filled(n);
                 handshake_drain_pending(self).await?;
@@ -202,7 +211,14 @@ impl TlsInner {
             }
             let n = self.codec.write_tls_to(&mut self.pending_write.spare())?;
             if n == 0 {
-                break;
+                // Same contract violation as the inner write loop —
+                // surface explicitly rather than silently exiting with
+                // wants_write still true.
+                return Err(TlsError::Io(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "rustls reported wants_write but produced 0 bytes \
+                     into a non-empty buffer during handshake flush",
+                )));
             }
             self.pending_write.filled(n);
         }
