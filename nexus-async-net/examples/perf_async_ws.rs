@@ -922,8 +922,7 @@ fn bench_tls_loopback_blocking(port: u16, wire: Vec<u8>, msg_count: u64) -> (Dur
         .build()
         .unwrap();
     let codec = nexus_net::tls::TlsCodec::new(&tls_config, "localhost").unwrap();
-    let mut tls = nexus_net::tls::TlsStream::new(tcp, codec);
-    tls.handshake().unwrap();
+    let tls = nexus_net::tls::TlsStream::connect(tcp, codec).unwrap();
 
     let mut ws = nexus_net::ws::ClientBuilder::new()
         .connect_with(tls, "wss://localhost/")
