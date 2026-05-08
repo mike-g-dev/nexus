@@ -673,13 +673,23 @@ impl<const CAP: usize> FlatAsciiString<CAP> {
     /// let s: FlatAsciiString<4> = FlatAsciiString::empty();
     /// let _bad: FlatAsciiString<0> = s.widen();
     /// ```
+    ///
+    /// Wrong direction (`NEW_CAP < CAP`) is also rejected at compile time:
+    ///
+    /// ```compile_fail
+    /// use nexus_ascii::FlatAsciiString;
+    /// let s: FlatAsciiString<32> = FlatAsciiString::empty();
+    /// let _bad: FlatAsciiString<8> = s.widen(); // use tighten instead
+    /// ```
     #[inline]
     pub fn widen<const NEW_CAP: usize>(self) -> FlatAsciiString<NEW_CAP> {
         let () = FlatAsciiString::<NEW_CAP>::_CAP_ASSERT;
-
-        // Runtime check (can't do CAP comparison in const block with two generics)
-        // This will be optimized away since both are const
-        assert!(NEW_CAP >= CAP, "NEW_CAP must be >= CAP");
+        const {
+            assert!(
+                NEW_CAP >= CAP,
+                "widen requires NEW_CAP >= CAP; use tighten for smaller"
+            );
+        }
 
         let mut data = [0u8; NEW_CAP];
         // SAFETY: CAP <= NEW_CAP, buffers don't overlap
@@ -691,6 +701,11 @@ impl<const CAP: usize> FlatAsciiString<CAP> {
     }
 
     /// Tightens the string to a smaller capacity.
+    ///
+    /// # Panics
+    ///
+    /// Panics at compile time if `NEW_CAP > CAP` (use [`widen`](Self::widen)
+    /// for larger capacities) or `NEW_CAP == 0`.
     ///
     /// # Errors
     ///
@@ -713,9 +728,23 @@ impl<const CAP: usize> FlatAsciiString<CAP> {
     /// let s: FlatAsciiString<8> = FlatAsciiString::empty();
     /// let _bad: Result<FlatAsciiString<0>, _> = s.tighten();
     /// ```
+    ///
+    /// Wrong direction (`NEW_CAP > CAP`) is also rejected at compile time:
+    ///
+    /// ```compile_fail
+    /// use nexus_ascii::FlatAsciiString;
+    /// let s: FlatAsciiString<8> = FlatAsciiString::empty();
+    /// let _bad: Result<FlatAsciiString<32>, _> = s.tighten(); // use widen instead
+    /// ```
     #[inline]
     pub fn tighten<const NEW_CAP: usize>(self) -> Result<FlatAsciiString<NEW_CAP>, AsciiError> {
         let () = FlatAsciiString::<NEW_CAP>::_CAP_ASSERT;
+        const {
+            assert!(
+                NEW_CAP <= CAP,
+                "tighten requires NEW_CAP <= CAP; use widen for larger"
+            );
+        }
 
         let len = self.len();
         if len > NEW_CAP {
@@ -2179,5 +2208,110 @@ mod tests {
         let s: FlatAsciiString<12> = FlatAsciiString::try_from("ABCDEFGHIJKL").unwrap();
         assert_eq!(s.as_str(), "ABCDEFGHIJKL");
         assert_eq!(s.len(), 12);
+    }
+
+    // =========================================================================
+    // CAP=1 coverage — smallest legal capacity per `_CAP_ASSERT`.
+    // Pins that none of the small-CAP code paths assume CAP >= 8 (or even
+    // CAP > 1).
+    // =========================================================================
+
+    #[test]
+    fn flat_string_cap1_empty() {
+        let s: FlatAsciiString<1> = FlatAsciiString::empty();
+        assert!(s.is_empty());
+        assert_eq!(s.len(), 0);
+        assert_eq!(s.as_str(), "");
+    }
+
+    #[test]
+    fn flat_string_cap1_full_fill() {
+        let s: FlatAsciiString<1> = FlatAsciiString::try_from("X").unwrap();
+        assert_eq!(s.as_str(), "X");
+        assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    fn flat_string_cap1_too_long() {
+        let r: Result<FlatAsciiString<1>, _> = FlatAsciiString::try_from("XY");
+        assert!(matches!(r, Err(AsciiError::TooLong { len: 2, cap: 1 })));
+    }
+
+    #[test]
+    fn flat_string_cap1_eq_and_cmp() {
+        let a: FlatAsciiString<1> = FlatAsciiString::try_from("A").unwrap();
+        let b: FlatAsciiString<1> = FlatAsciiString::try_from("A").unwrap();
+        let c: FlatAsciiString<1> = FlatAsciiString::try_from("B").unwrap();
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert!(a < c);
+    }
+
+    #[test]
+    fn flat_string_cap1_from_static() {
+        const FLAG: FlatAsciiString<1> = FlatAsciiString::from_static("Y");
+        assert_eq!(FLAG.as_str(), "Y");
+        assert_eq!(FLAG.len(), 1);
+    }
+
+    // =========================================================================
+    // Cross-cap widen/tighten — non-multiple-of-8 source AND destination.
+    // Pins that the const-block direction checks accept legal odd-cap
+    // pairings and that the runtime copy path handles them correctly.
+    // =========================================================================
+
+    #[test]
+    fn flat_string_widen_cap4_to_cap12() {
+        let s: FlatAsciiString<4> = FlatAsciiString::try_from("AB").unwrap();
+        let w: FlatAsciiString<12> = s.widen();
+        assert_eq!(w.as_str(), "AB");
+        assert_eq!(w.len(), 2);
+    }
+
+    #[test]
+    fn flat_string_widen_cap4_full_to_cap12() {
+        let s: FlatAsciiString<4> = FlatAsciiString::try_from("ABCD").unwrap();
+        let w: FlatAsciiString<12> = s.widen();
+        assert_eq!(w.as_str(), "ABCD");
+        assert_eq!(w.len(), 4);
+    }
+
+    #[test]
+    fn flat_string_widen_cap3_to_cap7() {
+        let s: FlatAsciiString<3> = FlatAsciiString::try_from("AB").unwrap();
+        let w: FlatAsciiString<7> = s.widen();
+        assert_eq!(w.as_str(), "AB");
+        assert_eq!(w.len(), 2);
+    }
+
+    #[test]
+    fn flat_string_tighten_cap12_to_cap4() {
+        let s: FlatAsciiString<12> = FlatAsciiString::try_from("AB").unwrap();
+        let t: FlatAsciiString<4> = s.tighten().unwrap();
+        assert_eq!(t.as_str(), "AB");
+        assert_eq!(t.len(), 2);
+    }
+
+    #[test]
+    fn flat_string_tighten_cap12_full_to_cap4() {
+        let s: FlatAsciiString<12> = FlatAsciiString::try_from("ABCD").unwrap();
+        let t: FlatAsciiString<4> = s.tighten().unwrap();
+        assert_eq!(t.as_str(), "ABCD");
+        assert_eq!(t.len(), 4);
+    }
+
+    #[test]
+    fn flat_string_tighten_cap12_too_long_to_cap4() {
+        let s: FlatAsciiString<12> = FlatAsciiString::try_from("ABCDEFG").unwrap();
+        let t: Result<FlatAsciiString<4>, _> = s.tighten();
+        assert!(matches!(t, Err(AsciiError::TooLong { len: 7, cap: 4 })));
+    }
+
+    #[test]
+    fn flat_string_tighten_cap7_to_cap3() {
+        let s: FlatAsciiString<7> = FlatAsciiString::try_from("AB").unwrap();
+        let t: FlatAsciiString<3> = s.tighten().unwrap();
+        assert_eq!(t.as_str(), "AB");
+        assert_eq!(t.len(), 2);
     }
 }
