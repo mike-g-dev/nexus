@@ -23,9 +23,19 @@ use core::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
     /// Input length doesn't match expected format length.
-    InvalidLength { expected: usize, got: usize },
+    InvalidLength {
+        /// The length the format requires.
+        expected: usize,
+        /// The length of the input that was provided.
+        got: usize,
+    },
     /// Invalid character at the given position.
-    InvalidChar { position: usize, byte: u8 },
+    InvalidChar {
+        /// Byte index in the input where the invalid character was found.
+        position: usize,
+        /// The invalid byte value.
+        byte: u8,
+    },
 }
 
 impl fmt::Display for ParseError {
@@ -58,9 +68,19 @@ impl std::error::Error for ParseError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UuidParseError {
     /// Input length doesn't match expected format length.
-    InvalidLength { expected: usize, got: usize },
+    InvalidLength {
+        /// The length the format requires.
+        expected: usize,
+        /// The length of the input that was provided.
+        got: usize,
+    },
     /// Invalid character at the given position.
-    InvalidChar { position: usize, byte: u8 },
+    InvalidChar {
+        /// Byte index in the input where the invalid character was found.
+        position: usize,
+        /// The invalid byte value.
+        byte: u8,
+    },
     /// Structural format error (missing or misplaced dashes).
     InvalidFormat,
 }
@@ -106,9 +126,19 @@ impl From<ParseError> for UuidParseError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeError {
     /// Input length doesn't match expected format length.
-    InvalidLength { expected: usize, got: usize },
+    InvalidLength {
+        /// The length the format requires.
+        expected: usize,
+        /// The length of the input that was provided.
+        got: usize,
+    },
     /// Invalid character at the given position.
-    InvalidChar { position: usize, byte: u8 },
+    InvalidChar {
+        /// Byte index in the input where the invalid character was found.
+        position: usize,
+        /// The invalid byte value.
+        byte: u8,
+    },
     /// Value overflows the target integer type.
     Overflow,
 }
@@ -154,9 +184,19 @@ impl From<ParseError> for DecodeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeIdParseError {
     /// Input length doesn't match expected capacity or format.
-    InvalidLength { expected: usize, got: usize },
+    InvalidLength {
+        /// The length the format requires.
+        expected: usize,
+        /// The length of the input that was provided.
+        got: usize,
+    },
     /// Invalid character at the given position.
-    InvalidChar { position: usize, byte: u8 },
+    InvalidChar {
+        /// Byte index in the input where the invalid character was found.
+        position: usize,
+        /// The invalid byte value.
+        byte: u8,
+    },
     /// Structural format error (missing underscore separator).
     InvalidFormat,
     /// Prefix is empty or contains non-lowercase-ASCII characters.

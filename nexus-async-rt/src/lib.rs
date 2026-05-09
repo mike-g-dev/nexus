@@ -33,6 +33,7 @@
 // Single-threaded runtime — futures are intentionally !Send.
 #![allow(clippy::future_not_send)]
 #![cfg(unix)]
+#![warn(missing_docs)]
 
 mod alloc;
 mod backoff;

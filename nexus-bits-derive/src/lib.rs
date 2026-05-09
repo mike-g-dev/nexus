@@ -1,3 +1,10 @@
+//! Derive and attribute macros for nexus-bits.
+//!
+//! Use `nexus-bits` instead of depending on this crate directly. The
+//! macros are re-exported from `nexus_bits::{IntEnum, bit_storage}`.
+
+#![warn(missing_docs)]
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -9,6 +16,14 @@ use syn::{
 // IntEnum derive
 // =============================================================================
 
+/// Derive `nexus_bits::IntEnum` for a primitive-repr enum.
+///
+/// Requires `#[repr(u8/u16/u32/u64/u128/i8/i16/i32/i64/i128)]` on the
+/// target. All variants must be unit variants (no fields). Generates
+/// `into_repr()` (the cast) and `try_from_repr()` (a match returning
+/// `None` for unknown discriminants).
+///
+/// See `nexus_bits::IntEnum` for the trait and an example.
 #[proc_macro_derive(IntEnum)]
 pub fn derive_int_enum(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -99,6 +114,17 @@ fn parse_repr(input: &DeriveInput) -> Result<Ident> {
 // BitStorage attribute macro
 // =============================================================================
 
+/// Pack a struct or enum into a primitive integer with a checked builder.
+///
+/// Takes `#[bit_storage(repr = uN)]` on the type and `#[field(start = .., len = ..)]`
+/// on each field. The macro generates a `#[repr(transparent)]` newtype
+/// over the chosen integer plus `builder()`, `raw()`, `from_raw()`, and
+/// per-field accessors. Builder methods return errors when a value
+/// exceeds its declared bit width.
+///
+/// Works on structs (each field claims a contiguous bit range) and on
+/// enums (each variant occupies a tag region). See the integration tests
+/// in `nexus-bits/tests/` for full examples.
 #[proc_macro_attribute]
 pub fn bit_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = proc_macro2::TokenStream::from(attr);

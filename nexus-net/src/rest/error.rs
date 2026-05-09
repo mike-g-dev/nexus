@@ -10,9 +10,17 @@ pub enum RestError {
     /// HTTP protocol error.
     Http(HttpError),
     /// Response body exceeds max size.
-    BodyTooLarge { size: usize, max: usize },
+    BodyTooLarge {
+        /// Size reported by Content-Length (or accumulated for chunked).
+        size: usize,
+        /// Configured maximum body size in bytes.
+        max: usize,
+    },
     /// Request exceeds WriteBuf capacity.
-    RequestTooLarge { capacity: usize },
+    RequestTooLarge {
+        /// Capacity of the write buffer in bytes.
+        capacity: usize,
+    },
     /// Header name/value or query parameter contains CR/LF bytes.
     CrlfInjection,
     /// Connection is poisoned after an I/O error mid-response.

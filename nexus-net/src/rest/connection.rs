@@ -25,9 +25,15 @@ use crate::tls::TlsConfig;
 /// Parsed HTTP URL.
 #[non_exhaustive]
 pub struct ParsedUrl<'a> {
+    /// Whether the URL is `https://` (true) or `http://` (false).
     pub tls: bool,
+    /// Host portion (no port).
     pub host: &'a str,
+    /// Port — explicit if present, otherwise the scheme default
+    /// (80 for http, 443 for https).
     pub port: u16,
+    /// Path portion (everything after the host:port, including the
+    /// leading `/`). Empty if the URL had no path.
     pub path: &'a str,
 }
 
@@ -43,6 +49,9 @@ impl ParsedUrl<'_> {
     }
 }
 
+/// Parse an `http://` or `https://` URL into its scheme, host, port,
+/// and path. Returns [`RestError::InvalidUrl`] on a malformed input or
+/// missing scheme.
 pub fn parse_base_url(url: &str) -> Result<ParsedUrl<'_>, RestError> {
     let (tls, rest) = if let Some(r) = url.strip_prefix("https://") {
         (true, r)

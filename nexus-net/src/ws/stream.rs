@@ -23,9 +23,15 @@ use crate::tls::{TlsConfig, TlsError};
 /// Parsed WebSocket URL.
 #[non_exhaustive]
 pub struct ParsedUrl<'a> {
+    /// Whether the URL is `wss://` (true) or `ws://` (false).
     pub tls: bool,
+    /// Host portion (no port).
     pub host: &'a str,
+    /// Port — explicit if present, otherwise the scheme default
+    /// (80 for ws, 443 for wss).
     pub port: u16,
+    /// Path portion (everything after the host:port, including the
+    /// leading `/`). Defaults to `/` when absent in the input URL.
     pub path: &'a str,
 }
 
@@ -41,6 +47,9 @@ impl ParsedUrl<'_> {
     }
 }
 
+/// Parse a `ws://` or `wss://` URL into its scheme, host, port, and
+/// path. Supports IPv6 bracket notation (`[::1]:8080`). Returns
+/// [`Error::InvalidUrl`] on a malformed input or missing scheme.
 pub fn parse_ws_url(url: &str) -> Result<ParsedUrl<'_>, Error> {
     let (tls, rest) = if let Some(r) = url.strip_prefix("wss://") {
         (true, r)

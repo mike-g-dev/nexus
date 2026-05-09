@@ -50,10 +50,15 @@ mod sealed {
 /// HTTP method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
+    /// `GET` — retrieve a resource.
     Get,
+    /// `POST` — submit data.
     Post,
+    /// `PUT` — replace a resource.
     Put,
+    /// `DELETE` — remove a resource.
     Delete,
+    /// `PATCH` — partial update.
     Patch,
 }
 

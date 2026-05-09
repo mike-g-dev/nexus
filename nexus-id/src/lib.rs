@@ -82,6 +82,7 @@
 //! | `bytes` | `BufMut` writing via the [`bytes`](https://docs.rs/bytes) crate |
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 pub(crate) mod encode;
 mod parse;

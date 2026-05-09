@@ -128,5 +128,7 @@
 //! [`put()`](local::Pool::put) for cases where RAII lifetime doesn't fit
 //! (e.g., storing values in structs, passing through pipelines).
 
+#![warn(missing_docs)]
+
 pub mod local;
 pub mod sync;

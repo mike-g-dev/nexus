@@ -146,6 +146,7 @@
 //! - New: financial methods (`midpoint`, `spread`, `round_to_tick`, etc.)
 
 #![no_std]
+#![warn(missing_docs)]
 
 #[cfg(feature = "std")]
 extern crate std;

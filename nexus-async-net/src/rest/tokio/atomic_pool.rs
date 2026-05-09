@@ -206,6 +206,9 @@ pub struct AtomicClientPoolBuilder {
 }
 
 impl AtomicClientPoolBuilder {
+    /// Create a builder with default settings: empty URL/base path, no
+    /// default headers, one connection, TCP nodelay off, default buffer
+    /// capacities.
     #[must_use]
     pub fn new() -> Self {
         Self {

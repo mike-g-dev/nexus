@@ -85,6 +85,12 @@ impl WorldCtx {
         self.ptr
     }
 
+    /// Run a closure with exclusive [`World`] access.
+    ///
+    /// Executes synchronously inline — no await point. The closure has
+    /// `&mut World` for its duration. Use when you need to mutate
+    /// resources; see [`with_world_ref`](Self::with_world_ref) for
+    /// read-only access.
     pub fn with_world<R>(&self, f: impl FnOnce(&mut World) -> R) -> R {
         // SAFETY: Single-threaded executor guarantees only one task polls
         // at a time, so only one with_world is active. World outlives all

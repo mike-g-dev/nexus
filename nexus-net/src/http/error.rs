@@ -6,11 +6,24 @@ pub enum HttpError {
     /// Too many headers (exceeds configured limit).
     TooManyHeaders,
     /// Head section exceeds size limit.
-    HeadTooLarge { max: usize },
+    HeadTooLarge {
+        /// Configured maximum head size in bytes.
+        max: usize,
+    },
     /// Read buffer full.
-    BufferFull { needed: usize, available: usize },
+    BufferFull {
+        /// Bytes required to make progress.
+        needed: usize,
+        /// Bytes currently free in the buffer.
+        available: usize,
+    },
     /// Write buffer too small for the HTTP message.
-    BufferTooSmall { needed: usize, available: usize },
+    BufferTooSmall {
+        /// Bytes required to write the message.
+        needed: usize,
+        /// Bytes available in the supplied buffer.
+        available: usize,
+    },
     /// Header name or value contains invalid characters (CR/LF).
     InvalidHeaderValue,
 }

@@ -3,6 +3,8 @@
 //! Use `nexus-rt` instead of depending on this crate directly.
 //! The derives are re-exported from `nexus_rt::{Resource, Deref, DerefMut, select}`.
 
+#![warn(missing_docs)]
+
 mod select;
 
 use proc_macro::TokenStream;

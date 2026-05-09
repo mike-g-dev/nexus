@@ -11,6 +11,8 @@
 //! - [`rest`] — HTTP/1.1 REST client (`RequestWriter`, `Client`, typestate builder)
 //! - `tls` — TLS codec via rustls (feature: `tls`)
 
+#![warn(missing_docs)]
+
 pub mod buf;
 pub mod http;
 pub mod maybe_tls;

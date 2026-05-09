@@ -53,6 +53,8 @@
 //! assert!(reader2.read().is_some()); // independent consumption
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod spmc;
 pub mod spsc;
 
@@ -90,6 +92,9 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 /// unsafe impl Pod for OrderBook {}
 /// ```
 pub unsafe trait Pod: Sized {
+    /// Compile-time assertion that the implementing type does not require
+    /// drop. Forces a build-time error if a `Pod` impl is added for a type
+    /// with a non-trivial destructor.
     const _ASSERT_NO_DROP: () = {
         assert!(
             !std::mem::needs_drop::<Self>(),

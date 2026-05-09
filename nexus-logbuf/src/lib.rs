@@ -46,6 +46,8 @@
 //! }
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod channel;
 pub mod queue;
 

@@ -36,6 +36,8 @@
 //!     .await?;
 //! ```
 
+#![warn(missing_docs)]
+
 #[cfg(all(feature = "tokio-rt", feature = "nexus"))]
 compile_error!("features `tokio-rt` and `nexus` are mutually exclusive — pick one async runtime");
 

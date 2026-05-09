@@ -346,11 +346,13 @@ impl<const CAP: usize> UuidCompact<CAP> {
         }
     }
 
+    /// Returns the UUID (no-dash hex) as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
+    /// Returns the UUID (no-dash hex) as a byte slice.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
@@ -494,11 +496,13 @@ impl<const CAP: usize> HexId64<CAP> {
         Self(crate::encode::hex_u64(value))
     }
 
+    /// Returns the encoded hex string.
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
+    /// Returns the encoded hex string as a byte slice.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
@@ -600,11 +604,13 @@ impl<const CAP: usize> Base62Id<CAP> {
         Self(crate::encode::base62_u64(value))
     }
 
+    /// Returns the encoded Base62 string.
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
+    /// Returns the encoded Base62 string as a byte slice.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
@@ -712,11 +718,13 @@ impl<const CAP: usize> Base36Id<CAP> {
         Self(crate::encode::base36_u64(value))
     }
 
+    /// Returns the encoded Base36 string.
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
+    /// Returns the encoded Base36 string as a byte slice.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
@@ -899,11 +907,13 @@ impl<const CAP: usize> Ulid<CAP> {
         }
     }
 
+    /// Returns the encoded ULID (Crockford Base32) string.
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 
+    /// Returns the encoded ULID string as a byte slice.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()

@@ -145,6 +145,8 @@
 //! assert_eq!(events.len(), 90);
 //! ```
 
+#![warn(missing_docs)]
+
 mod event_channel;
 mod event_queue;
 pub mod local;
