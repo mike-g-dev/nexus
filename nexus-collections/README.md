@@ -212,19 +212,21 @@ Batched timing (100 ops per rdtsc pair), pinned to core 0.
 
 ### Sorted Maps (p50 cycles, @10K population)
 
+p50 floors, taskset-pinned P-cores, turbo on, best-of-5.
+
 | Operation | RbTree | BTree | std BTreeMap |
 |-----------|--------|-------|-------------|
-| get (hit) | **16** | 40 | 38 |
-| insert (steady) | 337 | **252** | 195 |
-| remove | 342 | **241** | 203 |
-| pop_first | **24** | 49 | 56 |
-| entry (occupied) | **22** | 43 | 36 |
-| insert (growing) p999 | **684** | 808 | 5126 |
+| get (hit) | **21** | 31 | 36 |
+| insert (steady) | 303 | **237** | 186 |
+| remove | 283 | **220** | 195 |
+| pop_first | **24** | 43 | 51 |
+| entry (occupied) | **31** | 41 | 35 |
+| insert (growing) p999 | **612** | 698 | 3714 |
 
-RbTree wins on lookups and pops. BTree wins on remove and churn. std
-wins p50 on mutation but explodes at p999 on growing insert (5126 cycles
-vs nexus's 684) — global allocator pressure from node splits. The slab
-eliminates allocation jitter where it matters: tail latency.
+RbTree wins on lookups and pops. BTree wins on insert and remove. std
+wins p50 on mutation but explodes at p999 on growing insert (3714 cycles
+vs nexus RbTree's 612) — global allocator pressure from node splits.
+The slab eliminates allocation jitter where it matters: tail latency.
 
 ## When to Choose What
 

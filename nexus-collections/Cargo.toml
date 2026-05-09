@@ -20,3 +20,39 @@ nexus-slab = { version = "2.3.2", path = "../nexus-slab", features = ["rc"] }
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "perf_batched"
+harness = false
+
+[[bench]]
+name = "perf_btree"
+harness = false
+
+[[bench]]
+name = "perf_codegen"
+harness = false
+
+[[bench]]
+name = "perf_heap_cycles"
+harness = false
+
+[[bench]]
+name = "perf_list_cycles"
+harness = false
+
+[[bench]]
+name = "perf_push_hist"
+harness = false
+
+[[bench]]
+name = "perf_push_stat"
+harness = false
+
+[[bench]]
+name = "perf_rbtree"
+harness = false
+
+[[bench]]
+name = "perf_std_btreemap"
+harness = false

@@ -182,9 +182,37 @@ token.cancel(); // cancels all children
 
 ## Performance
 
+Measured on Intel Core Ultra 7 165U P-cores, taskset-pinned, turbo on,
+best-of-5 floor. See `BENCHMARKS.md` for methodology.
+
+### Dispatch and runtime machinery
+
 | Path | p50 |
 |------|-----|
-| Task dispatch (poll cycle) | 55-64 cycles |
+| Task dispatch (poll cycle, no wake) | 55-64 cycles |
+| Per-task lifecycle (spawn + 1 poll → Ready + complete + join, amortized) | 228 cycles / ~85 ns |
+| Per-poll cycle (steady-state, includes `wake_by_ref` re-arm) | 485 cycles / ~180 ns |
+
+**Dispatch** is the pure poll step — pop ready task, build Context,
+call `Future::poll`, handle result. No wake/reschedule. The 55-64cy
+figure measures this path in isolation (requires an executor-internal
+entrypoint not currently exposed; carried forward from prior baselines).
+
+**Per-task lifecycle** is the realistic spawn-callback pattern: birth
+a task, poll it once to completion, retire it. Includes allocation +
+spawn + dispatch + complete + handle resolve + free.
+
+**Per-poll cycle (steady-state)** measures a self-rewoken future that
+returns Pending and re-arms via `wake_by_ref` each poll — so the cycle
+includes wake plumbing (pop + Context + poll + wake_by_ref +
+re-push). The ~257cy delta vs per-task is roughly the cost of the
+same-thread wake path (atomic queue op, possibly eventfd write).
+Investigation of a same-thread wake fast-path is open as a follow-up.
+
+### Channels
+
+| Path | p50 |
+|------|-----|
 | Local channel try_send+try_recv | 13 ns |
 | MPSC channel try_send+try_recv | 22 ns |
 | SPSC channel try_send+try_recv | 15 ns |

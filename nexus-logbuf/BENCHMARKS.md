@@ -7,13 +7,13 @@ Run in release mode with turbo boost disabled for stable results.
 
 ```bash
 # Build
-cargo build --release --example perf_spsc_latency
-cargo build --release --example perf_mpsc_latency
-cargo build --release --example throughput_bench
+cargo build --release -p nexus-logbuf --bench perf_spsc_latency
+cargo build --release -p nexus-logbuf --bench perf_mpsc_latency
+cargo build --release -p nexus-logbuf --example throughput_bench
 
 # Run (pin to physical cores, disable turbo for consistency)
-./target/release/examples/perf_spsc_latency
-./target/release/examples/perf_mpsc_latency
+./target/release/deps/perf_spsc_latency-*
+./target/release/deps/perf_mpsc_latency-*
 ./target/release/examples/throughput_bench
 ```
 

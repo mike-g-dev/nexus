@@ -33,18 +33,18 @@ rustc-hash = "2"
 ahash = "0.8"
 serde_json = "1"
 
-[[example]]
+[[bench]]
 name = "perf_snowflake"
 harness = false
 
-[[example]]
+[[bench]]
 name = "perf_id_hashing"
 harness = false
 
-[[example]]
+[[bench]]
 name = "perf_uuid"
 harness = false
 
-[[example]]
+[[bench]]
 name = "perf_benchmark"
 harness = false

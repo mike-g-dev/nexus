@@ -21,20 +21,26 @@ rtrb = "0.3"
 [lints]
 workspace = true
 
-[[example]]
+[[bench]]
 name = "bench_spsc"
+harness = false
 
-[[example]]
+[[bench]]
 name = "bench_rtrb"
+harness = false
 
-[[example]]
+[[bench]]
 name = "bench_crossbeam"
+harness = false
 
-[[example]]
+[[bench]]
 name = "bench_mpsc"
+harness = false
 
-[[example]]
+[[bench]]
 name = "bench_mpsc_pingpong"
+harness = false
 
-[[example]]
+[[bench]]
 name = "bench_spmc"
+harness = false

@@ -6,13 +6,17 @@ All generators avoid syscalls on the hot path, produce stack-allocated output, a
 
 ## Generators
 
+p50 floors, taskset-pinned P-cores, turbo on, best-of-5.
+
 | Generator | p50 (cycles) | Time-ordered | Output |
 |-----------|-------------|--------------|--------|
-| `Snowflake64` | 22 | Yes | `SnowflakeId64` |
-| `Snowflake32` | 22 | Yes | `SnowflakeId32` |
-| `UuidV4` | 48 | No | `Uuid` |
-| `UuidV7` | 62 | Yes | `Uuid` |
-| `UlidGenerator` | 80 | Yes | `Ulid` |
+| `Snowflake64` | 20 | Yes | `SnowflakeId64` |
+| `Snowflake32` | 20 | Yes | `SnowflakeId32` |
+| `UuidV4` (raw) | 22 | No | `(u64, u64)` raw form |
+| `UuidV4` (formatted) | 58 | No | `Uuid` (36-char dashed) |
+| `UuidV7` (raw) | 28 | Yes | `(u64, u64)` raw form |
+| `UuidV7` (formatted) | 66 | Yes | `Uuid` |
+| `UlidGenerator` | 76 | Yes | `Ulid` (26-char Crockford) |
 
 ## ID Types
 
@@ -20,13 +24,13 @@ All generators avoid syscalls on the hot path, produce stack-allocated output, a
 |------|--------|---------------|
 | `SnowflakeId64` | Packed u64 | N/A |
 | `MixedId64` | Fibonacci-mixed u64 | N/A |
-| `Uuid` | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` | 70 cycles |
-| `UuidCompact` | 32-char hex | 48 cycles |
-| `Ulid` | 26-char Crockford Base32 | 90 cycles |
-| `HexId64` | 16-char hex | 42 cycles |
+| `Uuid` | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` | 76 cycles |
+| `UuidCompact` | 32-char hex | 56 cycles |
+| `Ulid` | 26-char Crockford Base32 | 84 cycles |
+| `HexId64` | 16-char hex | 48 cycles |
 | `Base62Id` | 11-char alphanumeric | 86 cycles |
-| `Base36Id` | 13-char alphanumeric | 108 cycles |
-| `TypeId` | `prefix_suffix` | 136 cycles |
+| `Base36Id` | 13-char alphanumeric | 102 cycles |
+| `TypeId` | `prefix_suffix` | 130 cycles |
 
 ## Usage
 

@@ -45,24 +45,29 @@ rustls = { version = "0.23", features = ["std", "tls12", "aws_lc_rs"] }
 tokio-rustls = "0.26"
 nexus-rt = { path = "../nexus-rt" }
 
-[[example]]
+[[bench]]
 name = "perf_async_ws"
+harness = false
 required-features = ["tokio-rt"]
 
-[[example]]
+[[bench]]
 name = "perf_ws_cycles_tokio"
+harness = false
 required-features = ["tokio-rt"]
 
-[[example]]
+[[bench]]
 name = "perf_ws_cycles_nexus"
+harness = false
 required-features = ["nexus"]
 
-[[example]]
+[[bench]]
 name = "perf_async_ws_nexus"
+harness = false
 required-features = ["nexus"]
 
-[[example]]
+[[bench]]
 name = "bench_pool_throughput"
+harness = false
 required-features = ["tokio-rt"]
 
 [[test]]

@@ -53,7 +53,7 @@ well — CAS contention does not degrade p50 even at 4 concurrent returners.
 ## Running Benchmarks
 
 ```bash
-cargo build --release --examples -p nexus-pool
-taskset -c 0 ./target/release/examples/perf_local_pool
-taskset -c 0 ./target/release/examples/perf_sync_pool
+cargo build --release --benches -p nexus-pool
+taskset -c 0 ./target/release/deps/perf_local_pool-*
+taskset -c 0 ./target/release/deps/perf_sync_pool-*
 ```

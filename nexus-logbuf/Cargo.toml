@@ -21,11 +21,13 @@ hdrhistogram = "7.5"
 rand = "0.8"
 
 [[example]]
-name = "perf_spsc_latency"
-
-[[example]]
-name = "perf_mpsc_latency"
-
-[[example]]
 name = "throughput_bench"
+
+[[bench]]
+name = "perf_spsc_latency"
+harness = false
+
+[[bench]]
+name = "perf_mpsc_latency"
+harness = false
 

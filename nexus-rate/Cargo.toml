@@ -12,8 +12,9 @@ categories.workspace = true
 
 [dependencies]
 
-[[example]]
+[[bench]]
 name = "perf_rate"
+harness = false
 
 [lints]
 workspace = true

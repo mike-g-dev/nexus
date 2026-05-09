@@ -30,9 +30,15 @@ if limiter.try_acquire(1, now_ns) {
 
 | Algorithm | What It Does | State | Allowed (p50) |
 |-----------|-------------|-------|--------------|
-| **GCRA** | Virtual scheduling. One multiply with precomputed interval. No division. | 8 bytes | 2 cycles |
-| **TokenBucket** | Lazy token computation. Burst-tolerant. | 8 bytes + config | 2 cycles |
-| **SlidingWindow** | Exact count over rolling time window. | N×8 bytes | 4 cycles |
+| **GCRA** | Virtual scheduling. One multiply with precomputed interval. No division. | 8 bytes | 13 cycles |
+| **TokenBucket** | Lazy token computation. Burst-tolerant. | 8 bytes + config | 12 cycles |
+| **SlidingWindow** | Exact count over rolling time window. | N×8 bytes | 15 cycles |
+
+Numbers are `local::*` `try_acquire(cost, now)` p50 floors — best-of-5
+on Intel Core Ultra 7 165U P-cores, taskset-pinned, turbo on. The
+algorithm body itself is 2-4 cycles; the rest is `Instant + Duration`
+construction inside the timed window (matches realistic per-call cost
+in user code).
 
 All three share the same primary API: `try_acquire(cost, now) -> bool`.
 
@@ -65,8 +71,8 @@ limiter.try_acquire(1, now);  // &self — safe to share via Arc
 
 | Module | `try_acquire` | Sync | Cost |
 |--------|--------------|------|------|
-| `local` | `&mut self` | Single-threaded | 2-4 cycles |
-| `sync` | `&self` | Thread-safe (CAS) | 21-31 cycles |
+| `local` | `&mut self` | Single-threaded | 12-15 cycles |
+| `sync` | `&self` | Thread-safe (CAS) | 24-29 cycles |
 
 ## Weighted Requests
 
@@ -127,18 +133,27 @@ if per_second.try_acquire(1, now) && per_minute.try_acquire(1, now) {
 
 ## Performance
 
-All measurements in CPU cycles (`rdtsc`), batch of 64 checks, pinned core.
+All measurements in CPU cycles (`rdtsc`), batch of 64 checks, pinned core
+(taskset-pinned P-cores, turbo on, best-of-5 floor).
 
 | Type | Allowed (p50) | Rejected (p50) |
 |------|--------------|----------------|
-| `local::Gcra` | 2 | 0 |
-| `sync::Gcra` | 21 | 2 |
-| `local::TokenBucket` | 2 | 0 |
-| `sync::TokenBucket` | 31 | 4 |
-| `local::SlidingWindow` | 4 | 2 |
+| `local::Gcra` | 13 | 16 |
+| `sync::Gcra` | 24 | 12 |
+| `local::TokenBucket` | 12 | 11 |
+| `sync::TokenBucket` | 29 | 13 |
+| `local::SlidingWindow` | 15 | 11 |
 
-Rejected paths are 0-2 cycles — the branch predictor perfectly predicts
-rejection, so no wasted computation on the fast-reject path.
+Numbers reflect realistic per-call cost — `try_acquire(cost, now)` with
+`now` constructed from `Instant + Duration::from_nanos` inside the timed
+window. The algorithm body itself is 2-4 cycles for local variants; the
+remainder is timestamp construction overhead user code pays per call.
+
+Rejected paths are typically the same cost or cheaper than allowed —
+the branch predictor handles rejection well, and rejection skips the
+TAT/token-state update.
+
+See `BENCHMARKS.md` for full p50/p99/p999 tables.
 
 ```bash
 cargo build --release --example perf_rate -p nexus-rate

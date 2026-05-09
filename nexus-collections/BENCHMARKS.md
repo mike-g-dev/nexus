@@ -157,14 +157,14 @@ and median latency matters more than tail.
 echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
 # Build
-cargo build --release --examples -p nexus-collections
+cargo build --release --benches -p nexus-collections
 
 # Run pinned to a physical core
-taskset -c 0 ./target/release/examples/perf_list_cycles
-taskset -c 0 ./target/release/examples/perf_heap_cycles
-taskset -c 0 ./target/release/examples/perf_rbtree
-taskset -c 0 ./target/release/examples/perf_btree
-taskset -c 0 ./target/release/examples/perf_std_btreemap
+taskset -c 0 ./target/release/deps/perf_list_cycles-*
+taskset -c 0 ./target/release/deps/perf_heap_cycles-*
+taskset -c 0 ./target/release/deps/perf_rbtree-*
+taskset -c 0 ./target/release/deps/perf_btree-*
+taskset -c 0 ./target/release/deps/perf_std_btreemap-*
 
 # Re-enable turbo boost
 echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo

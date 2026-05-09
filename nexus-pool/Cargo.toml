@@ -16,11 +16,11 @@ workspace = true
 [dev-dependencies]
 hdrhistogram = "7.5"
 
-[[example]]
+[[bench]]
 name = "perf_local_pool"
 harness = false
 
-[[example]]
+[[bench]]
 name = "perf_sync_pool"
 harness = false
 

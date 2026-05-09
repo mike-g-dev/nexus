@@ -8,7 +8,7 @@ High-performance object pools for latency-sensitive applications.
 
 ## Features
 
-- **Sub-100 cycle operations**: ~26 cycles for local pools, ~42-68 cycles for sync pools
+- **Sub-100 cycle operations**: ~22-26 cycles for local pools, ~48-74 cycles for sync pools (uncontended)
 - **Zero allocation on hot path**: Pre-allocate objects at startup
 - **RAII guards**: Objects automatically return to pool on drop
 - **Manual take/put**: Owned values without RAII when guard lifetime doesn't fit
@@ -93,22 +93,44 @@ If you truly need MPMC, use [`crossbeam::ArrayQueue`](https://docs.rs/crossbeam/
 
 ## Performance
 
-Measured on Intel Core i9 @ 3.1 GHz:
+Measured on Intel Core Ultra 7 165U P-cores, taskset-pinned, turbo on,
+best-of-5 floor.
+
+### Local pools (uncontended)
 
 | Pool | Acquire p50 | Release p50 | Release p99 |
 |------|-------------|-------------|-------------|
-| `local::BoundedPool` | 26 cycles | 26 cycles | 58 cycles |
-| `local::Pool` (reuse) | 26 cycles | 26 cycles | 58 cycles |
-| `local::Pool` (factory) | 32 cycles | 26 cycles | 58 cycles |
-| `sync::Pool` (same thread) | 42 cycles | 68 cycles | 74 cycles |
-| `sync::Pool` (cross-thread) | 42 cycles | 68 cycles | 86 cycles |
+| `local::BoundedPool` | 22 cycles | 26 cycles | 30-58 cycles |
+| `local::Pool` (reuse, fast path) | 24 cycles | 26 cycles | 30-58 cycles |
+| `local::Pool` (factory, slow path) | 32 cycles | 26 cycles | 30-58 cycles |
+
+### Sync pool (multiple scenarios)
+
+`sync::Pool` separates the **acquire side** (single-thread holds the
+acquirer) from the **return side** (any thread can return). Hot-path
+cost depends heavily on contention. Numbers below are p50 floors for
+each scenario the bench exercises.
+
+| Scenario | Acquire | Release | Release p99 | Notes |
+|----------|---------|---------|-------------|-------|
+| Same-thread baseline (channel) | 60 | 74 | 94 | Uncontended channel-based path |
+| Concurrent return, 1 thread (barrier) | 48 | 74 | 230 | Single thread, CAS overhead only |
+| Concurrent return, 2 threads | 52 | 76-358 | 1500+ | CAS contention |
+| Concurrent return, 4 threads | 50 | 490 | 1880+ | Heavy CAS contention |
+| Cross-thread (channel-based, 1 returner) | 454 | 474-492 | 1400-2000 | Channel hand-off dominates |
+
+**Summary:** uncontended sync acquire is **48-60 cycles**; under CAS
+contention release climbs into hundreds of cycles. Use `local::Pool`
+when single-threaded — there's no reason to pay the sync overhead.
 
 Run the benchmarks yourself:
 
 ```bash
-cargo run --example perf_local_pool --release
-cargo run --example perf_sync_pool --release
+cargo bench -p nexus-pool --bench perf_local_pool
+cargo bench -p nexus-pool --bench perf_sync_pool
 ```
+
+See `BENCHMARKS.md` for the full bench output schema.
 
 ## Use Cases
 

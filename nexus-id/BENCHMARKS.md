@@ -7,11 +7,11 @@ CPU cycles measured via `rdtscp` on x86_64. Pinned to a single core via
 
 Run benchmarks yourself:
 ```bash
-RUSTFLAGS="-C target-cpu=native" cargo build --release -p nexus-id --examples
-taskset -c 0 ./target/release/examples/perf_benchmark
-taskset -c 0 ./target/release/examples/perf_snowflake
-taskset -c 0 ./target/release/examples/perf_uuid
-taskset -c 0 ./target/release/examples/perf_id_hashing
+RUSTFLAGS="-C target-cpu=native" cargo build --release -p nexus-id --benches
+taskset -c 0 ./target/release/deps/perf_benchmark-*
+taskset -c 0 ./target/release/deps/perf_snowflake-*
+taskset -c 0 ./target/release/deps/perf_uuid-*
+taskset -c 0 ./target/release/deps/perf_id_hashing-*
 ```
 
 Numbers below reflect SSSE3-enabled builds (`target-cpu=native` or

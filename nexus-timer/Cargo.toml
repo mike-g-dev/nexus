@@ -16,7 +16,7 @@ nexus-slab = { version = "2", path = "../nexus-slab" }
 proptest = "1.4"
 seq-macro.workspace = true
 
-[[example]]
+[[bench]]
 name = "perf_timer"
 harness = false
 
