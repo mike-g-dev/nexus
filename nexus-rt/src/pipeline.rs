@@ -5127,7 +5127,7 @@ mod tests {
     #[test]
     fn ok_or_else_named_fn_with_param() {
         fn make_error(msg: Res<String>) -> String {
-            msg.clone()
+            (*msg).clone()
         }
         let mut wb = WorldBuilder::new();
         wb.register::<String>("not found".into());
