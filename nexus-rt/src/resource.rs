@@ -49,6 +49,13 @@ use crate::world::Sequence;
 /// Appears in handler function signatures to declare a read dependency.
 /// Derefs to the inner value transparently.
 ///
+/// # Cloning
+///
+/// `Res<T>` is `Copy + Clone` regardless of `T` — the wrapped reference
+/// is `&T`, which is always `Copy`. To clone the *inner* value, use
+/// `(*res).clone()` or `res.to_owned()`. Calling `res.clone()` returns
+/// `Res<T>`, not `T` — same shadowing pattern as Bevy's `Res<T>`.
+///
 /// For exclusive write access, use [`ResMut<T>`]. For optional read
 /// access (no panic if unregistered), use [`Option<Res<T>>`].
 ///
@@ -62,6 +69,18 @@ impl<'w, T: Resource> Res<'w, T> {
         Self { value }
     }
 }
+
+// Manual Copy/Clone impls (not derived) so the bounds depend only on what
+// the field actually requires. The single field is `&T`, which is always
+// Copy regardless of `T`. A derive would erroneously add `T: Clone`.
+impl<T: Resource> Clone for Res<'_, T> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T: Resource> Copy for Res<'_, T> {}
 
 impl<T: std::fmt::Debug + Resource> std::fmt::Debug for Res<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -85,6 +104,12 @@ impl<T: Resource> Deref for Res<'_, T> {
 /// Appears in handler function signatures to declare a write dependency.
 /// Derefs to the inner value transparently.
 ///
+/// # Passing by value
+///
+/// `ResMut<T>` cannot be `Copy` (exclusive borrow). To pass the wrapper
+/// to inner functions without moving, call [`reborrow()`](Self::reborrow)
+/// — analogous to the `&mut *x` pattern for `&mut T`.
+///
 /// For shared read access, use [`Res<T>`]. For optional write access
 /// (no panic if unregistered), use [`Option<ResMut<T>>`].
 ///
@@ -96,6 +121,22 @@ pub struct ResMut<'w, T: Resource> {
 impl<'w, T: Resource> ResMut<'w, T> {
     pub(crate) fn new(value: &'w mut T) -> Self {
         Self { value }
+    }
+
+    /// Reborrow as a `ResMut<'_, T>` with a shorter lifetime.
+    ///
+    /// The original is frozen for the duration of the reborrow, then usable
+    /// again. Lets you pass `ResMut<T>` to inner functions without moving —
+    /// analogous to the `&mut *x` reborrow pattern for `&mut T`.
+    ///
+    /// `ResMut<T>` cannot be `Copy` (exclusive borrow), so this is the
+    /// counterpart to [`Res<T>`]'s `Copy` impl when the inner function
+    /// signature takes the wrapper itself rather than `&mut T`.
+    #[inline(always)]
+    pub fn reborrow(&mut self) -> ResMut<'_, T> {
+        ResMut {
+            value: &mut *self.value,
+        }
     }
 }
 
@@ -226,6 +267,64 @@ mod tests {
         let mut res = ResMut::new(&mut val);
         *res = Val(123);
         assert_eq!(val.0, 123);
+    }
+
+    #[test]
+    fn res_is_copy() {
+        // Compile-time proof that Res<T> is Copy (and Clone) without
+        // requiring T: Copy or T: Clone — Val implements neither.
+        fn assert_copy<U: Copy>(_: U) {}
+        let val = Val(42);
+        let res = Res::new(&val);
+        assert_copy(res);
+        let a = res;
+        let b = res; // Copy — not a move
+        assert_eq!(a.0, 42);
+        assert_eq!(b.0, 42);
+    }
+
+    #[test]
+    fn res_pass_to_inner_function() {
+        // The motivating use case: passing Res<T> to inner functions
+        // without moving.
+        fn inner(r: Res<'_, Val>) -> u64 {
+            r.0
+        }
+        let val = Val(7);
+        let res = Res::new(&val);
+        assert_eq!(inner(res), 7);
+        assert_eq!(inner(res), 7); // would not compile without Copy
+    }
+
+    #[test]
+    fn res_mut_reborrow() {
+        // ResMut::reborrow() lets us pass ResMut<T> (the wrapper) to
+        // inner functions without moving.
+        fn inner(mut r: ResMut<'_, Val>) {
+            r.0 += 1;
+        }
+        let mut val = Val(0);
+        let mut res = ResMut::new(&mut val);
+        inner(res.reborrow());
+        inner(res.reborrow());
+        inner(res.reborrow());
+        // res is usable again here; original lifetime restored.
+        assert_eq!(res.0, 3);
+    }
+
+    #[test]
+    fn res_mut_reborrow_then_use_original() {
+        // After the reborrow goes out of scope, the original is usable
+        // for both shared and mutable access.
+        let mut val = Val(10);
+        let mut res = ResMut::new(&mut val);
+        {
+            let mut rb = res.reborrow();
+            rb.0 = 20;
+        }
+        // Original ResMut usable again.
+        res.0 = 30;
+        assert_eq!(val.0, 30);
     }
 
     #[test]
