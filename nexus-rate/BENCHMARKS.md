@@ -11,7 +11,7 @@ cargo build -p nexus-rate --benches --release
 
 # Run with CPU pinning (single physical core for these per-call benches)
 # Check your topology with: lscpu -e
-taskset -c 0 ./target/release/perf_rate
+taskset -c 0 ./target/release/deps/perf_rate-*
 
 # For more stable results, disable turbo boost:
 echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
@@ -19,7 +19,7 @@ echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
 # Hardware counters (requires perf):
-sudo perf stat -r 5 taskset -c 0 ./target/release/perf_rate
+sudo perf stat -r 5 taskset -c 0 ./target/release/deps/perf_rate-*
 ```
 
 ## Methodology

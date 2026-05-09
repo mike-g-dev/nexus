@@ -19,11 +19,11 @@ cargo build -p nexus-async-net --benches --release \
 
 # Run with CPU pinning (separate physical cores for client/server)
 # Check your topology with: lscpu -e
-taskset -c 0,2 ./target/release/perf_ws_cycles_tokio
-taskset -c 0,2 ./target/release/perf_ws_cycles_nexus
-taskset -c 0,2 ./target/release/perf_async_ws
-taskset -c 0,2 ./target/release/perf_async_ws_nexus
-taskset -c 0,2 ./target/release/bench_pool_throughput
+taskset -c 0,2 ./target/release/deps/perf_ws_cycles_tokio-*
+taskset -c 0,2 ./target/release/deps/perf_ws_cycles_nexus-*
+taskset -c 0,2 ./target/release/deps/perf_async_ws-*
+taskset -c 0,2 ./target/release/deps/perf_async_ws_nexus-*
+taskset -c 0,2 ./target/release/deps/bench_pool_throughput-*
 
 # For more stable results, disable turbo boost:
 echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo

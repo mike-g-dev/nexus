@@ -160,11 +160,11 @@ echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 cargo build --release --benches -p nexus-collections
 
 # Run pinned to a physical core
-taskset -c 0 ./target/release/perf_list_cycles
-taskset -c 0 ./target/release/perf_heap_cycles
-taskset -c 0 ./target/release/perf_rbtree
-taskset -c 0 ./target/release/perf_btree
-taskset -c 0 ./target/release/perf_std_btreemap
+taskset -c 0 ./target/release/deps/perf_list_cycles-*
+taskset -c 0 ./target/release/deps/perf_heap_cycles-*
+taskset -c 0 ./target/release/deps/perf_rbtree-*
+taskset -c 0 ./target/release/deps/perf_btree-*
+taskset -c 0 ./target/release/deps/perf_std_btreemap-*
 
 # Re-enable turbo boost
 echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo

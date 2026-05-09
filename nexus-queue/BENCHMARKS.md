@@ -10,9 +10,9 @@ cargo build -p nexus-queue --benches --release
 
 # Run with CPU pinning (separate physical cores, not hyperthreads)
 # Check your topology with: lscpu -e
-taskset -c 0,2 ./target/release/bench_spsc
-taskset -c 0,2 ./target/release/bench_mpsc_pingpong
-taskset -c 0,2 ./target/release/bench_spmc
+taskset -c 0,2 ./target/release/deps/bench_spsc-*
+taskset -c 0,2 ./target/release/deps/bench_mpsc_pingpong-*
+taskset -c 0,2 ./target/release/deps/bench_spmc-*
 
 # For more stable results, disable turbo boost:
 echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
@@ -20,7 +20,7 @@ echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
 # Hardware counters (requires perf):
-sudo perf stat -r 5 taskset -c 0,2 ./target/release/bench_spsc
+sudo perf stat -r 5 taskset -c 0,2 ./target/release/deps/bench_spsc-*
 ```
 
 **Important**: Use separate physical cores (e.g., 0,2) not hyperthreads (e.g., 0,1).

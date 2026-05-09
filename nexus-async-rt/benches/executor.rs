@@ -11,7 +11,7 @@
 //!
 //! Build & run:
 //!   cargo build --release -p nexus-async-rt --bench executor
-//!   taskset -c 0 ./target/release/executor
+//!   taskset -c 0 ./target/release/deps/executor-*
 
 use std::future::Future;
 use std::hint::black_box;

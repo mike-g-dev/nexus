@@ -11,7 +11,7 @@
 //!
 //! Build & run:
 //!   cargo build --release -p nexus-async-rt --bench channel
-//!   taskset -c 0 ./target/release/channel
+//!   taskset -c 0 ./target/release/deps/channel-*
 
 use std::cell::RefCell;
 use std::hint::black_box;
