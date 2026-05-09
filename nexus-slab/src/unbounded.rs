@@ -374,7 +374,7 @@ impl<T> Slab<T> {
     ///
     /// O(n) where n = chunk count, due to chunk lookup. Typically 1-5 chunks.
     #[inline]
-    // Consumes the slot handle by design — the slot cannot be used after free.
+    // Consumes the slot handle by design — the slot cannot be used after this call.
     #[allow(clippy::needless_pass_by_value)]
     pub fn take(&self, slot: Slot<T>) -> T {
         let slot_ptr = slot.into_raw();

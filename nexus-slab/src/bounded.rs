@@ -307,7 +307,7 @@ impl<T> Slab<T> {
     ///
     /// Consumes the handle — the slot cannot be used after this call.
     #[inline]
-    // Consumes the slot handle by design — the slot cannot be used after free.
+    // Consumes the slot handle by design — the slot cannot be used after this call.
     #[allow(clippy::needless_pass_by_value)]
     pub fn take(&self, slot: Slot<T>) -> T {
         let slot_ptr = slot.into_raw();
