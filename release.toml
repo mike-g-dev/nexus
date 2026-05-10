@@ -1,0 +1,41 @@
+# Workspace-level cargo-release configuration.
+#
+# Applies to every crate in the workspace unless a per-crate release.toml
+# overrides specific fields. The workflow is per-crate, not workspace-wide:
+# each release is one crate at a time, with its own tag and version bump.
+#
+# See `CONTRIBUTING.md` § "Release Process" for the full workflow.
+# See https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+# for the field reference.
+
+# Tag format: <crate-name>-v<version>, e.g., `nexus-collections-v1.1.5`.
+# Shell-friendly (no `@` to escape), unambiguous when grepping
+# (`git tag | grep nexus-collections-`).
+tag-name = "{{crate_name}}-v{{version}}"
+
+# Each crate publishes independently — separate tag, separate commit,
+# separate push.
+consolidate-commits = false
+
+# Standard release behaviors.
+publish = true
+tag = true
+push = true
+
+# Commit message format for the bump commit.
+pre-release-commit-message = "release: {{crate_name}} v{{version}}"
+
+# When releasing a crate, bump dependent crates' Cargo.toml dep
+# declarations to match. "upgrade" updates the version requirement in
+# downstream Cargo.toml files (no version bump on the dependent — just
+# the dep declaration).
+dependent-version = "upgrade"
+
+# CHANGELOG renaming: rename `## [Unreleased]` to `## [<version>] — <date>`
+# at release time, and re-add a fresh `## [Unreleased]` placeholder for
+# the next round. This is Pattern A from the workflow doc — CHANGELOG
+# entries are written under `## [Unreleased]` during PR work, dated at
+# release time.
+pre-release-replacements = [
+    { file = "CHANGELOG.md", search = "(?m)^## \\[Unreleased\\]$", replace = "## [Unreleased]\n\n## [{{version}}] — {{date}}", min = 1 },
+]

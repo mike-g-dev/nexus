@@ -5,6 +5,8 @@ All notable changes to nexus-net are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
 ## [0.7.1] — 2026-05-10
 
 Doc + small additive release.

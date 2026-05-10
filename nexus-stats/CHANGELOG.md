@@ -8,6 +8,8 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained.
 
+## [Unreleased]
+
 ## [4.x] — workspace re-export pattern
 
 `nexus-stats` is the umbrella crate that re-exports from the

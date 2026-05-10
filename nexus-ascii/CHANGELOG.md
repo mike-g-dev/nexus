@@ -8,6 +8,8 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained.
 
+## [Unreleased]
+
 ## [1.6.2] — 2026-05-10
 
 Doc-only release. No API or behavior change.
