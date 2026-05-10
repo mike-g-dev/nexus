@@ -60,9 +60,11 @@ macro_rules! impl_from_sound {
         $(
             // Compile-time soundness check. Fails the build if this
             // (backing, D, int) cell would overflow on
-            // IntType::MAX * 10^D or IntType::MIN * 10^D. Catches
-            // typos in the per-(backing, D) integer list (wrong int
-            // included or sound int omitted) at macro expansion time.
+            // IntType::MAX * 10^D or IntType::MIN * 10^D — catches
+            // accidentally including an unsound IntType in the list.
+            // Note: omissions (a sound IntType missing from the list)
+            // still compile silently; this asserts soundness of what
+            // is emitted, not coverage of what should be.
             const _: () = assert!(
                 $crate::from_int::is_sound_const(
                     <$int>::MAX as i128,
