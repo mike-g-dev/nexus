@@ -8,6 +8,28 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained.
 
+## [1.1.5] — 2026-05-10
+
+Doc + bench infra release. No public API change.
+
+### Changed
+
+- README ID Generation and ID Types tables updated with measured
+  floors from controlled-conditions runs (taskset-pinned P-cores,
+  turbo on, best-of-5). Three claims drifted +14-21% from the
+  previous numbers and are now corrected:
+  - `UuidV4 → Uuid` (formatted): 48 → 58 cy
+  - `UuidCompact::parse(32-char)`: 48 → 56 cy
+  - `HexId64::parse(16-char)`: 42 → 48 cy
+- Other claims (Snowflake64 generate, UuidV7, Ulid generate, Uuid
+  parse, Ulid parse) verified within ±10% of prior numbers.
+
+### Internal
+
+- 4 perf benches moved from `examples/` to `benches/` with
+  `harness = false`.
+- Missing-doc additions across `parse` and `types` modules.
+
 ## [1.1.4] and earlier
 
 `nexus-id` ships a broad family of ID generators (`Snowflake64`,

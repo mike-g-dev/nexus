@@ -5,6 +5,28 @@ All notable changes to nexus-async-net are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] — 2026-05-10
+
+Doc + internal cleanup release. No public API change.
+
+### Changed
+
+- Dependency declaration: `nexus-net` `0.7.0` → `0.7.1`. Pulls in
+  the new `HTTP_HANDSHAKE_BUFFER` constant (see nexus-net 0.7.1).
+
+### Internal
+
+- 18 inline `4096` literals across `ws::{tokio, nexus}::stream` and
+  `rest::{tokio, nexus}::connection` replaced with
+  `nexus_net::http::HTTP_HANDSHAKE_BUFFER`. Same numeric value, no
+  behavior change. 25 test-side literals also replaced (cfg-gated
+  import; lib build stays warning-free).
+- Missing-doc additions on `rest::tokio::pool`,
+  `rest::tokio::atomic_pool`, `rest::nexus::pool`.
+- New `BENCHMARKS.md` with backend-split build instructions
+  (tokio-rt vs nexus features) and per-bench table layout for
+  Phase 4 measurement reference.
+
 ## [0.7.0] — 2026-05-08
 
 The "TLS adapter architectural refactor" release. Companion to

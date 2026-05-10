@@ -8,6 +8,26 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained.
 
+## [2.1.3] — 2026-05-10
+
+Doc + bench infra release. No public API change.
+
+### Changed
+
+- README "performance" tables replaced with measured floors from
+  controlled-conditions runs (taskset-pinned P-cores, turbo on,
+  best-of-5). Previous claim ("2-4 cycle hot path") was for the
+  pure algorithm body; the bench measures realistic per-call cost
+  including `Instant + Duration` construction inside the timed
+  window. Updated tables: Local variants 11-16cy; Sync variants
+  11-29cy; rejection paths included.
+
+### Internal
+
+- `examples/perf_rate.rs` moved to `benches/perf_rate.rs` with
+  `harness = false` so `cargo bench -p nexus-rate` discovers it.
+- New `BENCHMARKS.md` documenting methodology + baseline tables.
+
 ## [2.1.2] and earlier
 
 Earlier history is not documented in this CHANGELOG. See git history

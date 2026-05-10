@@ -5,6 +5,31 @@ All notable changes to nexus-net are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] — 2026-05-10
+
+Doc + small additive release.
+
+### Added
+
+- **`pub const HTTP_HANDSHAKE_BUFFER: usize = 4096`** in
+  [`nexus_net::http`] — names the default capacity used for HTTP
+  request/response head buffers, REST body / wire / decode scratch
+  buffers, and the WebSocket upgrade handshake. Previously inlined
+  as a magic literal in ~25 sites across `nexus-async-net`; now
+  importable for downstream consumers that want to size their own
+  scratch space the same way.
+- Module-level doc paragraph on [`rest::error`] explaining the
+  partial-preservation behavior of `From<TlsError> for RestError`
+  (sync paths surface `Tls` directly, async paths route TLS-IO via
+  `Io` so the existing `WireStream` `io::Result` contract stays
+  intact). Same wording on [`ws::Error::Tls`] for symmetry.
+- Missing-doc additions across `http`, `rest`, `ws`, `tls`
+  modules.
+
+### Internal
+
+- Module re-exports unchanged; no behavior change.
+
 ## [0.7.0] — 2026-05-08
 
 The "TLS adapter architectural refactor" release. Five rounds of

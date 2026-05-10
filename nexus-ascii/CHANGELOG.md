@@ -8,6 +8,15 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained.
 
+## [1.6.2] — 2026-05-10
+
+Doc-only release. No API or behavior change.
+
+### Changed
+
+- Missing-doc additions across the public surface. Workspace-wide
+  `#![warn(missing_docs)]` now in effect for the crate.
+
 ## [1.6.1] — 2026-05-08
 
 ### Fixed
