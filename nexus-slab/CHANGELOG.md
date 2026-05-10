@@ -8,6 +8,8 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained.
 
+## [Unreleased]
+
 ## [2.3.4] and earlier
 
 Earlier history is not documented in this CHANGELOG. See git history

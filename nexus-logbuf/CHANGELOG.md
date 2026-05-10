@@ -8,6 +8,8 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained (see "Migration notes" below).
 
+## [Unreleased]
+
 ## [2.2.0] — 2026-05-08
 
 The "honest error contracts" release. `len == 0` is a wire-format

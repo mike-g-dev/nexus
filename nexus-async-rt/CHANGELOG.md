@@ -5,6 +5,8 @@ All notable changes to nexus-async-rt are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
 ## [0.6.0] — 2026-05-08
 
 The "byte-channel error contract cleanup" release. Companion to

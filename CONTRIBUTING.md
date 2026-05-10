@@ -260,6 +260,65 @@ concept.
 2. **Include benchmarks** for performance-related changes.
 3. **Keep PRs focused.** One crate, one feature, one fix.
 4. **Update documentation** if behavior changes.
+5. **Add CHANGELOG entries under `## [Unreleased]`.** Don't bump versions in feature PRs — release engineering is a separate step (see "Release Process" below).
+
+## Release Process
+
+Releases are per-crate, automated via [`cargo-release`](https://github.com/crate-ci/cargo-release).
+Workspace config lives in `release.toml` at the repo root.
+
+### Workflow
+
+Feature PRs add a `### Added`/`### Changed`/`### Fixed`/`### Internal` block under
+`## [Unreleased]` in the affected crate's `CHANGELOG.md`. **No version bump in
+the PR** — the bump happens at release time.
+
+When you're ready to release a crate:
+
+```bash
+# Make sure you're on a clean main with the latest pulled.
+git checkout main && git pull
+
+# One-command release: bumps Cargo.toml, renames `## [Unreleased]` →
+# `## [<version>] — <date>` in CHANGELOG.md, commits, tags as
+# `<crate>-v<version>`, pushes the tag, publishes to crates.io,
+# then creates a GitHub Release with the CHANGELOG section as notes.
+tools/release.sh nexus-collections patch
+```
+
+The `bump` argument is `patch`, `minor`, `major`, or an explicit version.
+
+### What the workflow guarantees
+
+- **Tagged at the publish point.** Every published version maps to a `<crate>-v<version>` tag in git.
+  Hotfix flow: `git switch -c hotfix/X nexus-collections-v1.1.5`, fix, release as 1.1.6.
+- **CHANGELOG is dated at release time.** The `## [Unreleased]` block in `CHANGELOG.md` accumulates entries as PRs land; cargo-release renames it to `## [<version>] — <date>` automatically.
+- **Dependency-graph ordering.** When releasing a crate that's depended on by others (e.g., nexus-net before nexus-async-net), cargo-release updates the dependents' `Cargo.toml` declarations to the new version and stops there — bumping the dependents themselves is a separate decision.
+- **GitHub Release page.** Each tag gets a corresponding GitHub Release with the CHANGELOG section as notes — browseable per crate at https://github.com/<owner>/<repo>/releases.
+
+### Versioning convention
+
+Strict SemVer with one workspace-specific allowance: **a minor bump may carry small,
+narrowly-scoped breaking changes** when external blast radius is contained
+(e.g., renaming an internal helper exposed publicly by accident, removing a deprecated
+variant). Pattern: bump minor, yank the prior version on publish so consumers on
+`^X.Y` are forced to consciously upgrade.
+
+For larger breaking changes (renaming a major type, restructuring an API), bump major.
+
+### Pre-requisites for releasing
+
+- `cargo install cargo-release` (workspace requires 0.25+)
+- `gh auth status` shows authenticated GitHub CLI
+- `cargo login` done previously (or `CARGO_REGISTRY_TOKEN` set)
+- Working tree clean, on `main`, latest pulled
+
+### Pending publishes tracker
+
+`.claude/pending-publishes.md` tracks merged-but-unpublished improvements per
+crate (small codegen wins, internal cleanups, etc. that don't individually
+justify a release on their own). Bundle these into the next functional release
+of the affected crate; clear the section after publishing.
 
 ## Questions?
 
