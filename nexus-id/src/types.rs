@@ -509,6 +509,7 @@ impl<const CAP: usize> HexId64<CAP> {
     }
 
     /// Decode back to u64.
+    #[inline]
     pub fn decode(&self) -> u64 {
         let bytes: &[u8; 16] = self.0.as_bytes().try_into().expect("16-byte hex string");
         // SAFETY: Data was validated at construction; decode cannot fail.
@@ -617,6 +618,7 @@ impl<const CAP: usize> Base62Id<CAP> {
     }
 
     /// Decode back to u64.
+    #[inline]
     pub fn decode(&self) -> u64 {
         let bytes = self.0.as_bytes();
         let mut value: u64 = 0;
@@ -731,6 +733,7 @@ impl<const CAP: usize> Base36Id<CAP> {
     }
 
     /// Decode back to u64.
+    #[inline]
     pub fn decode(&self) -> u64 {
         let bytes = self.0.as_bytes();
         let mut value: u64 = 0;

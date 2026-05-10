@@ -15,6 +15,12 @@ macro_rules! impl_asym_ema_float {
         pub struct $name {
             alpha_up: $ty,
             alpha_down: $ty,
+            // Precomputed `1.0 - alpha_*` for the `update` hot path; saves a
+            // subtraction per sample at the cost of two `$ty` fields per
+            // instance. Set in `build()` and held constant for the
+            // instance's lifetime.
+            one_minus_alpha_up: $ty,
+            one_minus_alpha_down: $ty,
             value: $ty,
             count: u64,
             min_samples: u64,
@@ -56,12 +62,12 @@ macro_rules! impl_asym_ema_float {
                 if self.count == 1 {
                     self.value = sample;
                 } else {
-                    let alpha = if sample > self.value {
-                        self.alpha_up
+                    let (alpha, one_minus) = if sample > self.value {
+                        (self.alpha_up, self.one_minus_alpha_up)
                     } else {
-                        self.alpha_down
+                        (self.alpha_down, self.one_minus_alpha_down)
                     };
-                    self.value = alpha.fma(sample, (1.0 as $ty - alpha) * self.value);
+                    self.value = alpha.fma(sample, one_minus * self.value);
                 }
 
                 if self.count >= self.min_samples {
@@ -169,6 +175,8 @@ macro_rules! impl_asym_ema_float {
                 Ok($name {
                     alpha_up,
                     alpha_down,
+                    one_minus_alpha_up: 1.0 as $ty - alpha_up,
+                    one_minus_alpha_down: 1.0 as $ty - alpha_down,
                     value: 0.0 as $ty,
                     count: 0,
                     min_samples: self.min_samples,

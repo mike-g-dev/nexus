@@ -63,11 +63,7 @@ macro_rules! impl_jitter_float {
                     return Ok(Option::None);
                 }
 
-                let abs_delta = if sample > self.last_sample {
-                    sample - self.last_sample
-                } else {
-                    self.last_sample - sample
-                };
+                let abs_delta = (sample - self.last_sample).abs();
                 self.last_deviation = abs_delta;
                 self.last_sample = sample;
 

@@ -227,6 +227,7 @@ impl<T> Pool<T> {
     /// Attempts to acquire an object from the pool.
     ///
     /// Returns `None` if all objects are currently in use.
+    #[inline]
     pub fn try_acquire(&self) -> Option<Pooled<T>> {
         self.inner.pop().map(|idx| {
             // SAFETY: We just popped this slot via CAS (exclusive ownership).
@@ -245,6 +246,7 @@ impl<T> Pool<T> {
     /// O(1) — backed by an atomic counter. This is a snapshot and may
     /// be immediately outdated if other threads are returning objects
     /// concurrently.
+    #[inline]
     pub fn available(&self) -> usize {
         self.inner.free_count.load(Ordering::Relaxed)
     }

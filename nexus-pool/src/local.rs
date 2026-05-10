@@ -171,6 +171,7 @@ impl<T> BoundedPool<T> {
     /// Attempts to acquire an object from the pool.
     ///
     /// Returns `None` if all objects are currently in use.
+    #[inline]
     pub fn try_acquire(&self) -> Option<Pooled<T>> {
         self.inner.try_pop().map(|value| Pooled {
             value: ManuallyDrop::new(value),
@@ -179,6 +180,7 @@ impl<T> BoundedPool<T> {
     }
 
     /// Returns the number of available objects.
+    #[inline]
     pub fn available(&self) -> usize {
         self.inner.available()
     }
@@ -269,6 +271,7 @@ impl<T> Pool<T> {
     /// Attempts to acquire an object from the pool without creating.
     ///
     /// Returns `None` if the pool is empty. This is the fast path.
+    #[inline]
     pub fn try_acquire(&self) -> Option<Pooled<T>> {
         self.inner.try_pop().map(|value| Pooled {
             value: ManuallyDrop::new(value),
@@ -295,6 +298,7 @@ impl<T> Pool<T> {
     /// buf.extend_from_slice(b"hello");
     /// pool.put(buf); // manual return, reset is called
     /// ```
+    #[inline]
     pub fn take(&self) -> T {
         // SAFETY: Pool::new/with_capacity always calls new_growable, which
         // initializes the factory via MaybeUninit::new. pop_or_create's
@@ -306,6 +310,7 @@ impl<T> Pool<T> {
     ///
     /// Returns `None` if the pool is empty. The caller is responsible for
     /// returning the object via [`put()`](Pool::put).
+    #[inline]
     pub fn try_take(&self) -> Option<T> {
         self.inner.try_pop()
     }
@@ -320,12 +325,14 @@ impl<T> Pool<T> {
     /// If the reset closure panics, the value is leaked and the pool slot
     /// is not returned. The panic propagates normally. Reset closures must
     /// not panic — use simple operations like `Vec::clear()` or field resets.
+    #[inline]
     pub fn put(&self, mut value: T) {
         self.inner.return_value(&mut value);
         self.inner.push(value);
     }
 
     /// Returns the number of available objects.
+    #[inline]
     pub fn available(&self) -> usize {
         self.inner.available()
     }

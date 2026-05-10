@@ -185,6 +185,7 @@ impl<T> Sender<T> {
     /// or the receiver disconnects.
     ///
     /// Returns `Err(SendError(value))` if the receiver has been dropped.
+    #[inline]
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.producer.is_disconnected() {
             return Err(SendError(value));
@@ -260,6 +261,7 @@ impl<T> Sender<T> {
     /// - `Ok(())` if the message was sent
     /// - `Err(TrySendError::Full(value))` if the channel is full
     /// - `Err(TrySendError::Disconnected(value))` if the receiver was dropped
+    #[inline]
     pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
         if self.producer.is_disconnected() {
             return Err(TrySendError::Disconnected(value));
@@ -338,6 +340,7 @@ impl<T> Receiver<T> {
     ///
     /// Returns `Err(RecvError)` if the sender has been dropped and no messages
     /// remain in the channel.
+    #[inline]
     pub fn recv(&self) -> Result<T, RecvError> {
         // Fast path
         if let Some(v) = self.consumer.pop() {
@@ -464,6 +467,7 @@ impl<T> Receiver<T> {
     /// - `Ok(value)` if a message was available
     /// - `Err(TryRecvError::Empty)` if the channel is empty
     /// - `Err(TryRecvError::Disconnected)` if the sender was dropped and channel is empty
+    #[inline]
     #[allow(clippy::option_if_let_else)]
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match self.consumer.pop() {

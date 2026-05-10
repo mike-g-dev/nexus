@@ -242,6 +242,14 @@ impl<T: Pod> SharedReader<T> {
     }
 
     /// Returns `true` if the writer has been dropped.
+    ///
+    /// Acquire-loads `writer_alive`. Pairs with the writer's Release
+    /// store in `Drop` so a reader observing `writer_alive == false`
+    /// is also guaranteed to observe the writer's final published data
+    /// (the last `seq.store(..., Release)` before drop). Without the
+    /// Acquire, the canonical drain-then-disconnect pattern
+    /// `while !disconnected || has_update() { ... }` could exit early
+    /// and miss the writer's last value.
     #[inline]
     pub fn is_disconnected(&self) -> bool {
         !self.inner.writer_alive.load(Ordering::Acquire)

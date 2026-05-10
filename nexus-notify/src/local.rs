@@ -126,7 +126,11 @@ impl LocalNotify {
     #[inline]
     pub fn mark(&mut self, token: Token) {
         let idx = token.index();
-        assert!(
+        // Match the sync variant (event_queue.rs:107) which uses
+        // debug_assert! for the same precondition. Release builds skip
+        // the bounds check; the underlying `bits[word]` index would panic
+        // on out-of-bounds anyway.
+        debug_assert!(
             idx < self.num_tokens,
             "token index {} out of range ({})",
             idx,
@@ -185,16 +189,19 @@ impl LocalNotify {
     }
 
     /// Returns `true` if any token is marked.
+    #[inline]
     pub fn has_notified(&self) -> bool {
         !self.dispatch_list.is_empty()
     }
 
     /// Number of tokens currently marked.
+    #[inline]
     pub fn notified_count(&self) -> usize {
         self.dispatch_list.len()
     }
 
     /// Number of registered tokens.
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.num_tokens
     }
