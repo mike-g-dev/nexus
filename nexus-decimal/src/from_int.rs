@@ -26,13 +26,68 @@
 use crate::Decimal;
 use crate::error::ConvertError;
 
+/// Const-fn version of the runtime `is_sound` helper in
+/// `tests/from_int.rs`. Used inside [`impl_from_sound!`] to assert at
+/// compile time that every emitted `From<IntType> for Decimal<Backing, D>`
+/// is mathematically lossless. Returns `true` iff `IntType::MAX * 10^D`
+/// fits `Backing` and `IntType::MIN * 10^D` does too.
+///
+/// Semantics (rule + checked-arith propagation) mirror the runtime
+/// helper exactly. Any future drift is unlikely because both encode the
+/// same predicate; the compile-time path catches macro-table typos
+/// before they reach the runtime tests.
+pub(crate) const fn is_sound_const(
+    int_max: i128,
+    int_min: i128,
+    backing_max: i128,
+    backing_min: i128,
+    d: u32,
+) -> bool {
+    let Some(pow) = 10_i128.checked_pow(d) else {
+        return false;
+    };
+    let Some(max_scaled) = int_max.checked_mul(pow) else {
+        return false;
+    };
+    let Some(min_scaled) = int_min.checked_mul(pow) else {
+        return false;
+    };
+    max_scaled <= backing_max && min_scaled >= backing_min
+}
+
 macro_rules! impl_from_sound {
     ($backing:ty, $d:literal, [$($int:ty),* $(,)?]) => {
         $(
+            // Compile-time soundness check. Fails the build if this
+            // (backing, D, int) cell would overflow on
+            // IntType::MAX * 10^D or IntType::MIN * 10^D — catches
+            // accidentally including an unsound IntType in the list.
+            // Note: omissions (a sound IntType missing from the list)
+            // still compile silently; this asserts soundness of what
+            // is emitted, not coverage of what should be.
+            const _: () = assert!(
+                $crate::from_int::is_sound_const(
+                    <$int>::MAX as i128,
+                    <$int>::MIN as i128,
+                    <$backing>::MAX as i128,
+                    <$backing>::MIN as i128,
+                    $d,
+                ),
+                concat!(
+                    "nexus-decimal: impl_from_sound! invoked with unsound combination ",
+                    stringify!($int),
+                    " -> Decimal<",
+                    stringify!($backing),
+                    ", ",
+                    stringify!($d),
+                    ">"
+                ),
+            );
+
             impl From<$int> for Decimal<$backing, $d> {
                 /// Lossless conversion. The compiler only emits this impl
                 /// when `IntType::MAX * 10^D` fits the backing — overflow
-                /// is impossible by construction.
+                /// is impossible by construction (verified at compile time).
                 #[inline(always)]
                 fn from(value: $int) -> Self {
                     Self {
