@@ -299,6 +299,12 @@ The `bump` argument is `patch`, `minor`, `major`, or an explicit version.
 
 If a bug is discovered in a published version, fix it on `main` and ship a new patch release. **Do not branch from a release tag and release from the branch** — `tools/release.sh` requires `main` precisely to keep history linear and prevent the "release branch drifts from main" failure mode. Reproducing the buggy state for investigation is fine (`git switch <tag>`); the fix and the release both live on `main`.
 
+This policy may relax as crates gain real-world adoption. If users
+materialize who are pinned to an older version and can't take a
+breaking change to get a critical fix, we'll add narrow backport
+support — current major's most recent minor only, security and
+correctness fixes only. Until then, head is the only release line.
+
 ### Versioning convention
 
 Strict SemVer with one workspace-specific allowance: **a minor bump may carry small,
