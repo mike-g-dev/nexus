@@ -290,11 +290,14 @@ The `bump` argument is `patch`, `minor`, `major`, or an explicit version.
 
 ### What the workflow guarantees
 
-- **Tagged at the publish point.** Every published version maps to a `<crate>-v<version>` tag in git.
-  Hotfix flow: `git switch -c hotfix/X nexus-collections-v1.1.5`, fix, release as 1.1.6.
+- **Tagged at the publish point.** Every published version maps to a `<crate>-v<version>` tag in git, so `git switch <crate>-v<version>` reproduces the exact tree state that was published.
 - **CHANGELOG is dated at release time.** The `## [Unreleased]` block in `CHANGELOG.md` accumulates entries as PRs land; cargo-release renames it to `## [<version>] — <date>` automatically.
 - **Dependency-graph ordering.** When releasing a crate that's depended on by others (e.g., nexus-net before nexus-async-net), cargo-release updates the dependents' `Cargo.toml` declarations to the new version and stops there — bumping the dependents themselves is a separate decision.
 - **GitHub Release page.** Each tag gets a corresponding GitHub Release with the CHANGELOG section as notes — browseable per crate at https://github.com/<owner>/<repo>/releases.
+
+### Hotfix policy: forward-only
+
+If a bug is discovered in a published version, fix it on `main` and ship a new patch release. **Do not branch from a release tag and release from the branch** — `tools/release.sh` requires `main` precisely to keep history linear and prevent the "release branch drifts from main" failure mode. Reproducing the buggy state for investigation is fine (`git switch <tag>`); the fix and the release both live on `main`.
 
 ### Versioning convention
 
@@ -312,13 +315,6 @@ For larger breaking changes (renaming a major type, restructuring an API), bump 
 - `gh auth status` shows authenticated GitHub CLI
 - `cargo login` done previously (or `CARGO_REGISTRY_TOKEN` set)
 - Working tree clean, on `main`, latest pulled
-
-### Pending publishes tracker
-
-`.claude/pending-publishes.md` tracks merged-but-unpublished improvements per
-crate (small codegen wins, internal cleanups, etc. that don't individually
-justify a release on their own). Bundle these into the next functional release
-of the affected crate; clear the section after publishing.
 
 ## Questions?
 

@@ -61,21 +61,26 @@ version=$(grep -m1 '^version' "$crate/Cargo.toml" | cut -d'"' -f2)
 tag="${crate}-v${version}"
 
 echo "==> Extracting CHANGELOG section for $version"
-notes=$(awk -v ver="$version" '
+notes_file=$(mktemp)
+trap 'rm -f "$notes_file"' EXIT
+awk -v ver="$version" '
     $0 ~ "^## \\[" ver "\\]" { p=1; print; next }
     p && $0 ~ "^## \\[" { exit }
     p { print }
-' "$crate/CHANGELOG.md")
+' "$crate/CHANGELOG.md" > "$notes_file"
 
-if [ -z "$notes" ]; then
+if [ ! -s "$notes_file" ]; then
     echo "Warning: could not extract CHANGELOG section for [$version] in $crate/CHANGELOG.md" >&2
     echo "Creating release with empty notes — edit on GitHub if needed." >&2
 fi
 
 echo "==> gh release create $tag"
+# Use --notes-file (not --notes "...") to avoid shell/OS argument-length
+# limits on long CHANGELOG sections (e.g., major release notes with
+# migration tables).
 gh release create "$tag" \
     --title "$crate v$version" \
-    --notes "$notes"
+    --notes-file "$notes_file"
 
 echo
 echo "Released: $tag"
