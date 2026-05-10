@@ -237,14 +237,17 @@ construction" and "mutate after construction."
 Example:
 
 ```rust
-// Builder — no `set_` prefix
-let stream = WsStream::builder()
+use nexus_async_net::ws::WsStreamBuilder;
+
+// Builder — no `set_` prefix; chains `mut self -> Self`.
+let mut stream = WsStreamBuilder::new()
     .buffer_capacity(8192)        // app buffer
     .recv_buffer_size(64 * 1024)  // SO_RCVBUF
     .max_message_size(1 << 20)    // app limit
-    .build()?;
+    .connect("wss://exchange.com/ws")
+    .await?;
 
-// Runtime mutator — `set_` prefix
+// Runtime mutator — `set_` prefix; takes `&mut self`.
 stream.set_max_read_size(16 * 1024);  // adjust after construction
 ```
 

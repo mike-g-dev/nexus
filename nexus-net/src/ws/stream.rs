@@ -127,7 +127,7 @@ pub enum Error {
     /// HTTP handshake failed.
     Handshake(HandshakeError),
     /// TLS error during connection setup (handshake, certificate
-    /// validation, hostname resolution).
+    /// validation, SNI hostname verification).
     ///
     /// **Steady-state TLS protocol errors** (decrypt failure, peer
     /// alert, malformed record received during a frame) on the async
