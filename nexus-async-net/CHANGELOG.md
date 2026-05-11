@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   same registration, just hidden inside the constructor.
 - Dependency declaration: `nexus-async-rt` `0.6.0` → `0.7.0` to pick
   up the `Type::current()` API and constructor cleanup.
+- **`nexus` feature now flagged as experimental** (transitively, since
+  the underlying nexus-async-rt crate is now experimental). README
+  updated with a Backends section + feature matrix; tokio remains
+  the supported path for production use.
+
+### Added
+
+- **Per-backend composite features** for symmetry and discoverability:
+  - `tokio-full` = `tokio-tls` + `socket-opts` + `bytes` (recommended bundle)
+  - `nexus-tls` = `nexus` + `tls`
+  - `nexus-full` = `nexus-tls` + `socket-opts` + `bytes`
+  - `full` aliased to `tokio-full` (was previously runtime-less, which
+    compiled to almost nothing without explicit runtime selection).
 
 ## [0.7.1] — 2026-05-10
 

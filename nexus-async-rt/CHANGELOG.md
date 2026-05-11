@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Crate marked experimental.** README updated with status banner;
+  Cargo.toml description clarifies tokio is the supported async
+  runtime for production use. nexus-async-rt continues to compile,
+  pass tests, and remains usable for current consumers, but is not
+  under active development. Bug-fix PRs welcome; no commitment to
+  optimize or extend.
+
 ### Changed (breaking)
 
 - **Bare-noun context-fetcher free functions converted to

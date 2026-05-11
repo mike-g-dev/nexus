@@ -310,10 +310,24 @@ correctness fixes only. Until then, head is the only release line.
 Strict SemVer with one workspace-specific allowance: **a minor bump may carry small,
 narrowly-scoped breaking changes** when external blast radius is contained
 (e.g., renaming an internal helper exposed publicly by accident, removing a deprecated
-variant). Pattern: bump minor, yank the prior version on publish so consumers on
-`^X.Y` are forced to consciously upgrade.
+variant).
 
 For larger breaking changes (renaming a major type, restructuring an API), bump major.
+
+#### When to yank
+
+`cargo yank` is for versions that should not be picked for new resolves —
+typically because they have a real defect (security issue, broken build,
+data-loss bug). It is **not** an upgrade-pressure tool: a yank does not
+force consumers on `^X.Y` to migrate, since `cargo update` already prefers
+the highest compatible version regardless. Yanking the immediately prior
+version of a healthy minor bump just denies users the option to stay on
+that version and adds no real upgrade signal.
+
+For minor-with-breaking releases under our allowance: rely on the
+compile errors (for API breaks) and CHANGELOG documentation (for contract
+changes) to communicate the migration. Yank only when the prior version
+has a defect users should actively avoid.
 
 ### Pre-requisites for releasing
 
