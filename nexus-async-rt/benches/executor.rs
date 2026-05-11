@@ -157,7 +157,7 @@ fn estimate_cpu_freq_ghz() -> f64 {
 }
 
 // =============================================================================
-// Amortized per-poll-cycle benchmark
+// Amortized per-poll-cycle benchmarks
 // =============================================================================
 //
 // `block_on(immediate)` and `spawn_then_join` measure full block_on
@@ -166,20 +166,23 @@ fn estimate_cpu_freq_ghz() -> f64 {
 // the runtime to poll a future during steady-state operation?"
 //
 // The Countdown future below re-arms itself via `wake_by_ref` each poll and
-// returns Pending until its counter hits zero. block_on(Countdown { n: N })
-// drives the executor through exactly (N+1) poll cycles inside the same
-// runtime instance:
+// returns Pending until its counter hits zero. With N >> 1, block_on
+// entry/exit and the one-shot setup amortize to negligible per-cycle cost.
 //
-//   1. Pop ready task from run queue
-//   2. Build Context with task's waker
-//   3. Call Future::poll
-//   4. Handle Pending result
-//   5. wake_by_ref → re-push task to run queue
-//   6. Repeat
+// Two variants — they measure DIFFERENT waker paths:
 //
-// With N >> 1, block_on entry/exit and the one-shot task allocation amortize
-// to negligible per-cycle cost. Per-poll = total_cycles / N captures the
-// steady-state inner-loop cost.
+// `root_poll_cycle_amortized`: Countdown is the root future of block_on, so
+//   `cx.waker()` inside Countdown::poll is the `RootWake` waker (mio-backed).
+//   wake_by_ref sets a flag and pokes mio's eventfd, costing one write()
+//   syscall per cycle. This measures the "root future yields back to the
+//   runtime" path, which is what `async fn main()` -style code hits.
+//
+// `task_poll_cycle_amortized`: Countdown is spawned as a task via
+//   `spawn_boxed` and awaited from the root. `cx.waker()` inside Countdown::poll
+//   is the task waker (data ptr = task pointer, vtable = `waker::VTABLE`).
+//   wake_by_ref goes through `waker::wake_impl` → pushes to executor's
+//   ready queue. No syscall. This is the path that matters for spawned
+//   work, and the path issue #237 was concerned about.
 
 struct Countdown {
     n: usize,
@@ -199,8 +202,8 @@ impl Future for Countdown {
     }
 }
 
-fn poll_cycle_amortized() {
-    println!("=== per-poll-cycle (Countdown self-rewoken, amortized) ===");
+fn root_poll_cycle_amortized() {
+    println!("=== per-poll-cycle (root Countdown, RootWake path, amortized) ===");
     println!("Polls per sample: {POLLS_PER_SAMPLE}");
     println!("Samples:          {SAMPLES}");
     println!();
@@ -229,7 +232,83 @@ fn poll_cycle_amortized() {
         let _ = hist.record(per_poll.min(10_000_000));
     }
 
-    print_hist(&hist, "per-poll-cycle (steady-state)");
+    print_hist(&hist, "per-poll-cycle (root waker path)");
+}
+
+fn task_poll_cycle_amortized() {
+    println!("=== per-poll-cycle (spawned Countdown, task waker path, amortized) ===");
+    println!("Polls per sample: {POLLS_PER_SAMPLE}");
+    println!("Samples:          {SAMPLES}");
+    println!();
+
+    let wb = WorldBuilder::new();
+    let mut world = wb.build();
+    let mut rt = Runtime::new(&mut world);
+
+    // Warmup
+    for _ in 0..WARMUP {
+        rt.block_on(async {
+            spawn_boxed(Countdown { n: 100 }).await;
+        });
+    }
+
+    let mut hist = Histogram::<u64>::new_with_max(10_000_000, 3).unwrap();
+    for _ in 0..SAMPLES {
+        let start = rdtscp();
+        rt.block_on(async {
+            spawn_boxed(Countdown {
+                n: POLLS_PER_SAMPLE,
+            })
+            .await;
+        });
+        let end = rdtscp();
+        let total = end.wrapping_sub(start);
+        // +1 for the final Ready poll. spawn + JoinHandle resolve amortizes
+        // to ~0.1cy across POLLS_PER_SAMPLE polls.
+        let per_poll = total / (POLLS_PER_SAMPLE as u64 + 1);
+        let _ = hist.record(per_poll.min(10_000_000));
+    }
+
+    print_hist(&hist, "per-poll-cycle (task waker path)");
+}
+
+fn tokio_localset_task_poll_cycle() {
+    println!("=== per-poll-cycle (tokio LocalSet + spawn_local, amortized) ===");
+    println!("Polls per sample: {POLLS_PER_SAMPLE}");
+    println!("Samples:          {SAMPLES}");
+    println!();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let local = tokio::task::LocalSet::new();
+
+    // Warmup
+    for _ in 0..WARMUP {
+        rt.block_on(local.run_until(async {
+            tokio::task::spawn_local(Countdown { n: 100 })
+                .await
+                .unwrap();
+        }));
+    }
+
+    let mut hist = Histogram::<u64>::new_with_max(10_000_000, 3).unwrap();
+    for _ in 0..SAMPLES {
+        let start = rdtscp();
+        rt.block_on(local.run_until(async {
+            tokio::task::spawn_local(Countdown {
+                n: POLLS_PER_SAMPLE,
+            })
+            .await
+            .unwrap();
+        }));
+        let end = rdtscp();
+        let total = end.wrapping_sub(start);
+        let per_poll = total / (POLLS_PER_SAMPLE as u64 + 1);
+        let _ = hist.record(per_poll.min(10_000_000));
+    }
+
+    print_hist(&hist, "per-poll-cycle (tokio LocalSet path)");
 }
 
 // =============================================================================
@@ -300,6 +379,8 @@ fn main() {
     println!();
     block_on_immediate();
     spawn_then_join();
-    poll_cycle_amortized();
+    root_poll_cycle_amortized();
+    task_poll_cycle_amortized();
+    tokio_localset_task_poll_cycle();
     task_lifecycle_amortized();
 }
