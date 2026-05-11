@@ -1,28 +1,32 @@
 # nexus-async-rt
 
+> **Status: Experimental — not under active development.**
+>
+> This crate is a reference implementation of single-threaded busy-poll
+> async patterns on mio. **For production async work, use [tokio](https://tokio.rs).**
+> The rest of the nexus workspace is runtime-agnostic and composes
+> cleanly with tokio.
+>
+> nexus-async-rt continues to compile, pass tests, and remains usable
+> for the workloads it already supports. Bug-fix PRs are welcome. There
+> is no commitment to optimize, extend, or maintain feature parity with
+> tokio. If you're starting a new project that needs an async runtime,
+> reach for tokio first.
+
 Single-threaded async runtime for latency-sensitive systems. Built on mio.
 
-Not a tokio replacement — a purpose-built alternative for single-threaded
-event loops where predictable latency matters more than multi-threaded
-throughput.
+## Why this exists (and why tokio is still the right default)
 
-## When to use this vs tokio
+Tokio's design parks the executor thread when there's no work. For most
+workloads that's correct — it gives the OS scheduler back to other
+processes. For ultra-low-latency workloads where the thread should never
+yield (HFT, real-time control), parking is the wrong policy. nexus-async-rt
+was a reference exploration of an executor that doesn't park.
 
-**Use nexus-async-rt when:**
-- Single-threaded event loop (one core, no work-stealing)
-- Predictable tail latency (no scheduler jitter)
-- Zero-alloc task spawning on the hot path (slab allocation)
-- Futures are `!Send` — and that's fine
-- You're building on the nexus ecosystem (nexus-net, nexus-rt)
-
-**Use tokio when:**
-- Multi-threaded execution or work-stealing
-- tokio ecosystem (tower, hyper, tonic, etc.)
-- Futures need to be `Send` across threads
-- Broad community support matters
-
-Both can coexist in the same process. Use nexus-async-rt for the
-latency-critical event loop and tokio for everything else.
+In practice, **tokio can be coerced into busy-poll behavior with known
+workarounds**, which makes the structural advantage of nexus-async-rt
+small enough that the maintenance cost isn't justified. Hence the
+experimental status.
 
 ## Quick start
 

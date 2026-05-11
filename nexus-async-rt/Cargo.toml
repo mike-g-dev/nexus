@@ -1,7 +1,7 @@
 [package]
 name = "nexus-async-rt"
 version = "0.7.0"
-description = "Single-threaded async executor with pre-allocated task storage"
+description = "Experimental single-threaded async executor (reference implementation; tokio is the supported path for production use)"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
