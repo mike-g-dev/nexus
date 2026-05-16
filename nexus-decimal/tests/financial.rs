@@ -626,7 +626,7 @@ fn bps_of_basic() {
     // 5 bps of 100 = 100 * 5 / 10000 = 0.05
     assert_eq!(price.bps_of(5), Some(D64::new(0, 5_000_000)));
     // negative bps
-    assert_eq!(price.bps_of(-5), Some(D64::new(0, -5_000_000)));
+    assert_eq!(price.bps_of(-5), Some(D64::from_raw(-5_000_000)));
     // zero bps
     assert_eq!(price.bps_of(0), Some(D64::ZERO));
 }
@@ -734,8 +734,9 @@ fn tick_diff_self() {
 }
 
 #[test]
+#[should_panic(expected = "tick must be positive")]
 fn tick_diff_zero_tick() {
-    assert!(D64::ONE.tick_diff(D64::ZERO, D64::ZERO).is_none());
+    let _ = D64::ONE.tick_diff(D64::ZERO, D64::ZERO);
 }
 
 #[test]

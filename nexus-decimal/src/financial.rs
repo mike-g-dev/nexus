@@ -229,7 +229,11 @@ macro_rules! impl_decimal_financial {
             /// Round to nearest N basis points.
             ///
             /// Returns `None` if `n == 0` or the tick computation overflows.
-            /// Panics if `D < 4`.
+            ///
+            /// # Compile-time constraint
+            ///
+            /// Requires `D >= 4`. Referencing this method on a `Decimal`
+            /// with `D < 4` is a compile error.
             #[inline(always)]
             pub const fn round_bps(self, n: u32) -> Option<Self> {
                 const { assert!(D >= 4, "round_bps requires D >= 4") };
@@ -251,7 +255,11 @@ macro_rules! impl_decimal_financial {
             /// Floor to N basis points.
             ///
             /// Returns `None` if `n == 0` or the tick computation overflows.
-            /// Panics if `D < 4`.
+            ///
+            /// # Compile-time constraint
+            ///
+            /// Requires `D >= 4`. Referencing this method on a `Decimal`
+            /// with `D < 4` is a compile error.
             #[inline(always)]
             pub const fn floor_bps(self, n: u32) -> Option<Self> {
                 const { assert!(D >= 4, "floor_bps requires D >= 4") };
@@ -273,7 +281,11 @@ macro_rules! impl_decimal_financial {
             /// Ceil to N basis points.
             ///
             /// Returns `None` if `n == 0` or the tick computation overflows.
-            /// Panics if `D < 4`.
+            ///
+            /// # Compile-time constraint
+            ///
+            /// Requires `D >= 4`. Referencing this method on a `Decimal`
+            /// with `D < 4` is a compile error.
             #[inline(always)]
             pub const fn ceil_bps(self, n: u32) -> Option<Self> {
                 const { assert!(D >= 4, "ceil_bps requires D >= 4") };
@@ -616,12 +628,12 @@ macro_rules! impl_financial_widening {
             /// Truncates toward zero (partial ticks dropped, matching Rust
             /// integer division).
             ///
-            /// Returns `None` if `tick` is zero or the result exceeds `i64`.
+            /// # Panics
+            ///
+            /// Panics if `tick` is not positive.
             #[inline]
             pub const fn tick_diff(self, other: Self, tick: Self) -> Option<i64> {
-                if tick.value == 0 {
-                    return None;
-                }
+                assert!(tick.value > 0, "tick must be positive");
                 let diff = (self.value as $wider) - (other.value as $wider);
                 let ticks = diff / (tick.value as $wider);
                 if ticks > i64::MAX as $wider || ticks < i64::MIN as $wider {
@@ -923,12 +935,12 @@ impl<const D: u8> Decimal<i128, D> {
     /// Truncates toward zero (partial ticks dropped, matching Rust
     /// integer division).
     ///
-    /// Returns `None` if `tick` is zero or the result exceeds `i64`.
+    /// # Panics
+    ///
+    /// Panics if `tick` is not positive.
     #[inline]
     pub const fn tick_diff(self, other: Self, tick: Self) -> Option<i64> {
-        if tick.value == 0 {
-            return None;
-        }
+        assert!(tick.value > 0, "tick must be positive");
         let Some(diff) = self.value.checked_sub(other.value) else {
             return None;
         };
