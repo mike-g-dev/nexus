@@ -216,13 +216,16 @@ macro_rules! impl_decimal_arithmetic {
             /// [`wrapping_mul_pow2`](Self::wrapping_mul_pow2) for explicit
             /// overflow policies.
             ///
+            /// In particular, `mul_pow2(v, BITS)` in release returns `v`
+            /// unchanged — the mask makes this a no-op, not a zeroing.
+            ///
             /// # Codegen
             ///
             /// Lowers to a single backing-width shift in release builds
             /// (both constant and variable `n`). For `i32` / `i64`
-            /// backings this is one instruction; for `i128` it expands
-            /// to the wide-shift sequence the platform uses for 128-bit
-            /// shifts.
+            /// backings this is one instruction (~1 cycle); for `i128`
+            /// it expands to a branchless wide-shift sequence (`shld` +
+            /// `shl` on x86-64, ~4-5 cycles).
             #[inline(always)]
             pub const fn mul_pow2(self, n: u32) -> Self {
                 // `cfg!()` is const-evaluable; the unused branch is removed.
@@ -313,10 +316,11 @@ macro_rules! impl_decimal_arithmetic {
             ///
             /// # Codegen
             ///
-            /// Constant `n` folds to shift + sign-correction (~3 cycles).
-            /// Variable `n` compiles to a real signed division
-            /// (hardware-divider-dependent, typically ~10-25 cycles) —
-            /// use a constant when the shift amount is known.
+            /// Constant `n` folds to a branchless shift + sign-correction
+            /// sequence (~2 cycles on modern x86-64). Variable `n`
+            /// compiles to a hardware signed division (~8-12 cycles on
+            /// Ice Lake+ / Zen 3+) — use a constant when the shift
+            /// amount is known.
             ///
             /// # Panics
             ///
