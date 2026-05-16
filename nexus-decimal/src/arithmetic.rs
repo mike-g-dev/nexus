@@ -195,6 +195,190 @@ macro_rules! impl_decimal_arithmetic {
                     None => Err(OverflowError),
                 }
             }
+
+            // ========================================================
+            // Power-of-2 multiplication
+            // ========================================================
+
+            /// Multiply by `2^n` (left shift on the backing value).
+            ///
+            /// The `10^D` scale factor cancels because the multiplier is
+            /// dimensionless — multiplying the represented value by `2^n` is
+            /// exactly a left shift on the backing.
+            ///
+            /// # Overflow behavior
+            ///
+            /// Matches `<backing>::mul` semantics: debug builds panic on
+            /// overflow, release builds wrap (`wrapping_shl`, which masks
+            /// `n` to `n mod <backing>::BITS`). Use
+            /// [`checked_mul_pow2`](Self::checked_mul_pow2),
+            /// [`saturating_mul_pow2`](Self::saturating_mul_pow2), or
+            /// [`wrapping_mul_pow2`](Self::wrapping_mul_pow2) for explicit
+            /// overflow policies.
+            ///
+            /// In particular, `mul_pow2(v, BITS)` in release returns `v`
+            /// unchanged — the mask makes this a no-op, not a zeroing.
+            ///
+            /// # Codegen
+            ///
+            /// Lowers to a single backing-width shift in release builds
+            /// (both constant and variable `n`). For `i32` / `i64`
+            /// backings this is one instruction (~1 cycle); for `i128`
+            /// it expands to a branchless wide-shift sequence (`shld` +
+            /// `shl` on x86-64, ~4-5 cycles).
+            #[inline(always)]
+            pub const fn mul_pow2(self, n: u32) -> Self {
+                // `cfg!()` is const-evaluable; the unused branch is removed.
+                if cfg!(debug_assertions) {
+                    match self.checked_mul_pow2(n) {
+                        Some(v) => v,
+                        None => panic!("attempt to multiply with overflow"),
+                    }
+                } else {
+                    Self {
+                        value: self.value.wrapping_shl(n),
+                    }
+                }
+            }
+
+            /// Checked multiplication by `2^n`. Returns `None` on overflow.
+            ///
+            /// Uses leading-zero counting to detect overflow without
+            /// performing the shift first. For positive `v`, requires
+            /// `n < v.leading_zeros()`; for negative `v`, requires
+            /// `n < (!v).leading_zeros()`.
+            #[inline(always)]
+            pub const fn checked_mul_pow2(self, n: u32) -> Option<Self> {
+                if self.value == 0 {
+                    return Some(self);
+                }
+                let leading_sign_bits = if self.value >= 0 {
+                    self.value.leading_zeros()
+                } else {
+                    (!self.value).leading_zeros()
+                };
+                if n < leading_sign_bits {
+                    Some(Self {
+                        value: self.value.wrapping_shl(n),
+                    })
+                } else {
+                    None
+                }
+            }
+
+            /// Saturating multiplication by `2^n`. Clamps to
+            /// [`MAX`](Self::MAX) / [`MIN`](Self::MIN) on overflow.
+            #[inline(always)]
+            pub const fn saturating_mul_pow2(self, n: u32) -> Self {
+                match self.checked_mul_pow2(n) {
+                    Some(v) => v,
+                    None => {
+                        if self.value >= 0 {
+                            Self::MAX
+                        } else {
+                            Self::MIN
+                        }
+                    }
+                }
+            }
+
+            /// Wrapping multiplication by `2^n`.
+            ///
+            /// Silently wraps on overflow. Note that `wrapping_shl` masks
+            /// `n` to `n mod <backing>::BITS`, so e.g. shifting by `BITS`
+            /// is a no-op rather than zeroing the value.
+            #[inline(always)]
+            pub const fn wrapping_mul_pow2(self, n: u32) -> Self {
+                Self {
+                    value: self.value.wrapping_shl(n),
+                }
+            }
+
+            /// Multiplication by `2^n` returning `Result`.
+            #[inline(always)]
+            pub const fn try_mul_pow2(self, n: u32) -> Result<Self, OverflowError> {
+                match self.checked_mul_pow2(n) {
+                    Some(v) => Ok(v),
+                    None => Err(OverflowError),
+                }
+            }
+
+            // ========================================================
+            // Power-of-2 division
+            // ========================================================
+
+            /// Divide by `2^n` (truncate toward zero).
+            ///
+            /// Semantically identical to `/ 2^n`: truncates toward zero,
+            /// matching [`halve`](Self::halve), [`div10`](Self::div10),
+            /// [`div100`](Self::div100), and the rest of the division
+            /// surface. Invariant: `div_pow2(1) == halve()`.
+            ///
+            /// # Codegen
+            ///
+            /// Constant `n` folds to a branchless shift + sign-correction
+            /// sequence (~2 cycles on modern x86-64). Variable `n`
+            /// compiles to a hardware signed division (~8-12 cycles on
+            /// Ice Lake+ / Zen 3+) — use a constant when the shift
+            /// amount is known.
+            ///
+            /// # Panics
+            ///
+            /// Debug builds panic if `n >= <backing>::BITS`. Release
+            /// builds return [`ZERO`](Self::ZERO), which is the
+            /// mathematically correct result under truncate-toward-zero:
+            /// any value divided by `2^n` larger than its magnitude is 0.
+            #[inline(always)]
+            pub const fn div_pow2(self, n: u32) -> Self {
+                debug_assert!(n < <$backing>::BITS, "shift amount out of range");
+
+                if n >= <$backing>::BITS {
+                    // Release-mode safety net.
+                    return Self { value: 0 };
+                }
+                if n == <$backing>::BITS - 1 {
+                    // 2^(BITS-1) doesn't fit as positive signed.
+                    // value / 2^(BITS-1) truncated toward zero:
+                    //   value == MIN → -1; otherwise → 0
+                    return Self {
+                        value: if self.value == <$backing>::MIN { -1 } else { 0 },
+                    };
+                }
+                // n < BITS - 1: (1 << n) fits as positive signed.
+                Self {
+                    value: self.value / (1 << n),
+                }
+            }
+
+            // ========================================================
+            // Absolute difference
+            // ========================================================
+
+            /// Overflow-safe absolute difference: `|self - other|`.
+            ///
+            /// Returns `None` when the result would exceed
+            /// [`MAX`](Self::MAX) — this happens when the operands have
+            /// opposite signs near the rails, since `|MIN - MAX|` exceeds
+            /// `MAX` on every signed type.
+            ///
+            /// Named `checked_abs_diff` to match the crate's `checked_*`
+            /// convention for `Option`-returning operations. There is no
+            /// bare `abs_diff` — every call site must acknowledge the
+            /// overflow case. Stdlib's `<backing>::abs_diff` returns an
+            /// unsigned type to avoid overflow; since `Decimal` has no
+            /// unsigned variant, this returns `Option<Self>` instead.
+            #[inline(always)]
+            pub const fn checked_abs_diff(self, other: Self) -> Option<Self> {
+                let diff = if self.value >= other.value {
+                    self.value.checked_sub(other.value)
+                } else {
+                    other.value.checked_sub(self.value)
+                };
+                match diff {
+                    Some(v) => Some(Self { value: v }),
+                    None => None,
+                }
+            }
         }
     };
 }

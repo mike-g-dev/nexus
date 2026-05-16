@@ -404,7 +404,7 @@ fn mul_correctness_sweep_d64() {
             // Allow 1 ULP of the decimal + f64 rounding
             let tolerance = 2.0 / D64::SCALE as f64;
             assert!(
-                diff < tolerance + expected_f.abs() * 1e-10,
+                diff < expected_f.abs().mul_add(1e-10, tolerance),
                 "mul mismatch: {a:?} * {b:?} = {result:?}, expected ≈ {expected_f}"
             );
         }

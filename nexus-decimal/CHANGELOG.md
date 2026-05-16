@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Power-of-2 multiplication family: `mul_pow2`, `checked_mul_pow2`,
+  `saturating_mul_pow2`, `wrapping_mul_pow2`, `try_mul_pow2`. Multiplies
+  by `2^n` via a backing-width shift; the `10^D` scale factor cancels
+  because the multiplier is dimensionless. The bare form follows stdlib
+  `*` semantics (debug-panic, release-wrap via `wrapping_shl`).
+- `div_pow2(n)` — divide by `2^n` with truncate-toward-zero rounding,
+  matching `halve` / `div10` / `div100` / the rest of the division
+  surface. Invariant: `div_pow2(1) == halve()`. Constant `n` folds to
+  shift + sign-correction; variable `n` is a real signed division.
+- `checked_abs_diff(other) -> Option<Self>` — overflow-safe absolute
+  difference. Returns `None` when the result exceeds `MAX` (operands
+  with opposite signs near the rails — `|MIN - MAX|` exceeds `MAX` on
+  every signed type). Named `checked_*` to match the crate's convention
+  for `Option`-returning operations; there is no bare `abs_diff`.
+
 ## [1.1.0] — 2026-04-23
 
 ### Added

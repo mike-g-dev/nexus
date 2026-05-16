@@ -686,3 +686,325 @@ mod d96_rounding {
         }
     }
 }
+
+// ============================================================================
+// Power-of-2 multiplication (mul_pow2 family)
+// ============================================================================
+
+mod mul_pow2 {
+    use super::{D32, D64, D96, D128};
+    use nexus_decimal::{Decimal, OverflowError};
+
+    // ------- identity -------
+
+    #[test]
+    fn shift_by_zero_is_identity() {
+        assert_eq!(D32::ONE.mul_pow2(0), D32::ONE);
+        assert_eq!(D64::ONE.mul_pow2(0), D64::ONE);
+        assert_eq!(D96::ONE.mul_pow2(0), D96::ONE);
+        assert_eq!(D128::ONE.mul_pow2(0), D128::ONE);
+        assert_eq!(D64::ZERO.mul_pow2(0), D64::ZERO);
+        assert_eq!(D64::NEG_ONE.mul_pow2(0), D64::NEG_ONE);
+    }
+
+    #[test]
+    fn checked_zero_is_always_some_zero() {
+        // 0 << n is always 0 for any n, including n == BITS-1.
+        assert_eq!(D32::ZERO.checked_mul_pow2(31), Some(D32::ZERO));
+        assert_eq!(D64::ZERO.checked_mul_pow2(63), Some(D64::ZERO));
+        assert_eq!(D96::ZERO.checked_mul_pow2(127), Some(D96::ZERO));
+    }
+
+    // ------- basic shifts -------
+
+    #[test]
+    fn checked_small_shifts() {
+        // 1 << 3 == 8 on the backing
+        assert_eq!(D64::from_raw(1).checked_mul_pow2(3), Some(D64::from_raw(8)));
+        assert_eq!(
+            D64::from_raw(-1).checked_mul_pow2(3),
+            Some(D64::from_raw(-8))
+        );
+        // 5 << 4 == 80
+        assert_eq!(
+            D32::from_raw(5).checked_mul_pow2(4),
+            Some(D32::from_raw(80))
+        );
+    }
+
+    // ------- per-backing boundaries: MAX, MIN, NEG_ONE -------
+
+    #[test]
+    fn i32_boundaries() {
+        type T = Decimal<i32, 0>;
+        let bits = i32::BITS;
+
+        assert_eq!(T::MAX.checked_mul_pow2(1), None);
+        assert_eq!(T::MIN.checked_mul_pow2(1), None);
+
+        // -1 << (BITS-1) == MIN, exact, no overflow.
+        assert_eq!(T::from_raw(-1).checked_mul_pow2(bits - 1), Some(T::MIN));
+        // 1 << (BITS-1) would land on MIN (reinterpreted), overflow.
+        assert_eq!(T::from_raw(1).checked_mul_pow2(bits - 1), None);
+        // 1 << (BITS-2) fits as positive signed.
+        assert_eq!(
+            T::from_raw(1).checked_mul_pow2(bits - 2),
+            Some(T::from_raw(i32::MAX / 2 + 1))
+        );
+    }
+
+    #[test]
+    fn i64_boundaries() {
+        type T = Decimal<i64, 0>;
+        let bits = i64::BITS;
+
+        assert_eq!(T::MAX.checked_mul_pow2(1), None);
+        assert_eq!(T::MIN.checked_mul_pow2(1), None);
+        assert_eq!(T::from_raw(-1).checked_mul_pow2(bits - 1), Some(T::MIN));
+        assert_eq!(T::from_raw(1).checked_mul_pow2(bits - 1), None);
+        assert_eq!(
+            T::from_raw(1).checked_mul_pow2(bits - 2),
+            Some(T::from_raw(i64::MAX / 2 + 1))
+        );
+    }
+
+    #[test]
+    fn i128_boundaries() {
+        type T = Decimal<i128, 0>;
+        let bits = i128::BITS;
+
+        assert_eq!(T::MAX.checked_mul_pow2(1), None);
+        assert_eq!(T::MIN.checked_mul_pow2(1), None);
+        assert_eq!(T::from_raw(-1).checked_mul_pow2(bits - 1), Some(T::MIN));
+        assert_eq!(T::from_raw(1).checked_mul_pow2(bits - 1), None);
+        assert_eq!(
+            T::from_raw(1).checked_mul_pow2(bits - 2),
+            Some(T::from_raw(i128::MAX / 2 + 1))
+        );
+    }
+
+    // ------- saturating clamps to MAX / MIN -------
+
+    #[test]
+    fn saturating_clamps() {
+        assert_eq!(D64::MAX.saturating_mul_pow2(1), D64::MAX);
+        assert_eq!(D64::MIN.saturating_mul_pow2(1), D64::MIN);
+        assert_eq!(D32::MAX.saturating_mul_pow2(1), D32::MAX);
+        assert_eq!(D32::MIN.saturating_mul_pow2(1), D32::MIN);
+        assert_eq!(D128::MAX.saturating_mul_pow2(1), D128::MAX);
+        assert_eq!(D128::MIN.saturating_mul_pow2(1), D128::MIN);
+
+        // Positive non-overflow case unaffected.
+        assert_eq!(D64::from_raw(3).saturating_mul_pow2(2), D64::from_raw(12));
+    }
+
+    // ------- wrapping: shift-by-BITS is a no-op (n mod BITS == 0) -------
+
+    #[test]
+    fn wrapping_at_bits_boundary() {
+        // wrapping_shl masks n mod BITS — shifting by BITS is a no-op.
+        assert_eq!(D64::from_raw(7).wrapping_mul_pow2(64), D64::from_raw(7));
+        assert_eq!(D32::from_raw(5).wrapping_mul_pow2(32), D32::from_raw(5));
+    }
+
+    // ------- try_* mirrors checked_* -------
+
+    #[test]
+    fn try_form() {
+        assert_eq!(D64::from_raw(1).try_mul_pow2(3), Ok(D64::from_raw(8)));
+        assert_eq!(D64::MAX.try_mul_pow2(1), Err(OverflowError));
+    }
+}
+
+// ============================================================================
+// Power-of-2 division (div_pow2)
+// ============================================================================
+
+mod div_pow2 {
+    use super::{D32, D64, D96, D128};
+    use nexus_decimal::Decimal;
+
+    // ------- identity -------
+
+    #[test]
+    fn shift_by_zero_is_identity() {
+        assert_eq!(D32::ONE.div_pow2(0), D32::ONE);
+        assert_eq!(D64::ONE.div_pow2(0), D64::ONE);
+        assert_eq!(D96::ONE.div_pow2(0), D96::ONE);
+        assert_eq!(D128::ONE.div_pow2(0), D128::ONE);
+        assert_eq!(D64::NEG_ONE.div_pow2(0), D64::NEG_ONE);
+        assert_eq!(D64::ZERO.div_pow2(0), D64::ZERO);
+    }
+
+    // ------- invariant: div_pow2(1) == halve() -------
+
+    #[test]
+    fn matches_halve() {
+        let cases = [
+            D64::ZERO,
+            D64::ONE,
+            D64::NEG_ONE,
+            D64::from_raw(7),
+            D64::from_raw(-7),
+            D64::from_raw(123_456),
+            D64::from_raw(-123_456),
+            D64::MAX,
+            D64::MIN,
+        ];
+        for d in cases {
+            assert_eq!(
+                d.div_pow2(1),
+                d.halve(),
+                "div_pow2(1) != halve() for raw={}",
+                d.to_raw()
+            );
+        }
+    }
+
+    // ------- truncate toward zero -------
+
+    #[test]
+    fn truncates_toward_zero() {
+        // 7 / 2 = 3 (positive truncation)
+        assert_eq!(D64::from_raw(7).div_pow2(1), D64::from_raw(3));
+        // -7 / 2 = -3 (truncate toward zero, NOT floor: -7/2 == -3.5 → -3)
+        assert_eq!(D64::from_raw(-7).div_pow2(1), D64::from_raw(-3));
+        // 15 / 8 = 1; -15 / 8 = -1
+        assert_eq!(D64::from_raw(15).div_pow2(3), D64::from_raw(1));
+        assert_eq!(D64::from_raw(-15).div_pow2(3), D64::from_raw(-1));
+    }
+
+    // ------- per-backing boundaries at n == BITS-1 -------
+
+    #[test]
+    fn i32_bits_minus_one() {
+        type T = Decimal<i32, 0>;
+        let n = i32::BITS - 1;
+        // MIN / 2^(BITS-1): mathematically -1.0 exactly, truncates to -1.
+        assert_eq!(T::MIN.div_pow2(n), T::from_raw(-1));
+        // MAX / 2^(BITS-1): mathematically just under 1.0, truncates to 0.
+        assert_eq!(T::MAX.div_pow2(n), T::ZERO);
+        // Any non-MIN value truncates to 0.
+        assert_eq!(T::from_raw(-1).div_pow2(n), T::ZERO);
+        assert_eq!(T::from_raw(1).div_pow2(n), T::ZERO);
+        assert_eq!(T::ZERO.div_pow2(n), T::ZERO);
+    }
+
+    #[test]
+    fn i64_bits_minus_one() {
+        type T = Decimal<i64, 0>;
+        let n = i64::BITS - 1;
+        assert_eq!(T::MIN.div_pow2(n), T::from_raw(-1));
+        assert_eq!(T::MAX.div_pow2(n), T::ZERO);
+        assert_eq!(T::from_raw(-1).div_pow2(n), T::ZERO);
+    }
+
+    #[test]
+    fn i128_bits_minus_one() {
+        type T = Decimal<i128, 0>;
+        let n = i128::BITS - 1;
+        assert_eq!(T::MIN.div_pow2(n), T::from_raw(-1));
+        assert_eq!(T::MAX.div_pow2(n), T::ZERO);
+        assert_eq!(T::from_raw(-1).div_pow2(n), T::ZERO);
+    }
+
+    // ------- round-trip mul ↔ div -------
+
+    #[test]
+    fn mul_div_roundtrip_when_no_overflow() {
+        // For each n where checked_mul_pow2(v, n) succeeds, div_pow2(_, n)
+        // recovers v.
+        let cases = [
+            (D64::from_raw(1), 5),
+            (D64::from_raw(-1), 5),
+            (D64::from_raw(123_456_789), 10),
+            (D64::from_raw(-123_456_789), 10),
+            (D64::from_raw(3), 30),
+        ];
+        for (v, n) in cases {
+            let shifted = v.checked_mul_pow2(n).expect("setup: no overflow");
+            assert_eq!(
+                shifted.div_pow2(n),
+                v,
+                "round-trip failed for raw={}, n={}",
+                v.to_raw(),
+                n
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Absolute difference (checked_abs_diff)
+// ============================================================================
+
+mod checked_abs_diff {
+    use super::{D32, D64, D96, D128};
+
+    // ------- symmetry -------
+
+    #[test]
+    fn symmetric() {
+        let pairs = [
+            (D64::from_raw(100), D64::from_raw(30)),
+            (D64::from_raw(-50), D64::from_raw(20)),
+            (D64::from_raw(-100), D64::from_raw(-30)),
+            (D64::ZERO, D64::from_raw(7)),
+            (D64::MAX, D64::from_raw(1)),
+            (D64::MIN, D64::from_raw(-1)),
+        ];
+        for (a, b) in pairs {
+            assert_eq!(
+                a.checked_abs_diff(b),
+                b.checked_abs_diff(a),
+                "asymmetric for ({}, {})",
+                a.to_raw(),
+                b.to_raw()
+            );
+        }
+    }
+
+    // ------- basic correctness -------
+
+    #[test]
+    fn basic_values() {
+        assert_eq!(
+            D64::from_raw(100).checked_abs_diff(D64::from_raw(30)),
+            Some(D64::from_raw(70))
+        );
+        assert_eq!(
+            D64::from_raw(30).checked_abs_diff(D64::from_raw(100)),
+            Some(D64::from_raw(70))
+        );
+        // Opposite signs, no overflow.
+        assert_eq!(
+            D64::from_raw(50).checked_abs_diff(D64::from_raw(-50)),
+            Some(D64::from_raw(100))
+        );
+    }
+
+    // ------- self-diff is zero -------
+
+    #[test]
+    fn self_diff_is_zero() {
+        assert_eq!(D32::MAX.checked_abs_diff(D32::MAX), Some(D32::ZERO));
+        assert_eq!(D64::MAX.checked_abs_diff(D64::MAX), Some(D64::ZERO));
+        assert_eq!(D96::MAX.checked_abs_diff(D96::MAX), Some(D96::ZERO));
+        assert_eq!(D128::MAX.checked_abs_diff(D128::MAX), Some(D128::ZERO));
+        assert_eq!(D64::MIN.checked_abs_diff(D64::MIN), Some(D64::ZERO));
+        assert_eq!(D64::ZERO.checked_abs_diff(D64::ZERO), Some(D64::ZERO));
+    }
+
+    // ------- overflow at the rails -------
+
+    #[test]
+    fn max_minus_min_overflows() {
+        // |MAX - MIN| > MAX on every signed type → None.
+        assert_eq!(D32::MAX.checked_abs_diff(D32::MIN), None);
+        assert_eq!(D64::MAX.checked_abs_diff(D64::MIN), None);
+        assert_eq!(D96::MAX.checked_abs_diff(D96::MIN), None);
+        assert_eq!(D128::MAX.checked_abs_diff(D128::MIN), None);
+        // Symmetric form.
+        assert_eq!(D64::MIN.checked_abs_diff(D64::MAX), None);
+    }
+}
