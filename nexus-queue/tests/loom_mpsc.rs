@@ -133,11 +133,12 @@ fn single_slot_two_producers() {
         let (tx, rx) = mpsc::ring_buffer::<u32>(1);
         let tx2 = tx.clone();
         let count = Arc::new(AtomicUsize::new(0));
+        let count1 = Arc::clone(&count);
         let count2 = Arc::clone(&count);
 
         let t1 = thread::spawn(move || {
             if tx.push(1).is_ok() {
-                count.fetch_add(1, Ordering::Relaxed);
+                count1.fetch_add(1, Ordering::Relaxed);
             }
         });
 
@@ -150,11 +151,13 @@ fn single_slot_two_producers() {
         t1.join().unwrap();
         t2.join().unwrap();
 
+        let pushed = count.load(Ordering::SeqCst);
         let mut popped = 0;
         while rx.pop().is_some() {
             popped += 1;
         }
 
         assert!(popped >= 1);
+        assert_eq!(popped, pushed);
     });
 }
