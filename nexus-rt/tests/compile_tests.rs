@@ -4500,6 +4500,242 @@ mod view_derive {
 
         assert_eq!(world.resource::<AuditLog>().0, vec!["SOL-USD qty=100 @150"]);
     }
+
+    // -- Generic views --
+
+    struct TypedEvent<T> {
+        name: String,
+        value: T,
+    }
+
+    #[derive(View)]
+    #[source(TypedEvent<T>)]
+    struct TypedView<'a, T: Copy> {
+        #[borrow]
+        name: &'a str,
+        value: T,
+    }
+
+    #[test]
+    fn derive_type_param_view() {
+        let mut wb = WorldBuilder::new();
+        wb.register(AuditLog(Vec::new()));
+        let mut world = wb.build();
+        let reg = world.registry();
+
+        fn log_typed(mut log: ResMut<AuditLog>, v: &TypedView<u64>) {
+            log.0.push(format!("{} val={}", v.name, v.value));
+        }
+
+        let mut p = PipelineBuilder::<TypedEvent<u64>>::new()
+            .view::<AsTypedView<u64>>()
+            .tap(log_typed, reg)
+            .end_view()
+            .then(|_: TypedEvent<u64>| {}, reg);
+
+        p.run(
+            &mut world,
+            TypedEvent {
+                name: "test".into(),
+                value: 42u64,
+            },
+        );
+
+        assert_eq!(world.resource::<AuditLog>().0, vec!["test val=42"]);
+    }
+
+    struct SizedBuffer<const N: usize> {
+        data: [u8; N],
+        len: usize,
+    }
+
+    #[derive(View)]
+    #[source(SizedBuffer<N>)]
+    struct SizedView<'a, const N: usize> {
+        #[borrow]
+        data: &'a [u8; N],
+        len: usize,
+    }
+
+    #[test]
+    fn derive_const_param_view() {
+        let mut wb = WorldBuilder::new();
+        wb.register(AuditLog(Vec::new()));
+        let mut world = wb.build();
+        let reg = world.registry();
+
+        fn log_sized(mut log: ResMut<AuditLog>, v: &SizedView<4>) {
+            log.0.push(format!("data={:?} len={}", v.data, v.len));
+        }
+
+        let mut p = PipelineBuilder::<SizedBuffer<4>>::new()
+            .view::<AsSizedView<4>>()
+            .tap(log_sized, reg)
+            .end_view()
+            .then(|_: SizedBuffer<4>| {}, reg);
+
+        p.run(
+            &mut world,
+            SizedBuffer {
+                data: [1, 2, 3, 4],
+                len: 4,
+            },
+        );
+
+        assert_eq!(
+            world.resource::<AuditLog>().0,
+            vec!["data=[1, 2, 3, 4] len=4"]
+        );
+    }
+
+    struct CopyEvent<T: Copy> {
+        x: T,
+        y: T,
+    }
+
+    #[derive(View)]
+    #[source(CopyEvent<T>)]
+    struct CopyView<T: Copy> {
+        x: T,
+        y: T,
+    }
+
+    #[test]
+    fn derive_no_lifetime_generic_view() {
+        let mut wb = WorldBuilder::new();
+        wb.register(AuditLog(Vec::new()));
+        let mut world = wb.build();
+        let reg = world.registry();
+
+        fn log_copy(mut log: ResMut<AuditLog>, v: &CopyView<f64>) {
+            log.0.push(format!("x={} y={}", v.x, v.y));
+        }
+
+        let mut p = PipelineBuilder::<CopyEvent<f64>>::new()
+            .view::<AsCopyView<f64>>()
+            .tap(log_copy, reg)
+            .end_view()
+            .then(|_: CopyEvent<f64>| {}, reg);
+
+        p.run(&mut world, CopyEvent { x: 1.5, y: 2.5 });
+
+        assert_eq!(world.resource::<AuditLog>().0, vec!["x=1.5 y=2.5"]);
+    }
+
+    struct PairEvent<K, V> {
+        key: K,
+        value: V,
+    }
+
+    #[derive(View)]
+    #[source(PairEvent<K, V>)]
+    struct PairView<K: Copy, V: Copy> {
+        key: K,
+        value: V,
+    }
+
+    #[test]
+    fn derive_multi_type_param_view() {
+        let mut wb = WorldBuilder::new();
+        wb.register(AuditLog(Vec::new()));
+        let mut world = wb.build();
+        let reg = world.registry();
+
+        fn log_pair(mut log: ResMut<AuditLog>, v: &PairView<u32, i64>) {
+            log.0.push(format!("key={} val={}", v.key, v.value));
+        }
+
+        let mut p = PipelineBuilder::<PairEvent<u32, i64>>::new()
+            .view::<AsPairView<u32, i64>>()
+            .tap(log_pair, reg)
+            .end_view()
+            .then(|_: PairEvent<u32, i64>| {}, reg);
+
+        p.run(
+            &mut world,
+            PairEvent {
+                key: 7u32,
+                value: -99i64,
+            },
+        );
+
+        assert_eq!(world.resource::<AuditLog>().0, vec!["key=7 val=-99"]);
+    }
+
+    struct DisplayEvent<T: std::fmt::Display> {
+        item: T,
+    }
+
+    #[derive(View)]
+    #[source(DisplayEvent<T>)]
+    struct DisplayView<T: std::fmt::Display + Copy> {
+        item: T,
+    }
+
+    #[test]
+    fn derive_bounded_type_param_view() {
+        let mut wb = WorldBuilder::new();
+        wb.register(AuditLog(Vec::new()));
+        let mut world = wb.build();
+        let reg = world.registry();
+
+        fn log_display(mut log: ResMut<AuditLog>, v: &DisplayView<i32>) {
+            log.0.push(format!("item={}", v.item));
+        }
+
+        let mut p = PipelineBuilder::<DisplayEvent<i32>>::new()
+            .view::<AsDisplayView<i32>>()
+            .tap(log_display, reg)
+            .end_view()
+            .then(|_: DisplayEvent<i32>| {}, reg);
+
+        p.run(&mut world, DisplayEvent { item: 42 });
+
+        assert_eq!(world.resource::<AuditLog>().0, vec!["item=42"]);
+    }
+
+    #[test]
+    fn derive_generic_view_pipeline_integration() {
+        let mut wb = WorldBuilder::new();
+        wb.register(AuditLog(Vec::new()));
+        wb.register(RiskLimits { max_qty: 100 });
+        let mut world = wb.build();
+        let reg = world.registry();
+
+        fn check_typed(v: &TypedView<u64>) -> bool {
+            v.value > 0
+        }
+
+        fn log_typed_tap(mut log: ResMut<AuditLog>, v: &TypedView<u64>) {
+            log.0.push(format!("passed: {} val={}", v.name, v.value));
+        }
+
+        let mut p = PipelineBuilder::<TypedEvent<u64>>::new()
+            .view::<AsTypedView<u64>>()
+            .guard(check_typed, reg)
+            .tap(log_typed_tap, reg)
+            .end_view_guarded();
+
+        let result = p.run(
+            &mut world,
+            TypedEvent {
+                name: "good".into(),
+                value: 10,
+            },
+        );
+        assert!(result.is_some());
+
+        let result = p.run(
+            &mut world,
+            TypedEvent {
+                name: "bad".into(),
+                value: 0,
+            },
+        );
+        assert!(result.is_none());
+
+        assert_eq!(world.resource::<AuditLog>().0, vec!["passed: good val=10"]);
+    }
 }
 
 // =========================================================================
