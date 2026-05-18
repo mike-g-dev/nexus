@@ -366,3 +366,399 @@ pub(crate) const fn validate_base36(b: u8, position: usize) -> Result<u8, ParseE
         _ => Err(ParseError::InvalidChar { position, byte: b }),
     }
 }
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    // ====================================================================
+    // ParseError variants
+    // ====================================================================
+
+    #[test]
+    fn parse_error_invalid_length() {
+        let err = ParseError::InvalidLength {
+            expected: 16,
+            got: 10,
+        };
+        assert_eq!(
+            err,
+            ParseError::InvalidLength {
+                expected: 16,
+                got: 10
+            }
+        );
+        assert_eq!(err.to_string(), "invalid length: expected 16, got 10");
+    }
+
+    #[test]
+    fn parse_error_invalid_char() {
+        let err = ParseError::InvalidChar {
+            position: 3,
+            byte: b'!',
+        };
+        assert_eq!(
+            err,
+            ParseError::InvalidChar {
+                position: 3,
+                byte: b'!'
+            }
+        );
+        assert_eq!(err.to_string(), "invalid character 0x21 at position 3");
+    }
+
+    // ====================================================================
+    // UuidParseError variants
+    // ====================================================================
+
+    #[test]
+    fn uuid_parse_error_invalid_length() {
+        let err = UuidParseError::InvalidLength {
+            expected: 36,
+            got: 35,
+        };
+        assert_eq!(err.to_string(), "invalid length: expected 36, got 35");
+    }
+
+    #[test]
+    fn uuid_parse_error_invalid_char() {
+        let err = UuidParseError::InvalidChar {
+            position: 5,
+            byte: b'z',
+        };
+        assert_eq!(err.to_string(), "invalid character 0x7a at position 5");
+    }
+
+    #[test]
+    fn uuid_parse_error_invalid_format() {
+        let err = UuidParseError::InvalidFormat;
+        assert_eq!(
+            err.to_string(),
+            "invalid UUID format (expected dashes at 8-13-18-23)"
+        );
+    }
+
+    // ====================================================================
+    // DecodeError variants
+    // ====================================================================
+
+    #[test]
+    fn decode_error_invalid_length() {
+        let err = DecodeError::InvalidLength {
+            expected: 11,
+            got: 8,
+        };
+        assert_eq!(err.to_string(), "invalid length: expected 11, got 8");
+    }
+
+    #[test]
+    fn decode_error_invalid_char() {
+        let err = DecodeError::InvalidChar {
+            position: 2,
+            byte: b'#',
+        };
+        assert_eq!(err.to_string(), "invalid character 0x23 at position 2");
+    }
+
+    #[test]
+    fn decode_error_overflow() {
+        let err = DecodeError::Overflow;
+        assert_eq!(err.to_string(), "value overflows target type");
+    }
+
+    // ====================================================================
+    // TypeIdParseError variants
+    // ====================================================================
+
+    #[test]
+    fn typeid_parse_error_invalid_length() {
+        let err = TypeIdParseError::InvalidLength {
+            expected: 32,
+            got: 50,
+        };
+        assert_eq!(err.to_string(), "invalid length: expected max 32, got 50");
+    }
+
+    #[test]
+    fn typeid_parse_error_invalid_char() {
+        let err = TypeIdParseError::InvalidChar {
+            position: 0,
+            byte: b'A',
+        };
+        assert_eq!(err.to_string(), "invalid character 0x41 at position 0");
+    }
+
+    #[test]
+    fn typeid_parse_error_invalid_format() {
+        let err = TypeIdParseError::InvalidFormat;
+        assert_eq!(
+            err.to_string(),
+            "invalid TypeId format (expected prefix_suffix)"
+        );
+    }
+
+    #[test]
+    fn typeid_parse_error_invalid_prefix() {
+        let err = TypeIdParseError::InvalidPrefix;
+        assert_eq!(
+            err.to_string(),
+            "invalid prefix: must be non-empty lowercase ASCII [a-z]"
+        );
+    }
+
+    // ====================================================================
+    // From conversions
+    // ====================================================================
+
+    #[test]
+    fn parse_error_into_uuid_parse_error_length() {
+        let parse_err = ParseError::InvalidLength {
+            expected: 16,
+            got: 10,
+        };
+        let uuid_err: UuidParseError = parse_err.into();
+        assert_eq!(
+            uuid_err,
+            UuidParseError::InvalidLength {
+                expected: 16,
+                got: 10
+            }
+        );
+    }
+
+    #[test]
+    fn parse_error_into_uuid_parse_error_char() {
+        let parse_err = ParseError::InvalidChar {
+            position: 7,
+            byte: b'g',
+        };
+        let uuid_err: UuidParseError = parse_err.into();
+        assert_eq!(
+            uuid_err,
+            UuidParseError::InvalidChar {
+                position: 7,
+                byte: b'g'
+            }
+        );
+    }
+
+    #[test]
+    fn parse_error_into_decode_error_length() {
+        let parse_err = ParseError::InvalidLength {
+            expected: 11,
+            got: 5,
+        };
+        let decode_err: DecodeError = parse_err.into();
+        assert_eq!(
+            decode_err,
+            DecodeError::InvalidLength {
+                expected: 11,
+                got: 5
+            }
+        );
+    }
+
+    #[test]
+    fn parse_error_into_decode_error_char() {
+        let parse_err = ParseError::InvalidChar {
+            position: 4,
+            byte: b'@',
+        };
+        let decode_err: DecodeError = parse_err.into();
+        assert_eq!(
+            decode_err,
+            DecodeError::InvalidChar {
+                position: 4,
+                byte: b'@'
+            }
+        );
+    }
+
+    #[test]
+    fn parse_error_into_typeid_parse_error_length() {
+        let parse_err = ParseError::InvalidLength {
+            expected: 26,
+            got: 20,
+        };
+        let typeid_err: TypeIdParseError = parse_err.into();
+        assert_eq!(
+            typeid_err,
+            TypeIdParseError::InvalidLength {
+                expected: 26,
+                got: 20
+            }
+        );
+    }
+
+    #[test]
+    fn parse_error_into_typeid_parse_error_char() {
+        let parse_err = ParseError::InvalidChar {
+            position: 12,
+            byte: b'$',
+        };
+        let typeid_err: TypeIdParseError = parse_err.into();
+        assert_eq!(
+            typeid_err,
+            TypeIdParseError::InvalidChar {
+                position: 12,
+                byte: b'$'
+            }
+        );
+    }
+
+    // ====================================================================
+    // Validation helpers
+    // ====================================================================
+
+    #[test]
+    fn validate_hex_valid_digits() {
+        assert_eq!(validate_hex(b'0', 0), Ok(0));
+        assert_eq!(validate_hex(b'9', 0), Ok(9));
+        assert_eq!(validate_hex(b'a', 0), Ok(10));
+        assert_eq!(validate_hex(b'f', 0), Ok(15));
+        assert_eq!(validate_hex(b'A', 0), Ok(10));
+        assert_eq!(validate_hex(b'F', 0), Ok(15));
+    }
+
+    #[test]
+    fn validate_hex_invalid_char() {
+        let err = validate_hex(b'g', 5).unwrap_err();
+        assert_eq!(
+            err,
+            ParseError::InvalidChar {
+                position: 5,
+                byte: b'g'
+            }
+        );
+    }
+
+    #[test]
+    fn validate_crockford32_valid_digits() {
+        assert_eq!(validate_crockford32(b'0', 0), Ok(0));
+        assert_eq!(validate_crockford32(b'9', 0), Ok(9));
+        assert_eq!(validate_crockford32(b'A', 0), Ok(10));
+        assert_eq!(validate_crockford32(b'Z', 0), Ok(31));
+        assert_eq!(validate_crockford32(b'a', 0), Ok(10));
+        assert_eq!(validate_crockford32(b'z', 0), Ok(31));
+    }
+
+    #[test]
+    fn validate_crockford32_aliases() {
+        // O/o -> 0, I/i -> 1, L/l -> 1
+        assert_eq!(validate_crockford32(b'O', 0), Ok(0));
+        assert_eq!(validate_crockford32(b'o', 0), Ok(0));
+        assert_eq!(validate_crockford32(b'I', 0), Ok(1));
+        assert_eq!(validate_crockford32(b'i', 0), Ok(1));
+        assert_eq!(validate_crockford32(b'L', 0), Ok(1));
+        assert_eq!(validate_crockford32(b'l', 0), Ok(1));
+    }
+
+    #[test]
+    fn validate_crockford32_invalid_char() {
+        // 'U' is excluded from Crockford Base32
+        let err = validate_crockford32(b'U', 3).unwrap_err();
+        assert_eq!(
+            err,
+            ParseError::InvalidChar {
+                position: 3,
+                byte: b'U'
+            }
+        );
+    }
+
+    #[test]
+    fn validate_base62_valid_chars() {
+        assert_eq!(validate_base62(b'0', 0), Ok(0));
+        assert_eq!(validate_base62(b'9', 0), Ok(9));
+        assert_eq!(validate_base62(b'A', 0), Ok(10));
+        assert_eq!(validate_base62(b'Z', 0), Ok(35));
+        assert_eq!(validate_base62(b'a', 0), Ok(36));
+        assert_eq!(validate_base62(b'z', 0), Ok(61));
+    }
+
+    #[test]
+    fn validate_base62_invalid_char() {
+        let err = validate_base62(b'!', 7).unwrap_err();
+        assert_eq!(
+            err,
+            ParseError::InvalidChar {
+                position: 7,
+                byte: b'!'
+            }
+        );
+    }
+
+    #[test]
+    fn validate_base36_valid_chars() {
+        assert_eq!(validate_base36(b'0', 0), Ok(0));
+        assert_eq!(validate_base36(b'9', 0), Ok(9));
+        assert_eq!(validate_base36(b'a', 0), Ok(10));
+        assert_eq!(validate_base36(b'z', 0), Ok(35));
+        // Case insensitive
+        assert_eq!(validate_base36(b'A', 0), Ok(10));
+        assert_eq!(validate_base36(b'Z', 0), Ok(35));
+    }
+
+    #[test]
+    fn validate_base36_invalid_char() {
+        let err = validate_base36(b'_', 9).unwrap_err();
+        assert_eq!(
+            err,
+            ParseError::InvalidChar {
+                position: 9,
+                byte: b'_'
+            }
+        );
+    }
+
+    // ====================================================================
+    // std::error::Error impls
+    // ====================================================================
+
+    #[test]
+    fn parse_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ParseError::InvalidChar {
+            position: 0,
+            byte: b'x',
+        });
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn uuid_parse_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(UuidParseError::InvalidFormat);
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn decode_error_is_std_error() {
+        let err: Box<dyn std::error::Error> = Box::new(DecodeError::Overflow);
+        assert!(err.source().is_none());
+    }
+
+    // ====================================================================
+    // Clone + Eq
+    // ====================================================================
+
+    #[test]
+    fn error_types_clone_and_eq() {
+        let a = ParseError::InvalidLength {
+            expected: 16,
+            got: 10,
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+
+        let a = UuidParseError::InvalidFormat;
+        let b = a.clone();
+        assert_eq!(a, b);
+
+        let a = DecodeError::Overflow;
+        let b = a.clone();
+        assert_eq!(a, b);
+
+        let a = TypeIdParseError::InvalidPrefix;
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+}

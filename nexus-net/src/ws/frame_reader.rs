@@ -1118,6 +1118,36 @@ mod tests {
     // === Protocol errors ===
 
     #[test]
+    fn invalid_opcode() {
+        let mut r = client_reader();
+        // Opcode 0x3 is undefined in RFC 6455
+        r.read(&make_frame(true, 0x3, b"x")).unwrap();
+        assert!(matches!(r.next(), Err(ProtocolError::InvalidOpcode(0x3))));
+    }
+
+    #[test]
+    fn invalid_opcode_0x0f() {
+        let mut r = client_reader();
+        // Opcode 0xF is also undefined
+        r.read(&make_frame(true, 0xF, b"x")).unwrap();
+        assert!(matches!(r.next(), Err(ProtocolError::InvalidOpcode(0xF))));
+    }
+
+    #[test]
+    fn payload_too_large() {
+        let mut r = FrameReader::builder()
+            .role(Role::Client)
+            .max_frame_size(64)
+            .buffer_capacity(256)
+            .build();
+        r.read(&make_frame(true, 0x1, &[b'x'; 100])).unwrap();
+        assert!(matches!(
+            r.next(),
+            Err(ProtocolError::PayloadTooLarge { size: 100, max: 64 })
+        ));
+    }
+
+    #[test]
     fn masked_from_server() {
         let mut r = client_reader();
         r.read(&make_masked_frame(true, 0x1, b"x", [1, 2, 3, 4]))
