@@ -1,8 +1,7 @@
-#![allow(clippy::suboptimal_flops)]
-
 extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec;
+use nexus_stats_core::math::MulAdd;
 
 /// Streaming linear regression with Huber loss.
 ///
@@ -111,7 +110,7 @@ impl HuberRegressionF64 {
         // Compute prediction: dot(weights, features)
         let mut pred = 0.0f64;
         for i in 0..self.dim {
-            pred += self.weights[i] * features[i];
+            pred = self.weights[i].fma(features[i], pred);
         }
 
         // Residual
@@ -125,8 +124,9 @@ impl HuberRegressionF64 {
         };
 
         // SGD update: w += lr * grad_scale * x
+        let step = self.lr * grad_scale;
         for i in 0..self.dim {
-            self.weights[i] += self.lr * grad_scale * features[i];
+            self.weights[i] = step.fma(features[i], self.weights[i]);
         }
 
         Ok(())
@@ -142,7 +142,7 @@ impl HuberRegressionF64 {
         assert_eq!(features.len(), self.dim);
         let mut pred = 0.0f64;
         for i in 0..self.dim {
-            pred += self.weights[i] * features[i];
+            pred = self.weights[i].fma(features[i], pred);
         }
         pred
     }

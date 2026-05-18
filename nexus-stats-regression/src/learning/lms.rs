@@ -1,5 +1,3 @@
-#![allow(clippy::suboptimal_flops)]
-
 // LMS and NLMS Adaptive Filters
 //
 // Least Mean Squares (LMS): w += lr * error * x
@@ -10,6 +8,7 @@
 
 extern crate alloc;
 use alloc::boxed::Box;
+use nexus_stats_core::math::MulAdd;
 use alloc::vec;
 
 macro_rules! impl_lms_filter {
@@ -72,7 +71,7 @@ macro_rules! impl_lms_filter {
                 );
                 let mut sum = 0.0 as $ty;
                 for i in 0..self.dims {
-                    sum += self.weights[i] * features[i];
+                    sum = self.weights[i].fma(features[i], sum);
                 }
                 sum
             }
@@ -101,7 +100,7 @@ macro_rules! impl_lms_filter {
                 let error = target - prediction;
                 let step = self.learning_rate * error;
                 for i in 0..self.dims {
-                    self.weights[i] += step * features[i];
+                    self.weights[i] = step.fma(features[i], self.weights[i]);
                 }
                 self.count += 1;
                 Ok(())
@@ -259,7 +258,7 @@ macro_rules! impl_nlms_filter {
                 );
                 let mut sum = 0.0 as $ty;
                 for i in 0..self.dims {
-                    sum += self.weights[i] * features[i];
+                    sum = self.weights[i].fma(features[i], sum);
                 }
                 sum
             }
@@ -288,11 +287,11 @@ macro_rules! impl_nlms_filter {
                 let error = target - prediction;
                 let mut norm_sq = 0.0 as $ty;
                 for i in 0..self.dims {
-                    norm_sq += features[i] * features[i];
+                    norm_sq = features[i].fma(features[i], norm_sq);
                 }
                 let step = (self.learning_rate / (norm_sq + self.epsilon)) * error;
                 for i in 0..self.dims {
-                    self.weights[i] += step * features[i];
+                    self.weights[i] = step.fma(features[i], self.weights[i]);
                 }
                 self.count += 1;
                 Ok(())

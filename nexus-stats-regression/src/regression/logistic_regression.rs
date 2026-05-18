@@ -1,8 +1,7 @@
-#![allow(clippy::suboptimal_flops)]
-
 extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec;
+use nexus_stats_core::math::MulAdd;
 
 /// Numerically stable sigmoid function.
 ///
@@ -79,7 +78,7 @@ impl LogisticRegressionF64 {
         );
         let mut z = 0.0_f64;
         for i in 0..self.dims {
-            z += self.weights[i] * features[i];
+            z = self.weights[i].fma(features[i], z);
         }
         sigmoid(z)
     }
@@ -106,13 +105,13 @@ impl LogisticRegressionF64 {
         );
         let mut z = 0.0_f64;
         for i in 0..self.dims {
-            z += self.weights[i] * features[i];
+            z = self.weights[i].fma(features[i], z);
         }
         let p = sigmoid(z);
         let error = (outcome as u8 as f64) - p;
         let step = self.learning_rate * error;
         for i in 0..self.dims {
-            self.weights[i] += step * features[i];
+            self.weights[i] = step.fma(features[i], self.weights[i]);
         }
         self.count += 1;
     }

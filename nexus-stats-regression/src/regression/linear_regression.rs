@@ -3,7 +3,9 @@
 // Minimal state (5 accumulators, ~48 bytes) with direct 2×2 solve.
 // No loops, no Gaussian elimination — just arithmetic.
 
-#![allow(clippy::suboptimal_flops, clippy::float_cmp)]
+#![allow(clippy::float_cmp)]
+
+use nexus_stats_core::math::MulAdd;
 
 macro_rules! impl_linear_regression {
     ($name:ident, $builder:ident, $ty:ty) => {
@@ -102,10 +104,10 @@ macro_rules! impl_linear_regression {
                 check_finite!(y);
                 self.count += 1;
                 self.sum_x += x;
-                self.sum_x2 += x * x;
+                self.sum_x2 = x.fma(x, self.sum_x2);
                 self.sum_y += y;
-                self.sum_xy += x * y;
-                self.sum_y2 += y * y;
+                self.sum_xy = x.fma(y, self.sum_xy);
+                self.sum_y2 = y.fma(y, self.sum_y2);
                 Ok(())
             }
 
@@ -117,11 +119,11 @@ macro_rules! impl_linear_regression {
                 }
                 if self.intercept {
                     let n = self.count as $ty;
-                    let denom = n * self.sum_x2 - self.sum_x * self.sum_x;
+                    let denom = n.fma(self.sum_x2, -(self.sum_x * self.sum_x));
                     if denom == 0.0 as $ty {
                         return Option::None;
                     }
-                    Option::Some((n * self.sum_xy - self.sum_x * self.sum_y) / denom)
+                    Option::Some(n.fma(self.sum_xy, -(self.sum_x * self.sum_y)) / denom)
                 } else {
                     if self.sum_x2 == 0.0 as $ty {
                         return Option::None;
@@ -138,7 +140,7 @@ macro_rules! impl_linear_regression {
                 }
                 let slope = self.slope()?;
                 let n = self.count as $ty;
-                Option::Some((self.sum_y - slope * self.sum_x) / n)
+                Option::Some(slope.fma(-self.sum_x, self.sum_y) / n)
             }
 
             /// R² goodness of fit, or `None` if not enough data.
@@ -146,6 +148,7 @@ macro_rules! impl_linear_regression {
             /// With intercept: centered R² = 1 - SS_res/SS_tot.
             /// Without intercept: uncentered R² = 1 - SS_res/Σy².
             #[must_use]
+            #[allow(clippy::suboptimal_flops)]
             pub fn r_squared(&self) -> Option<$ty> {
                 let slope = self.slope()?;
                 let n = self.count as $ty;
@@ -182,7 +185,7 @@ macro_rules! impl_linear_regression {
                 let slope = self.slope()?;
                 if self.intercept {
                     let intercept = self.intercept_value()?;
-                    Option::Some(slope * x + intercept)
+                    Option::Some(slope.fma(x, intercept))
                 } else {
                     Option::Some(slope * x)
                 }
@@ -333,12 +336,12 @@ macro_rules! impl_ew_linear_regression {
                 check_finite!(x);
                 check_finite!(y);
                 self.count += 1;
-                self.effective_n = self.one_minus_alpha * self.effective_n + 1.0 as $ty;
-                self.sum_x = self.one_minus_alpha * self.sum_x + x;
-                self.sum_x2 = self.one_minus_alpha * self.sum_x2 + x * x;
-                self.sum_y = self.one_minus_alpha * self.sum_y + y;
-                self.sum_xy = self.one_minus_alpha * self.sum_xy + x * y;
-                self.sum_y2 = self.one_minus_alpha * self.sum_y2 + y * y;
+                self.effective_n = self.one_minus_alpha.fma(self.effective_n, 1.0 as $ty);
+                self.sum_x = self.one_minus_alpha.fma(self.sum_x, x);
+                self.sum_x2 = self.one_minus_alpha.fma(self.sum_x2, x * x);
+                self.sum_y = self.one_minus_alpha.fma(self.sum_y, y);
+                self.sum_xy = self.one_minus_alpha.fma(self.sum_xy, x * y);
+                self.sum_y2 = self.one_minus_alpha.fma(self.sum_y2, y * y);
                 Ok(())
             }
 
@@ -350,11 +353,11 @@ macro_rules! impl_ew_linear_regression {
                 }
                 if self.intercept {
                     let n = self.effective_n;
-                    let denom = n * self.sum_x2 - self.sum_x * self.sum_x;
+                    let denom = n.fma(self.sum_x2, -(self.sum_x * self.sum_x));
                     if denom == 0.0 as $ty {
                         return Option::None;
                     }
-                    Option::Some((n * self.sum_xy - self.sum_x * self.sum_y) / denom)
+                    Option::Some(n.fma(self.sum_xy, -(self.sum_x * self.sum_y)) / denom)
                 } else {
                     if self.sum_x2 == 0.0 as $ty {
                         return Option::None;
@@ -370,11 +373,12 @@ macro_rules! impl_ew_linear_regression {
                     return Option::None;
                 }
                 let slope = self.slope()?;
-                Option::Some((self.sum_y - slope * self.sum_x) / self.effective_n)
+                Option::Some(slope.fma(-self.sum_x, self.sum_y) / self.effective_n)
             }
 
             /// R² goodness of fit.
             #[must_use]
+            #[allow(clippy::suboptimal_flops)]
             pub fn r_squared(&self) -> Option<$ty> {
                 let slope = self.slope()?;
                 let n = self.effective_n;
@@ -409,7 +413,7 @@ macro_rules! impl_ew_linear_regression {
                 let slope = self.slope()?;
                 if self.intercept {
                     let intercept = self.intercept_value()?;
-                    Option::Some(slope * x + intercept)
+                    Option::Some(slope.fma(x, intercept))
                 } else {
                     Option::Some(slope * x)
                 }

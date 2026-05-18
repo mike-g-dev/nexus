@@ -4,9 +4,8 @@
 // but with exponential decay on accumulators. Recent data dominates.
 // Degree and intercept are runtime-configured via builder.
 
-#![allow(clippy::suboptimal_flops)]
-
 use super::polynomial_regression::{CoefficientsF32, CoefficientsF64};
+use nexus_stats_core::math::MulAdd;
 
 macro_rules! impl_ew_polynomial_regression {
     ($name:ident, $builder:ident, $coeff:ident, $solve_fn:path, $ty:ty) => {
@@ -81,15 +80,15 @@ macro_rules! impl_ew_polynomial_regression {
                 check_finite!(x);
                 check_finite!(y);
                 self.count += 1;
-                self.effective_n = self.one_minus_alpha * self.effective_n + 1.0 as $ty;
-                self.sum_y2 = self.one_minus_alpha * self.sum_y2 + y * y;
+                self.effective_n = self.one_minus_alpha.fma(self.effective_n, 1.0 as $ty);
+                self.sum_y2 = self.one_minus_alpha.fma(self.sum_y2, y * y);
 
                 let mut x_pow = 1.0 as $ty;
                 let max_pow = 2 * self.degree;
                 for j in 0..=max_pow {
-                    self.sum_x[j] = self.one_minus_alpha * self.sum_x[j] + x_pow;
+                    self.sum_x[j] = self.one_minus_alpha.fma(self.sum_x[j], x_pow);
                     if j <= self.degree {
-                        self.sum_xy[j] = self.one_minus_alpha * self.sum_xy[j] + x_pow * y;
+                        self.sum_xy[j] = self.one_minus_alpha.fma(self.sum_xy[j], x_pow * y);
                     }
                     x_pow *= x;
                 }

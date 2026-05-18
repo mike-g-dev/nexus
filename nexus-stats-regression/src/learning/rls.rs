@@ -1,8 +1,7 @@
-#![allow(clippy::suboptimal_flops)]
-
 extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec;
+use nexus_stats_core::math::MulAdd;
 
 macro_rules! impl_rls_filter {
     ($name:ident, $builder:ident, $ty:ty) => {
@@ -73,7 +72,7 @@ macro_rules! impl_rls_filter {
                 );
                 let mut sum = 0.0 as $ty;
                 for i in 0..self.dims {
-                    sum += self.weights[i] * features[i];
+                    sum = self.weights[i].fma(features[i], sum);
                 }
                 sum
             }
@@ -115,7 +114,7 @@ macro_rules! impl_rls_filter {
                 for i in 0..d {
                     let mut sum = 0.0 as $ty;
                     for j in 0..d {
-                        sum += self.p_matrix[i * d + j] * features[j];
+                        sum = self.p_matrix[i * d + j].fma(features[j], sum);
                     }
                     self.scratch_px[i] = sum;
                 }
@@ -123,7 +122,7 @@ macro_rules! impl_rls_filter {
                 // xpx = Σ x[i] * px[i]
                 let mut xpx = 0.0 as $ty;
                 for i in 0..d {
-                    xpx += features[i] * self.scratch_px[i];
+                    xpx = features[i].fma(self.scratch_px[i], xpx);
                 }
 
                 // k[i] = px[i] / (lambda + xpx)
@@ -137,13 +136,13 @@ macro_rules! impl_rls_filter {
                 // error = target - w·x
                 let mut prediction = 0.0 as $ty;
                 for i in 0..d {
-                    prediction += self.weights[i] * features[i];
+                    prediction = self.weights[i].fma(features[i], prediction);
                 }
                 let error = target - prediction;
 
                 // w += k * error
                 for i in 0..d {
-                    self.weights[i] += self.scratch_k[i] * error;
+                    self.weights[i] = self.scratch_k[i].fma(error, self.weights[i]);
                 }
 
                 // P[i][j] = (P[i][j] - k[i] * px[j]) / lambda
@@ -151,9 +150,9 @@ macro_rules! impl_rls_filter {
                 let inv_lambda = 1.0 as $ty / lambda;
                 for i in 0..d {
                     for j in 0..d {
-                        self.p_matrix[i * d + j] = (self.p_matrix[i * d + j]
-                            - self.scratch_k[i] * self.scratch_px[j])
-                            * inv_lambda;
+                        self.p_matrix[i * d + j] =
+                            (-self.scratch_k[i]).fma(self.scratch_px[j], self.p_matrix[i * d + j])
+                                * inv_lambda;
                     }
                 }
 
@@ -168,16 +167,22 @@ macro_rules! impl_rls_filter {
                         }
                     }
                     if max_diag > max {
-                        for p in self.p_matrix.iter_mut() {
-                            *p = 0.0 as $ty;
-                        }
-                        for i in 0..d {
-                            self.p_matrix[i * d + i] = self.initial_covariance;
-                        }
+                        self.reset_covariance();
                     }
                 }
 
                 Ok(())
+            }
+
+            #[cold]
+            fn reset_covariance(&mut self) {
+                let d = self.dims;
+                for p in self.p_matrix.iter_mut() {
+                    *p = 0.0 as $ty;
+                }
+                for i in 0..d {
+                    self.p_matrix[i * d + i] = self.initial_covariance;
+                }
             }
 
             /// Returns the current weight vector.
