@@ -101,10 +101,12 @@ struct Shared {
     mask: usize,
 }
 
-// Safety: Buffer access is synchronized through atomic head/tail.
+// SAFETY: Buffer access is synchronized through atomic head/tail.
 // Multiple producers coordinate via CAS on tail.
 // Single consumer is enforced by API (Consumer is not Clone).
 unsafe impl Send for Shared {}
+// SAFETY: Producers access disjoint CAS-claimed regions; consumer
+// accesses only committed regions released by the atomic len store.
 unsafe impl Sync for Shared {}
 
 impl Drop for Shared {
@@ -133,7 +135,8 @@ pub struct Producer {
     shared: Arc<Shared>,
 }
 
-// Safety: Producer coordinates with other producers via atomic CAS.
+// SAFETY: Producer coordinates with other producers via atomic CAS on
+// tail. Each producer's claimed region is disjoint after successful CAS.
 unsafe impl Send for Producer {}
 
 impl Producer {
@@ -410,7 +413,8 @@ pub struct Consumer {
     shared: Arc<Shared>,
 }
 
-// Safety: Consumer is only used from one thread.
+// SAFETY: Consumer is only used from one thread (not Clone, &mut self API).
+// Sending it to another thread is safe; using from multiple threads is not.
 unsafe impl Send for Consumer {}
 
 impl Consumer {

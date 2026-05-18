@@ -191,6 +191,8 @@ impl<T> Drop for Shared<T> {
 
         let mut i = head;
         while i != tail {
+            // SAFETY: Slots in [head, tail) contain initialized values. We have
+            // exclusive access (drop requires &mut self, both endpoints dropped).
             self.buffer[i & self.mask].with_mut(|ptr| unsafe { (*ptr).assume_init_drop() });
             i = i.wrapping_add(1);
         }
@@ -252,6 +254,8 @@ impl<T> Producer<T> {
         unsafe {
             self.buffer.add(tail & self.mask).write(value);
         }
+        // SAFETY: Same invariant as above — slot is unoccupied. Loom UnsafeCell
+        // requires with_mut for access; the MaybeUninit write is valid on uninit memory.
         #[cfg(loom)]
         self.shared.buffer[tail & self.mask].with_mut(|ptr| unsafe { (*ptr).write(value) });
 
@@ -336,6 +340,9 @@ impl<T> Consumer<T> {
         // written by the producer. head & mask gives a valid index within the buffer.
         #[cfg(not(loom))]
         let value = unsafe { self.buffer.add(head & self.mask).read() };
+        // SAFETY: Same invariant as above — slot contains valid data written by
+        // the producer. Loom UnsafeCell requires with_mut; assume_init_read moves
+        // the value out, and the slot will not be read again until re-written.
         #[cfg(loom)]
         let value = self.shared.buffer[head & self.mask]
             .with_mut(|ptr| unsafe { (*ptr).assume_init_read() });

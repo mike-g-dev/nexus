@@ -22,6 +22,10 @@ pub fn hex_decode_16(bytes: &[u8; 16]) -> Result<u64, usize> {
 #[inline]
 pub fn hex_decode_32(bytes: &[u8; 32]) -> Result<(u64, u64), usize> {
     // Process each half with SSE2
+    // SAFETY: `bytes` is &[u8; 32], so bytes[0..16] and bytes[16..32] are both
+    // valid. The pointer casts reinterpret contiguous sub-slices as &[u8; 16]
+    // references with the same lifetime as `bytes`. Alignment is irrelevant
+    // because [u8; 16] has align 1.
     let hi_bytes: &[u8; 16] = unsafe { &*(bytes.as_ptr().cast::<[u8; 16]>()) };
     let lo_bytes: &[u8; 16] = unsafe { &*(bytes.as_ptr().add(16).cast::<[u8; 16]>()) };
 

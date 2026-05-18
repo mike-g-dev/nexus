@@ -201,6 +201,8 @@ impl<T> Drop for Shared<T> {
         // Drop any remaining elements in the queue
         let mut i = head;
         while i != tail {
+            // SAFETY: slots pointer is valid (allocated in ring_buffer, freed below).
+            // i & mask is in bounds. We have exclusive access (drop requires &mut self).
             let slot = unsafe { &*self.slots.add(i & self.mask) };
             let turn = i >> self.shift;
 

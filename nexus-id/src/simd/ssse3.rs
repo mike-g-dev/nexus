@@ -36,6 +36,10 @@ pub fn hex_encode_u64(value: u64) -> [u8; 16] {
     let bytes = value.to_be_bytes();
     let lut = hex_lut();
 
+    // SAFETY: All intrinsics are SSSE3 or below, guaranteed available by the
+    // module-level `cfg(target_feature = "ssse3")` gate. `bytes` is a stack
+    // [u8; 8]; `_mm_loadl_epi64` reads 8 bytes (unaligned-safe). `buf` is a
+    // stack [u8; 16]; `_mm_storeu_si128` writes 16 bytes (unaligned-safe).
     unsafe {
         let mask_0f = _mm_set1_epi8(0x0F);
         // Load 8 bytes into low 64 bits of XMM register
@@ -67,6 +71,11 @@ pub fn hex_encode_u64(value: u64) -> [u8; 16] {
 pub fn hex_encode_u128(hi: u64, lo: u64) -> [u8; 32] {
     let lut = hex_lut();
 
+    // SAFETY: All intrinsics are SSSE3 or below, guaranteed available by the
+    // module-level `cfg(target_feature = "ssse3")` gate. `hi_bytes`/`lo_bytes`
+    // are stack [u8; 8]; `_mm_loadl_epi64` reads 8 bytes (unaligned-safe).
+    // `buf` is a stack [u8; 32]; both `_mm_storeu_si128` writes are within bounds
+    // (offsets 0 and 16 into a 32-byte buffer).
     unsafe {
         let mask_0f = _mm_set1_epi8(0x0F);
         let mut buf = [0u8; 32];
@@ -105,11 +114,15 @@ pub fn hex_encode_u128(hi: u64, lo: u64) -> [u8; 32] {
 /// Returns `Err(position)` in the compacted 32-char hex space.
 #[inline]
 pub fn uuid_decode_dashed(bytes: &[u8; 36]) -> Result<(u64, u64), usize> {
+    // SAFETY: All intrinsics are SSSE3 or below, guaranteed available by the
+    // module-level `cfg(target_feature = "ssse3")` gate. `bytes` is &[u8; 36]:
+    // `_mm_loadu_si128` at offset 0 reads [0..16], at offset 16 reads [16..32]
+    // (both within bounds, unaligned-safe). `read_unaligned` at offset 32 reads
+    // [32..36] (4 bytes, within the 36-byte array).
     unsafe {
         // Load input: 16 + 16 + 4 bytes
         let reg_a = _mm_loadu_si128(bytes.as_ptr().cast()); // input[0..16]
         let reg_b = _mm_loadu_si128(bytes.as_ptr().add(16).cast()); // input[16..32]
-        // SAFETY: We've verified 36 bytes. Read 4 bytes at offset 32.
         let tail = core::ptr::read_unaligned(bytes.as_ptr().add(32).cast::<u32>());
         let reg_c = _mm_cvtsi32_si128(tail as i32); // input[32..36]
 

@@ -103,7 +103,8 @@ pub unsafe trait Pod: Sized {
     };
 }
 
-// Any Copy type is Pod
+// SAFETY: Copy types are byte-copyable, have no drop glue, and own no resources.
+// This is the canonical set of Pod guarantees.
 unsafe impl<T: Copy> Pod for T {}
 
 /// Atomically stores `size_of::<T>()` bytes into shared memory.
@@ -119,6 +120,8 @@ unsafe impl<T: Copy> Pod for T {}
 /// - `dst` must be derived from `UnsafeCell` (shared-mutable provenance)
 #[inline]
 pub(crate) unsafe fn atomic_store<T: Pod>(dst: *mut T, src: &T) {
+    // SAFETY: Caller guarantees dst is valid, aligned, and from UnsafeCell.
+    // Pod bound ensures T is byte-copyable with no drop glue.
     unsafe {
         let dst = dst.cast::<u8>();
         let src = (src as *const T).cast::<u8>();
@@ -161,6 +164,9 @@ pub(crate) unsafe fn atomic_store<T: Pod>(dst: *mut T, src: &T) {
 /// - `src` must be derived from `UnsafeCell` (shared-mutable provenance)
 #[inline]
 pub(crate) unsafe fn atomic_load<T: Pod>(src: *const T) -> T {
+    // SAFETY: Caller guarantees src is valid, aligned, and from UnsafeCell.
+    // Pod bound ensures T is byte-copyable; assume_init is sound because all
+    // bytes are written by the atomic loads before we return.
     unsafe {
         let mut buf = MaybeUninit::<T>::uninit();
         let dst = buf.as_mut_ptr().cast::<u8>();

@@ -15,6 +15,8 @@ use nexus_rate::{local, sync};
 
 #[inline(always)]
 fn rdtsc_start() -> u64 {
+    // SAFETY: x86_64 intrinsics for serialized timestamp counter read.
+    // lfence ensures all prior instructions complete before reading rdtsc.
     unsafe {
         std::arch::x86_64::_mm_lfence();
         std::arch::x86_64::_rdtsc()
@@ -23,6 +25,8 @@ fn rdtsc_start() -> u64 {
 
 #[inline(always)]
 fn rdtsc_end() -> u64 {
+    // SAFETY: rdtscp serializes on the read side (waits for prior instructions).
+    // Trailing lfence prevents subsequent instructions from reordering before the read.
     unsafe {
         let mut aux = 0u32;
         let tsc = std::arch::x86_64::__rdtscp(&raw mut aux);

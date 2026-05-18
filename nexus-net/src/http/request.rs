@@ -251,6 +251,7 @@ impl RequestReader {
                     // SAFETY: header name/value pointers are within data (same allocation).
                     let ns = unsafe { h.name.as_ptr().offset_from(data_ptr) } as usize;
                     let nl = h.name.len();
+                    // SAFETY: header value pointer is within data (same allocation as data_ptr).
                     let vs = unsafe { h.value.as_ptr().offset_from(data_ptr) } as usize;
                     let vl = h.value.len();
                     self.header_offsets.push((ns, nl, vs, vl));

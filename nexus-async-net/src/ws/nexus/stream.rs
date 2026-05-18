@@ -776,6 +776,9 @@ mod tests {
         }
         const VTABLE: RawWakerVTable = RawWakerVTable::new(noop_clone, noop, noop, noop);
 
+        // SAFETY: The vtable functions (clone/wake/wake_by_ref/drop) are all no-ops
+        // that never dereference the data pointer, so the null data pointer is sound.
+        // The vtable is 'static (const) and correctly returns a valid RawWaker on clone.
         let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
         let mut cx = Context::from_waker(&waker);
         let mut f = std::pin::pin!(f);

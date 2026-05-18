@@ -1021,6 +1021,9 @@ mod tests {
         use std::task::{RawWaker, RawWakerVTable, Waker};
         const VTABLE: RawWakerVTable =
             RawWakerVTable::new(|p| RawWaker::new(p, &VTABLE), |_| {}, |_| {}, |_| {});
+        // SAFETY: The vtable functions (clone/wake/wake_by_ref/drop) are all no-ops
+        // that never dereference the data pointer, so the null data pointer is sound.
+        // The vtable is 'static (const) and correctly returns a valid RawWaker on clone.
         let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
         // Leak the waker to get 'static — fine for tests
         let waker = Box::leak(Box::new(waker));
