@@ -5,6 +5,7 @@
 //! Once placed, an entry never moves — poll checks `deadline_ticks <= now`
 //! per entry.
 
+use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem;
 use std::time::{Duration, Instant};
@@ -176,15 +177,18 @@ impl UnboundedWheelBuilder {
         // The slab is never shared across threads.
         let slab = unsafe { unbounded::Slab::with_chunk_capacity(self.chunk_capacity) };
         let levels = build_levels::<T>(&self.config);
+        let tick_ns = self.config.tick_ns();
         TimerWheel {
             slab,
             num_levels: self.config.num_levels,
             levels,
             current_ticks: 0,
-            tick_ns: self.config.tick_ns(),
+            tick_ns,
+            inv_tick_ns: (1u128 << 64) / tick_ns as u128,
             epoch: now,
             active_levels: 0,
             len: 0,
+            min_deadline: Cell::new(None),
             _marker: PhantomData,
         }
     }
@@ -213,15 +217,18 @@ impl BoundedWheelBuilder {
         // The slab is never shared across threads.
         let slab = unsafe { bounded::Slab::with_capacity(self.capacity) };
         let levels = build_levels::<T>(&self.config);
+        let tick_ns = self.config.tick_ns();
         TimerWheel {
             slab,
             num_levels: self.config.num_levels,
             levels,
             current_ticks: 0,
-            tick_ns: self.config.tick_ns(),
+            tick_ns,
+            inv_tick_ns: (1u128 << 64) / tick_ns as u128,
             epoch: now,
             active_levels: 0,
             len: 0,
+            min_deadline: Cell::new(None),
             _marker: PhantomData,
         }
     }
@@ -253,8 +260,10 @@ pub struct TimerWheel<
     active_levels: u8,
     current_ticks: u64,
     tick_ns: u64,
+    inv_tick_ns: u128,
     epoch: Instant,
     len: usize,
+    min_deadline: Cell<Option<u64>>,
     _marker: PhantomData<*const ()>, // !Send (overridden below), !Sync
 }
 
@@ -446,8 +455,16 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
         if refs == 2 {
             // Active timer with handle — unlink, extract, free
             let value = unsafe { entry.take_value() };
+            let cancelled_deadline = entry.deadline_ticks();
             self.remove_entry(ptr);
             self.len -= 1;
+            if self.len == 0 {
+                self.min_deadline.set(None);
+            } else if let Some(cur) = self.min_deadline.get() {
+                if cancelled_deadline == cur {
+                    self.min_deadline.set(None);
+                }
+            }
             // SAFETY: ptr was allocated from our slab via into_raw()
             self.slab.free(unsafe { Slot::from_raw(ptr) });
             value
@@ -503,6 +520,8 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
         let entry = unsafe { entry_ref(ptr) };
         assert_eq!(entry.refs(), 2, "cannot reschedule a fired timer");
 
+        let old_deadline = entry.deadline_ticks();
+
         // Remove from current position
         self.remove_entry(ptr);
 
@@ -510,6 +529,16 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
         let new_ticks = self.instant_to_ticks(new_deadline);
         entry.set_deadline_ticks(new_ticks);
         self.insert_entry(ptr, new_ticks);
+
+        // Cache: if old deadline was the cached min and new is later,
+        // we may have lost the min. insert_entry already handles
+        // new < old (lowers cache), but can't detect old == cached
+        // when moving later.
+        if let Some(cur) = self.min_deadline.get() {
+            if old_deadline == cur && new_ticks > cur {
+                self.min_deadline.set(None);
+            }
+        }
 
         TimerHandle::new(ptr)
     }
@@ -544,25 +573,34 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
 
     /// Returns the `Instant` of the next timer that will fire, or `None` if empty.
     ///
-    /// Walks only active (non-empty) slots. O(active_slots) in the worst case,
-    /// but typically very fast because most slots are empty.
+    /// O(1) on cache hit (common case). Falls back to a full walk when the
+    /// cache is invalidated by cancel, fire, or reschedule.
     pub fn next_deadline(&self) -> Option<Instant> {
-        let mut min_ticks: Option<u64> = None;
+        if let Some(ticks) = self.min_deadline.get() {
+            return Some(self.ticks_to_instant(ticks));
+        }
+        if self.len == 0 {
+            return None;
+        }
+        let min_ticks = self.walk_min_deadline();
+        self.min_deadline.set(min_ticks);
+        min_ticks.map(|t| self.ticks_to_instant(t))
+    }
 
+    #[cold]
+    fn walk_min_deadline(&self) -> Option<u64> {
+        let mut min_ticks: Option<u64> = None;
         let mut lvl_mask = self.active_levels;
         while lvl_mask != 0 {
             let lvl_idx = lvl_mask.trailing_zeros() as usize;
             lvl_mask &= lvl_mask - 1;
-
             let level = &self.levels[lvl_idx];
             let mut slot_mask = level.active_slots();
             while slot_mask != 0 {
                 let slot_idx = slot_mask.trailing_zeros() as usize;
                 slot_mask &= slot_mask - 1;
-
                 let slot = level.slot(slot_idx);
                 let mut entry_ptr = slot.entry_head();
-
                 while !entry_ptr.is_null() {
                     // SAFETY: entry_ptr is in this slot's DLL
                     let entry = unsafe { entry_ref(entry_ptr) };
@@ -572,8 +610,12 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
                 }
             }
         }
+        min_ticks
+    }
 
-        min_ticks.map(|t| self.ticks_to_instant(t))
+    #[cfg(test)]
+    fn next_deadline_uncached(&self) -> Option<Instant> {
+        self.walk_min_deadline().map(|t| self.ticks_to_instant(t))
     }
 
     /// Returns the number of timers currently in the wheel.
@@ -594,9 +636,9 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
 
     #[inline]
     fn instant_to_ticks(&self, instant: Instant) -> u64 {
-        // Saturate at 0 for instants before epoch
         let dur = instant.saturating_duration_since(self.epoch);
-        dur.as_nanos() as u64 / self.tick_ns
+        let nanos = dur.as_nanos().min(u64::MAX as u128) as u64;
+        ((nanos as u128 * self.inv_tick_ns) >> 64) as u64
     }
 
     #[inline]
@@ -652,6 +694,19 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
         // Activate slot and level (idempotent — OR is a no-op if already set)
         self.levels[lvl_idx].activate_slot(slot_idx);
         self.active_levels |= 1 << lvl_idx;
+
+        // Cache: new entry may lower the minimum.
+        // len is incremented by the caller AFTER insert_entry returns,
+        // so self.len == 0 means the wheel was empty before this insert.
+        match self.min_deadline.get() {
+            None if self.len == 0 => {
+                self.min_deadline.set(Some(deadline_ticks));
+            }
+            Some(cur) if deadline_ticks < cur => {
+                self.min_deadline.set(Some(deadline_ticks));
+            }
+            _ => {}
+        }
     }
 
     /// Removes an entry from its level's slot DLL.
@@ -691,6 +746,8 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
         // SAFETY: entry_ptr is valid (we're walking the DLL)
         let entry = unsafe { entry_ref(entry_ptr) };
 
+        let fired_deadline = entry.deadline_ticks();
+
         // Extract value
         // SAFETY: single-threaded
         let value = unsafe { entry.take_value() };
@@ -705,6 +762,15 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
         // Handle holder will free via cancel() or free().
 
         self.len -= 1;
+
+        if self.len == 0 {
+            self.min_deadline.set(None);
+        } else if let Some(cur) = self.min_deadline.get() {
+            if fired_deadline == cur {
+                self.min_deadline.set(None);
+            }
+        }
+
         value
     }
 
@@ -1087,6 +1153,144 @@ mod tests {
         // Should be close to now + 50ms (within tick granularity)
         let delta = next.duration_since(now);
         assert!(delta >= ms(49) && delta <= ms(51));
+    }
+
+    #[test]
+    fn next_deadline_cache_invalidates_on_cancel() {
+        let now = Instant::now();
+        let mut wheel: Wheel<u64> = Wheel::unbounded(1024, now);
+
+        let h1 = wheel.schedule(now + ms(50), 1);
+        wheel.schedule_forget(now + ms(100), 2);
+        wheel.schedule_forget(now + ms(200), 3);
+
+        // Cached at 50ms
+        let d1 = wheel.next_deadline().unwrap();
+        assert!(d1.duration_since(now) >= ms(49) && d1.duration_since(now) <= ms(51));
+
+        // Cancel the earliest — cache invalidated, should return ~100ms
+        wheel.cancel(h1);
+        let d2 = wheel.next_deadline().unwrap();
+        assert!(d2.duration_since(now) >= ms(99) && d2.duration_since(now) <= ms(101));
+    }
+
+    #[test]
+    fn next_deadline_cache_invalidates_on_fire() {
+        let now = Instant::now();
+        let mut wheel: Wheel<u64> = Wheel::unbounded(1024, now);
+
+        wheel.schedule_forget(now + ms(50), 1);
+        wheel.schedule_forget(now + ms(100), 2);
+        wheel.schedule_forget(now + ms(200), 3);
+
+        // Prime cache
+        let _ = wheel.next_deadline();
+
+        // Fire earliest via poll
+        let mut buf = Vec::new();
+        wheel.poll(now + ms(60), &mut buf);
+        assert_eq!(buf, vec![1]);
+
+        // Cache invalidated, should return ~100ms
+        let d = wheel.next_deadline().unwrap();
+        assert!(d.duration_since(now) >= ms(99) && d.duration_since(now) <= ms(101));
+    }
+
+    #[test]
+    fn next_deadline_cache_updates_on_insert() {
+        let now = Instant::now();
+        let mut wheel: Wheel<u64> = Wheel::unbounded(1024, now);
+
+        wheel.schedule_forget(now + ms(100), 1);
+        let d1 = wheel.next_deadline().unwrap();
+        assert!(d1.duration_since(now) >= ms(99) && d1.duration_since(now) <= ms(101));
+
+        // Insert an earlier timer — cache should update
+        wheel.schedule_forget(now + ms(30), 2);
+        let d2 = wheel.next_deadline().unwrap();
+        assert!(d2.duration_since(now) >= ms(29) && d2.duration_since(now) <= ms(31));
+    }
+
+    #[test]
+    fn next_deadline_after_reschedule_later() {
+        let now = Instant::now();
+        let mut wheel: Wheel<u64> = Wheel::unbounded(1024, now);
+
+        let h_a = wheel.schedule(now + ms(50), 1);
+        wheel.schedule_forget(now + ms(100), 2);
+
+        let d1 = wheel.next_deadline().unwrap();
+        assert!(d1.duration_since(now) >= ms(49) && d1.duration_since(now) <= ms(51));
+
+        // Reschedule A later — B becomes earliest
+        let h_a = wheel.reschedule(h_a, now + ms(200));
+        let d2 = wheel.next_deadline().unwrap();
+        assert!(d2.duration_since(now) >= ms(99) && d2.duration_since(now) <= ms(101));
+        mem::forget(h_a);
+    }
+
+    #[test]
+    fn next_deadline_after_reschedule_earlier() {
+        let now = Instant::now();
+        let mut wheel: Wheel<u64> = Wheel::unbounded(1024, now);
+
+        let h_a = wheel.schedule(now + ms(100), 1);
+        wheel.schedule_forget(now + ms(50), 2);
+
+        let d1 = wheel.next_deadline().unwrap();
+        assert!(d1.duration_since(now) >= ms(49) && d1.duration_since(now) <= ms(51));
+
+        // Reschedule A earlier — A becomes new earliest
+        let h_a = wheel.reschedule(h_a, now + ms(25));
+        let d2 = wheel.next_deadline().unwrap();
+        assert!(d2.duration_since(now) >= ms(24) && d2.duration_since(now) <= ms(26));
+        mem::forget(h_a);
+    }
+
+    #[test]
+    fn next_deadline_repeated_calls_stable() {
+        let now = Instant::now();
+        let mut wheel: Wheel<u64> = Wheel::unbounded(1024, now);
+
+        wheel.schedule_forget(now + ms(50), 1);
+        wheel.schedule_forget(now + ms(100), 2);
+        wheel.schedule_forget(now + ms(200), 3);
+
+        let d1 = wheel.next_deadline();
+        let d2 = wheel.next_deadline();
+        let d3 = wheel.next_deadline();
+        assert_eq!(d1, d2);
+        assert_eq!(d2, d3);
+    }
+
+    // -------------------------------------------------------------------------
+    // Reciprocal precision
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn reciprocal_instant_to_ticks_precision() {
+        // Reciprocal multiply is at most 1 tick low vs true integer division.
+        // Verify across multiple tick_ns values and multiples.
+        let now = Instant::now();
+
+        for &tick_ns in &[1_000_000u64, 1_000, 100, 999_999, 7_500_000] {
+            let wheel: Wheel<u64> = WheelBuilder::default()
+                .tick_duration(Duration::from_nanos(tick_ns))
+                .unbounded(64)
+                .build(now);
+
+            for n in 0..500u64 {
+                let nanos = n * tick_ns;
+                let instant = now + Duration::from_nanos(nanos);
+                let got = wheel.instant_to_ticks(instant);
+                let exact = nanos / tick_ns;
+                let diff = exact as i64 - got as i64;
+                assert!(
+                    diff >= 0 && diff <= 1,
+                    "tick_ns={tick_ns}, n={n}: exact={exact}, got={got}, diff={diff}",
+                );
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -1958,5 +2162,97 @@ mod proptests {
             prop_assert_eq!(all_fired, expected, "Not all timers fired exactly once");
             prop_assert!(wheel.is_empty());
         }
+
+        /// Fuzz next_deadline cache correctness.
+        ///
+        /// Random sequence of schedule, schedule_forget, cancel, reschedule,
+        /// and poll operations. After each operation, verifies the cached
+        /// `next_deadline()` matches the uncached full walk.
+        #[test]
+        fn fuzz_next_deadline_cache(
+            ops in proptest::collection::vec(deadline_op_strategy(), 1..300),
+        ) {
+            let now = Instant::now();
+            let mut wheel: Wheel<u64> = Wheel::unbounded(1024, now);
+            let mut handles: Vec<(TimerHandle<u64>, u64)> = Vec::new();
+            let mut next_id: u64 = 0;
+
+            for op in &ops {
+                match op {
+                    DeadlineOp::Schedule { deadline_ms } => {
+                        let h = wheel.schedule(now + Duration::from_millis(*deadline_ms), next_id);
+                        handles.push((h, *deadline_ms));
+                        next_id += 1;
+                    }
+                    DeadlineOp::ScheduleForget { deadline_ms } => {
+                        wheel.schedule_forget(now + Duration::from_millis(*deadline_ms), next_id);
+                        next_id += 1;
+                    }
+                    DeadlineOp::Cancel { idx } => {
+                        if !handles.is_empty() {
+                            let i = idx % handles.len();
+                            let (h, _) = handles.swap_remove(i);
+                            wheel.cancel(h);
+                        }
+                    }
+                    DeadlineOp::Reschedule { idx, new_deadline_ms } => {
+                        if !handles.is_empty() {
+                            let i = idx % handles.len();
+                            let (h, _) = handles.swap_remove(i);
+                            let new_h = wheel.reschedule(h, now + Duration::from_millis(*new_deadline_ms));
+                            handles.push((new_h, *new_deadline_ms));
+                        }
+                    }
+                    DeadlineOp::Poll { at_ms } => {
+                        let mut buf = Vec::new();
+                        wheel.poll(now + Duration::from_millis(*at_ms), &mut buf);
+                        // Free zombie handles whose timers just fired.
+                        // A handle is a zombie if its deadline_ms <= at_ms.
+                        let at = *at_ms;
+                        let mut i = 0;
+                        while i < handles.len() {
+                            if handles[i].1 <= at {
+                                let (h, _) = handles.swap_remove(i);
+                                wheel.free(h);
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    }
+                }
+
+                let cached = wheel.next_deadline();
+                let uncached = wheel.next_deadline_uncached();
+                prop_assert_eq!(cached, uncached, "cache disagrees with walk after {:?}", op);
+            }
+
+            for (h, _) in handles {
+                mem::forget(h);
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    enum DeadlineOp {
+        Schedule { deadline_ms: u64 },
+        ScheduleForget { deadline_ms: u64 },
+        Cancel { idx: usize },
+        Reschedule { idx: usize, new_deadline_ms: u64 },
+        Poll { at_ms: u64 },
+    }
+
+    fn deadline_op_strategy() -> impl Strategy<Value = DeadlineOp> {
+        prop_oneof![
+            (1u64..10_000).prop_map(|deadline_ms| DeadlineOp::Schedule { deadline_ms }),
+            (1u64..10_000).prop_map(|deadline_ms| DeadlineOp::ScheduleForget { deadline_ms }),
+            any::<usize>().prop_map(|idx| DeadlineOp::Cancel { idx }),
+            (any::<usize>(), 1u64..10_000).prop_map(|(idx, new_deadline_ms)| {
+                DeadlineOp::Reschedule {
+                    idx,
+                    new_deadline_ms,
+                }
+            }),
+            (1u64..10_000).prop_map(|at_ms| DeadlineOp::Poll { at_ms }),
+        ]
     }
 }
