@@ -1264,6 +1264,36 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // Reciprocal precision
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn reciprocal_instant_to_ticks_precision() {
+        // Reciprocal multiply is at most 1 tick low vs true integer division.
+        // Verify across multiple tick_ns values and multiples.
+        let now = Instant::now();
+
+        for &tick_ns in &[1_000_000u64, 1_000, 100, 999_999, 7_500_000] {
+            let wheel: Wheel<u64> = WheelBuilder::default()
+                .tick_duration(Duration::from_nanos(tick_ns))
+                .unbounded(64)
+                .build(now);
+
+            for n in 0..500u64 {
+                let nanos = n * tick_ns;
+                let instant = now + Duration::from_nanos(nanos);
+                let got = wheel.instant_to_ticks(instant);
+                let exact = nanos / tick_ns;
+                let diff = exact as i64 - got as i64;
+                assert!(
+                    diff >= 0 && diff <= 1,
+                    "tick_ns={tick_ns}, n={n}: exact={exact}, got={got}, diff={diff}",
+                );
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Deadline in the past
     // -------------------------------------------------------------------------
 
