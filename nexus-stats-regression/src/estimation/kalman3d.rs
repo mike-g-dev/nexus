@@ -142,13 +142,14 @@ macro_rules! impl_kalman3d {
                 s = s.max(<$ty>::EPSILON);
 
                 // Kalman gain: K = P*H' / S
+                let s_inv = (1.0 as $ty) / s;
                 let mut k = [0.0 as $ty; 3];
                 for i in 0..3 {
                     let mut ph = 0.0 as $ty;
                     for j in 0..3 {
                         ph += self.p[i * 3 + j] * h[j];
                     }
-                    k[i] = ph / s;
+                    k[i] = ph * s_inv;
                 }
 
                 // State update: x = x + K*y

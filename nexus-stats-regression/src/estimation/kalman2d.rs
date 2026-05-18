@@ -121,8 +121,9 @@ macro_rules! impl_kalman2d {
                     .max(<$ty>::EPSILON);
 
                 // Kalman gain: K = P*H' / S
-                let k0 = (self.p[0] * h[0] + self.p[1] * h[1]) / s;
-                let k1 = (self.p[2] * h[0] + self.p[3] * h[1]) / s;
+                let s_inv = (1.0 as $ty) / s;
+                let k0 = (self.p[0] * h[0] + self.p[1] * h[1]) * s_inv;
+                let k1 = (self.p[2] * h[0] + self.p[3] * h[1]) * s_inv;
 
                 // State update: x = x + K*y
                 self.state[0] += k0 * y;

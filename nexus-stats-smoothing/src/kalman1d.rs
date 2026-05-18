@@ -109,19 +109,20 @@ macro_rules! impl_kalman1d {
                 let y = measurement - pred_x0;
 
                 // Innovation covariance: S = H * P_pred * H' + R = P00 + R
-                let s = pred_p00 + self.r;
+                let s_inv = (1.0 as $ty) / (pred_p00 + self.r).max(<$ty>::EPSILON);
 
                 // Kalman gain: K = P_pred * H' / S = [P00/S, P01/S]
-                let k0 = pred_p00 / s;
-                let k1 = pred_p01 / s;
+                let k0 = pred_p00 * s_inv;
+                let k1 = pred_p01 * s_inv;
 
                 // State update: x = x_pred + K * y
                 self.x0 = k0.fma(y, pred_x0);
                 self.x1 = k1.fma(y, pred_x1);
 
                 // Covariance update: P = (I - K*H) * P_pred
-                self.p00 = (1.0 as $ty - k0) * pred_p00;
-                self.p01 = (1.0 as $ty - k0) * pred_p01;
+                let one_minus_k0 = 1.0 as $ty - k0;
+                self.p00 = one_minus_k0 * pred_p00;
+                self.p01 = one_minus_k0 * pred_p01;
                 self.p11 = pred_p11 - k1 * pred_p01;
 
                 if self.count >= self.min_samples {
