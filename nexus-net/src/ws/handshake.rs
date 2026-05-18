@@ -183,4 +183,84 @@ mod tests {
             "AAAAAAAAAAAAAAAAAAAAAA=="
         );
     }
+
+    // =========================================================================
+    // HandshakeError variant coverage
+    // =========================================================================
+
+    #[test]
+    fn handshake_error_unexpected_status() {
+        let err = HandshakeError::UnexpectedStatus(403);
+        assert!(matches!(err, HandshakeError::UnexpectedStatus(403)));
+        assert_eq!(err.to_string(), "unexpected HTTP status: 403");
+    }
+
+    #[test]
+    fn handshake_error_missing_upgrade() {
+        let err = HandshakeError::MissingUpgrade;
+        assert!(matches!(err, HandshakeError::MissingUpgrade));
+        assert_eq!(err.to_string(), "missing Upgrade: websocket header");
+    }
+
+    #[test]
+    fn handshake_error_missing_connection() {
+        let err = HandshakeError::MissingConnection;
+        assert!(matches!(err, HandshakeError::MissingConnection));
+        assert_eq!(err.to_string(), "missing Connection: Upgrade header");
+    }
+
+    #[test]
+    fn handshake_error_invalid_accept_key() {
+        let err = HandshakeError::InvalidAcceptKey;
+        assert!(matches!(err, HandshakeError::InvalidAcceptKey));
+        assert_eq!(err.to_string(), "Sec-WebSocket-Accept mismatch");
+    }
+
+    #[test]
+    fn handshake_error_missing_key() {
+        let err = HandshakeError::MissingKey;
+        assert!(matches!(err, HandshakeError::MissingKey));
+        assert_eq!(err.to_string(), "missing Sec-WebSocket-Key header");
+    }
+
+    #[test]
+    fn handshake_error_unsupported_version() {
+        let err = HandshakeError::UnsupportedVersion;
+        assert!(matches!(err, HandshakeError::UnsupportedVersion));
+        assert_eq!(err.to_string(), "unsupported WebSocket version");
+    }
+
+    #[test]
+    fn handshake_error_malformed_http() {
+        let err = HandshakeError::MalformedHttp;
+        assert!(matches!(err, HandshakeError::MalformedHttp));
+        assert_eq!(err.to_string(), "malformed HTTP");
+    }
+
+    #[test]
+    fn handshake_error_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe broken");
+        let err = HandshakeError::from(io_err);
+        assert!(matches!(err, HandshakeError::Io(_)));
+        assert!(err.to_string().contains("pipe broken"));
+    }
+
+    #[test]
+    fn handshake_error_is_std_error() {
+        let err: &dyn std::error::Error = &HandshakeError::MalformedHttp;
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn handshake_error_eq() {
+        assert_eq!(
+            HandshakeError::UnexpectedStatus(404),
+            HandshakeError::UnexpectedStatus(404)
+        );
+        assert_ne!(
+            HandshakeError::UnexpectedStatus(404),
+            HandshakeError::UnexpectedStatus(500)
+        );
+        assert_ne!(HandshakeError::MissingUpgrade, HandshakeError::MissingConnection);
+    }
 }

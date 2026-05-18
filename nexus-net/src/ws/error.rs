@@ -88,3 +88,139 @@ impl std::fmt::Display for ProtocolError {
 }
 
 impl std::error::Error for ProtocolError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_invalid_opcode() {
+        let err = ProtocolError::InvalidOpcode(0x3);
+        assert_eq!(err.to_string(), "invalid opcode: 0x3");
+    }
+
+    #[test]
+    fn display_reserved_bits_set() {
+        let err = ProtocolError::ReservedBitsSet { bits: 0b110 };
+        assert_eq!(err.to_string(), "reserved bits set: 0b110");
+    }
+
+    #[test]
+    fn display_masked_frame_from_server() {
+        assert_eq!(
+            ProtocolError::MaskedFrameFromServer.to_string(),
+            "server sent masked frame"
+        );
+    }
+
+    #[test]
+    fn display_unmasked_frame_from_client() {
+        assert_eq!(
+            ProtocolError::UnmaskedFrameFromClient.to_string(),
+            "client sent unmasked frame"
+        );
+    }
+
+    #[test]
+    fn display_payload_too_large() {
+        let err = ProtocolError::PayloadTooLarge {
+            size: 200,
+            max: 125,
+        };
+        assert_eq!(
+            err.to_string(),
+            "payload too large: 200 bytes (max 125)"
+        );
+    }
+
+    #[test]
+    fn display_control_frame_too_large() {
+        let err = ProtocolError::ControlFrameTooLarge { size: 130 };
+        assert_eq!(
+            err.to_string(),
+            "control frame too large: 130 bytes (max 125)"
+        );
+    }
+
+    #[test]
+    fn display_fragmented_control_frame() {
+        assert_eq!(
+            ProtocolError::FragmentedControlFrame.to_string(),
+            "fragmented control frame"
+        );
+    }
+
+    #[test]
+    fn display_invalid_close_code() {
+        let err = ProtocolError::InvalidCloseCode(999);
+        assert_eq!(err.to_string(), "invalid close code: 999");
+    }
+
+    #[test]
+    fn display_invalid_utf8_in_close_reason() {
+        assert_eq!(
+            ProtocolError::InvalidUtf8InCloseReason.to_string(),
+            "invalid UTF-8 in close reason"
+        );
+    }
+
+    #[test]
+    fn display_close_frame_too_short() {
+        assert_eq!(
+            ProtocolError::CloseFrameTooShort.to_string(),
+            "close frame too short (1 byte, must be 0 or >= 2)"
+        );
+    }
+
+    #[test]
+    fn display_continuation_without_start() {
+        assert_eq!(
+            ProtocolError::ContinuationWithoutStart.to_string(),
+            "continuation frame without preceding start frame"
+        );
+    }
+
+    #[test]
+    fn display_new_message_during_assembly() {
+        assert_eq!(
+            ProtocolError::NewMessageDuringAssembly.to_string(),
+            "new data frame received during fragment assembly"
+        );
+    }
+
+    #[test]
+    fn display_invalid_utf8() {
+        assert_eq!(
+            ProtocolError::InvalidUtf8.to_string(),
+            "text message contains invalid UTF-8"
+        );
+    }
+
+    #[test]
+    fn display_message_too_large() {
+        let err = ProtocolError::MessageTooLarge {
+            accumulated: 2000,
+            max: 1024,
+        };
+        assert_eq!(
+            err.to_string(),
+            "assembled message too large: 2000 bytes (max 1024)"
+        );
+    }
+
+    #[test]
+    fn protocol_error_eq() {
+        assert_eq!(
+            ProtocolError::InvalidOpcode(0x3),
+            ProtocolError::InvalidOpcode(0x3)
+        );
+        assert_ne!(
+            ProtocolError::InvalidOpcode(0x3),
+            ProtocolError::InvalidOpcode(0x4)
+        );
+        assert_ne!(
+            ProtocolError::MaskedFrameFromServer,
+            ProtocolError::UnmaskedFrameFromClient
+        );
+    }
+}

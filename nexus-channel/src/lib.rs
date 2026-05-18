@@ -1560,4 +1560,141 @@ mod tests {
             drop(rx);
         }
     }
+
+    // ============================================================================
+    // Error Variant Coverage
+    // ============================================================================
+
+    #[test]
+    fn send_error_returns_value_on_disconnect() {
+        let (tx, rx) = channel::<u64>(4);
+        drop(rx);
+
+        match tx.send(42) {
+            Err(SendError(v)) => assert_eq!(v, 42),
+            Ok(()) => panic!("expected SendError"),
+        }
+    }
+
+    #[test]
+    fn send_error_into_inner() {
+        let (tx, rx) = channel::<String>(4);
+        drop(rx);
+
+        let err = tx.send("hello".to_string()).unwrap_err();
+        assert_eq!(err.into_inner(), "hello");
+    }
+
+    #[test]
+    fn recv_error_on_disconnect() {
+        let (tx, rx) = channel::<u64>(4);
+        drop(tx);
+
+        match rx.recv() {
+            Err(RecvError) => {}
+            Ok(_) => panic!("expected RecvError"),
+        }
+    }
+
+    #[test]
+    fn try_send_error_full_helpers() {
+        let (tx, _rx) = channel::<u64>(1);
+        tx.try_send(1).unwrap();
+
+        let err = tx.try_send(2).unwrap_err();
+        assert!(err.is_full());
+        assert!(!err.is_disconnected());
+        assert_eq!(err.into_inner(), 2);
+    }
+
+    #[test]
+    fn try_send_error_disconnected_helpers() {
+        let (tx, rx) = channel::<u64>(4);
+        drop(rx);
+
+        let err = tx.try_send(7).unwrap_err();
+        assert!(err.is_disconnected());
+        assert!(!err.is_full());
+        assert_eq!(err.into_inner(), 7);
+    }
+
+    #[test]
+    fn try_recv_error_empty_helpers() {
+        let (_tx, rx) = channel::<u64>(4);
+
+        let err = rx.try_recv().unwrap_err();
+        assert!(err.is_empty());
+        assert!(!err.is_disconnected());
+    }
+
+    #[test]
+    fn try_recv_error_disconnected_helpers() {
+        let (tx, rx) = channel::<u64>(4);
+        drop(tx);
+
+        let err = rx.try_recv().unwrap_err();
+        assert!(err.is_disconnected());
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn recv_timeout_error_timeout_helpers() {
+        let (_tx, rx) = channel::<u64>(4);
+
+        let err = rx.recv_timeout(Duration::from_millis(1)).unwrap_err();
+        assert!(err.is_timeout());
+        assert!(!err.is_disconnected());
+    }
+
+    #[test]
+    fn recv_timeout_error_disconnected_helpers() {
+        let (tx, rx) = channel::<u64>(4);
+        drop(tx);
+
+        let err = rx.recv_timeout(Duration::from_millis(100)).unwrap_err();
+        assert!(err.is_disconnected());
+        assert!(!err.is_timeout());
+    }
+
+    // ============================================================================
+    // Error Display Coverage
+    // ============================================================================
+
+    #[test]
+    fn send_error_display() {
+        let err = SendError(0u64);
+        assert_eq!(err.to_string(), "channel disconnected");
+    }
+
+    #[test]
+    fn recv_error_display() {
+        assert_eq!(RecvError.to_string(), "channel disconnected");
+    }
+
+    #[test]
+    fn try_send_error_display() {
+        assert_eq!(TrySendError::Full(0u64).to_string(), "channel full");
+        assert_eq!(
+            TrySendError::Disconnected(0u64).to_string(),
+            "channel disconnected"
+        );
+    }
+
+    #[test]
+    fn try_recv_error_display() {
+        assert_eq!(TryRecvError::Empty.to_string(), "channel empty");
+        assert_eq!(
+            TryRecvError::Disconnected.to_string(),
+            "channel disconnected"
+        );
+    }
+
+    #[test]
+    fn recv_timeout_error_display() {
+        assert_eq!(RecvTimeoutError::Timeout.to_string(), "timed out");
+        assert_eq!(
+            RecvTimeoutError::Disconnected.to_string(),
+            "channel disconnected"
+        );
+    }
 }

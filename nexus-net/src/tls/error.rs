@@ -45,3 +45,43 @@ impl From<std::io::Error> for TlsError {
         Self::Io(e)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn tls_error_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
+        let err = TlsError::from(io_err);
+        assert!(matches!(err, TlsError::Io(_)));
+        assert!(err.to_string().contains("reset"));
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn tls_error_rustls() {
+        let rustls_err = rustls::Error::General("test error".into());
+        let err = TlsError::from(rustls_err);
+        assert!(matches!(err, TlsError::Rustls(_)));
+        assert!(err.to_string().contains("test error"));
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn tls_error_invalid_hostname() {
+        let err = TlsError::InvalidHostname("not a host!".into());
+        assert!(matches!(err, TlsError::InvalidHostname(_)));
+        assert_eq!(err.to_string(), "invalid TLS hostname: not a host!");
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn tls_error_no_root_certs() {
+        let err = TlsError::NoRootCerts;
+        assert!(matches!(err, TlsError::NoRootCerts));
+        assert_eq!(err.to_string(), "no system root certificates found");
+        assert!(err.source().is_none());
+    }
+}

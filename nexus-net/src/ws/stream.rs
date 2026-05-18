@@ -1083,4 +1083,57 @@ mod tests {
             assert!(ws.recv().unwrap().is_none());
         }
     }
+
+    // =========================================================================
+    // ws::Error variant coverage
+    // =========================================================================
+
+    #[test]
+    fn ws_error_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken");
+        let err = Error::from(io_err);
+        assert!(matches!(err, Error::Io(_)));
+        assert!(err.to_string().contains("broken"));
+    }
+
+    #[test]
+    fn ws_error_protocol() {
+        let proto = ProtocolError::InvalidUtf8;
+        let err = Error::from(proto);
+        assert!(matches!(err, Error::Protocol(ProtocolError::InvalidUtf8)));
+        assert!(err.to_string().contains("protocol error"));
+    }
+
+    #[test]
+    fn ws_error_encode() {
+        let enc = crate::ws::EncodeError::ControlPayloadTooLarge(200);
+        let err = Error::from(enc);
+        assert!(matches!(err, Error::Encode(_)));
+        assert!(err.to_string().contains("encode error"));
+    }
+
+    #[test]
+    fn ws_error_handshake() {
+        let hs = HandshakeError::MissingUpgrade;
+        let err = Error::from(hs);
+        assert!(matches!(
+            err,
+            Error::Handshake(HandshakeError::MissingUpgrade)
+        ));
+        assert!(err.to_string().contains("handshake error"));
+    }
+
+    #[test]
+    fn ws_error_invalid_url() {
+        let err = Error::InvalidUrl("bad://url".into());
+        assert!(matches!(err, Error::InvalidUrl(_)));
+        assert!(err.to_string().contains("bad://url"));
+    }
+
+    #[test]
+    fn ws_error_tls_not_enabled() {
+        let err = Error::TlsNotEnabled;
+        assert!(matches!(err, Error::TlsNotEnabled));
+        assert!(err.to_string().contains("tls"));
+    }
 }
