@@ -118,12 +118,14 @@ impl<T> Slot<T> {
     /// Byte slab memory never moves, so `Pin` is sound without `T: Unpin`.
     #[inline]
     pub fn pin(&self) -> core::pin::Pin<&T> {
+        // SAFETY: Byte slab memory never moves after init — Pin is sound.
         unsafe { core::pin::Pin::new_unchecked(&**self) }
     }
 
     /// Returns a pinned mutable reference to the value.
     #[inline]
     pub fn pin_mut(&mut self) -> core::pin::Pin<&mut T> {
+        // SAFETY: Byte slab memory never moves. &mut self guarantees exclusive access.
         unsafe { core::pin::Pin::new_unchecked(&mut **self) }
     }
 }
@@ -252,7 +254,7 @@ impl ByteClaim<'_> {
     pub fn write<T>(self, value: T) -> Slot<T> {
         validate_type_dynamic::<T>(self.slot_size);
 
-        // SAFETY: ptr points to a valid, vacant slot of at least slot_size bytes.
+        // SAFETY: ptr is a valid, vacant slot with slot_size >= size_of::<T>().
         // AlignedBytes guarantees 8-byte alignment. validate_type checked fit.
         unsafe { core::ptr::write(self.ptr.cast::<T>(), value) };
 
@@ -285,7 +287,7 @@ impl ByteClaim<'_> {
             self.slot_size
         );
 
-        // SAFETY: ptr is valid and vacant, caller guarantees src validity.
+        // SAFETY: ptr is valid and vacant with slot_size >= size. Caller guarantees src validity.
         unsafe { core::ptr::copy_nonoverlapping(src, self.ptr, size) };
 
         let ptr = self.ptr;

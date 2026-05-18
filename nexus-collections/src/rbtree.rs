@@ -466,6 +466,7 @@ impl<K, V, C: Compare<K>> RbTree<K, V, C> {
 
         while !current.is_null() {
             parent = current;
+            // SAFETY: current is non-null and a valid tree node (root or child).
             let node = unsafe { &*node_deref(current) };
             match C::cmp(&key, &node.key) {
                 Ordering::Equal => {
@@ -618,6 +619,7 @@ impl<K, V, C: Compare<K>> RbTree<K, V, C> {
         let mut result: NodePtr<K, V> = ptr::null_mut();
         let mut current = self.root;
         while !current.is_null() {
+            // SAFETY: current is non-null and a valid tree node (root or child).
             let node = unsafe { &*node_deref(current) };
             if C::cmp(key, &node.key) == Ordering::Greater {
                 current = node.right.get();
@@ -633,6 +635,7 @@ impl<K, V, C: Compare<K>> RbTree<K, V, C> {
         let mut result: NodePtr<K, V> = ptr::null_mut();
         let mut current = self.root;
         while !current.is_null() {
+            // SAFETY: current is non-null and a valid tree node (root or child).
             let node = unsafe { &*node_deref(current) };
             if C::cmp(key, &node.key) == Ordering::Less {
                 result = current;
@@ -667,6 +670,7 @@ impl<K, V, C: Compare<K>> RbTree<K, V, C> {
         }
 
         if !end.is_null() {
+            // SAFETY: front and end are non-null valid tree nodes from lower/upper_bound.
             let front_key = unsafe { &(*node_deref(front)).key };
             let end_key = unsafe { &(*node_deref(end)).key };
             if C::cmp(front_key, end_key) != Ordering::Less {
@@ -1042,6 +1046,7 @@ impl<K, V, C: Compare<K>> RbTree<K, V, C> {
         let mut count = 0usize;
         Self::verify_subtree(self.root, &mut black_height, 0, &mut count);
 
+        // SAFETY: root is non-null (checked above) and a valid tree node.
         let actual_min = unsafe { tree_minimum(self.root) };
         let actual_max = unsafe { tree_maximum(self.root) };
         assert_eq!(self.leftmost, actual_min, "leftmost cache mismatch");
@@ -1069,6 +1074,8 @@ impl<K, V, C: Compare<K>> RbTree<K, V, C> {
         }
 
         *count += 1;
+        // SAFETY: ptr is non-null (checked above) and a valid tree node
+        // reached by recursive traversal from the root.
         let node = unsafe { &*node_deref(ptr) };
 
         if is_red(ptr) {
@@ -1080,11 +1087,13 @@ impl<K, V, C: Compare<K>> RbTree<K, V, C> {
         let right = node.right.get();
 
         if !left.is_null() {
+            // SAFETY: left is non-null and a valid child of the current node.
             let left_key = unsafe { &(*node_deref(left)).key };
             assert!(C::cmp(left_key, &node.key) == Ordering::Less);
             assert_eq!(get_parent(left), ptr);
         }
         if !right.is_null() {
+            // SAFETY: right is non-null and a valid child of the current node.
             let right_key = unsafe { &(*node_deref(right)).key };
             assert!(C::cmp(right_key, &node.key) == Ordering::Greater);
             assert_eq!(get_parent(right), ptr);

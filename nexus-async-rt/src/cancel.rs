@@ -378,6 +378,9 @@ impl Inner {
             }
 
             let head = self.child_head.load(Ordering::Acquire);
+            // SAFETY: node was just allocated via Box::into_raw above.
+            // Writing next before CAS is safe — no one else can see the
+            // node until the CAS succeeds.
             unsafe { (*node).next = head };
             if self
                 .child_head
@@ -403,6 +406,7 @@ impl Drop for Inner {
         // point, no waiter nodes can possibly still be in the list.
         #[cfg(debug_assertions)]
         {
+            // SAFETY: &mut self in Drop — exclusive access, no lock needed.
             let head = unsafe { *self.head.get() };
             debug_assert!(
                 head.is_null(),
@@ -416,6 +420,8 @@ impl Drop for Inner {
         // without ever being cancelled.
         let mut child = *self.child_head.get_mut();
         while !child.is_null() {
+            // SAFETY: each ChildNode was allocated via Box::into_raw in add_child.
+            // We own them exclusively (&mut self in Drop).
             let node = unsafe { Box::from_raw(child) };
             child = node.next;
         }
@@ -728,6 +734,8 @@ mod tests {
             RawWaker::new(p, &VTABLE)
         }
         const VTABLE: RawWakerVTable = RawWakerVTable::new(noop_clone, noop, noop, noop);
+        // SAFETY: all vtable functions are no-ops or trivial clones; the
+        // null data pointer is never dereferenced.
         unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
     }
 

@@ -119,6 +119,7 @@ impl<const N: usize> Slab<N> {
     /// `ptr` must point to a slot in this slab (claimed or allocated).
     #[inline]
     pub unsafe fn free_raw(&self, ptr: *mut u8) {
+        // SAFETY: Caller guarantees ptr is a valid slot in this slab.
         unsafe {
             self.inner.free_ptr(ptr.cast());
         }
@@ -143,7 +144,7 @@ impl<const N: usize> Slab<N> {
             .claim_ptr()
             .unwrap_or_else(|| panic!("byte slab full"));
         let dst = slot_ptr.cast::<u8>();
-        // SAFETY: caller guarantees src has `size` valid bytes.
+        // SAFETY: dst is a valid vacant slot. Caller guarantees src has `size` valid bytes.
         unsafe { core::ptr::copy_nonoverlapping(src, dst, size) };
         dst
     }
@@ -160,6 +161,9 @@ impl<const N: usize> Slab<N> {
         );
         mem::forget(ptr);
 
+        // SAFETY: Slot handle guarantees data_ptr is valid and occupied with a T.
+        // forget(ptr) disarms the debug leak detector. free_ptr returns the slot
+        // to the freelist after the value is dropped.
         unsafe {
             core::ptr::drop_in_place(data_ptr.cast::<T>());
             self.inner
@@ -179,6 +183,8 @@ impl<const N: usize> Slab<N> {
         );
         mem::forget(ptr);
 
+        // SAFETY: Slot handle guarantees data_ptr is valid and occupied with a T.
+        // read moves the value out, then free_ptr returns the slot to the freelist.
         unsafe {
             let value = core::ptr::read(data_ptr.cast::<T>());
             self.inner
@@ -205,6 +211,7 @@ impl<const N: usize> Slab<N> {
 /// - `slab_ptr` must point to a live `crate::bounded::Slab<AlignedBytes<N>>`.
 /// - `slot_ptr` must point to a slot within that slab.
 unsafe fn free_raw_impl<const N: usize>(slab_ptr: *const u8, slot_ptr: *mut u8, _chunk_idx: usize) {
+    // SAFETY: Caller guarantees slab_ptr points to a live bounded Slab<AlignedBytes<N>>.
     let slab = unsafe { &*(slab_ptr as *const crate::bounded::Slab<super::AlignedBytes<N>>) };
     // SAFETY: Bounded slab has one chunk — chunk_idx is ignored.
     // free_ptr returns the slot to the freelist. For vacant slots

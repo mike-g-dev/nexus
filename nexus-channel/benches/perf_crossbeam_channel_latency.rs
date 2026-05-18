@@ -62,6 +62,8 @@ fn main() {
 #[inline]
 fn rdtsc() -> u64 {
     #[cfg(target_arch = "x86_64")]
+    // SAFETY: __rdtscp is supported on all x86_64 CPUs with RDTSCP (Intel Nehalem+,
+    // AMD Barcelona+). aux receives the IA32_TSC_AUX value which we discard.
     unsafe {
         let mut aux: u32 = 0;
         core::arch::x86_64::__rdtscp(&raw mut aux)

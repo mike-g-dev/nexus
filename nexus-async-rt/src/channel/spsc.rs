@@ -48,6 +48,9 @@ struct Inner<T> {
     rx_closed: AtomicBool,
 }
 
+// SAFETY: All cross-thread fields use atomics (tx_alive, rx_closed) or
+// are designed for cross-thread use (TaskWakerSlot, FallbackWaker, TxWakerSlot).
+// Producer and Consumer from nexus_queue::spsc are Send.
 unsafe impl<T: Send> Send for Inner<T> {}
 unsafe impl<T: Send> Sync for Inner<T> {}
 
@@ -150,6 +153,8 @@ impl<T> Drop for Sender<T> {
     }
 }
 
+// SAFETY: Sender holds Arc<Inner<T>> where Inner<T>: Send+Sync for T: Send.
+// Single-producer semantics enforced by the API (no Clone).
 unsafe impl<T: Send> Send for Sender<T> {}
 
 // =============================================================================
@@ -166,6 +171,7 @@ impl<T: Send> Future for SendFut<'_, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: SendFut has no self-referential fields — unpinning is safe.
         let this = unsafe { self.get_unchecked_mut() };
         let inner = &this.sender.inner;
 
@@ -191,6 +197,7 @@ impl<T: Send> Future for SendFut<'_, T> {
     }
 }
 
+// SAFETY: SendFut borrows a Sender (Send) and holds an Option<T> where T: Send.
 unsafe impl<T: Send> Send for SendFut<'_, T> {}
 
 // =============================================================================
@@ -238,6 +245,8 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
+// SAFETY: Receiver holds Arc<Inner<T>> where Inner<T>: Send+Sync for T: Send.
+// Single-consumer semantics enforced by the API (no Clone).
 unsafe impl<T: Send> Send for Receiver<T> {}
 
 // =============================================================================
@@ -297,6 +306,7 @@ impl<T: Send> Future for RecvFut<'_, T> {
     }
 }
 
+// SAFETY: RecvFut borrows a Receiver (Send). No non-Send fields.
 unsafe impl<T: Send> Send for RecvFut<'_, T> {}
 
 // =============================================================================

@@ -1042,6 +1042,8 @@ mod tests {
         let task = Box::new(Task::new_boxed(Noop, 0));
         let ptr = Box::into_raw(task) as *mut u8;
 
+        // SAFETY: ptr is a valid task created above via Box::into_raw.
+        // All task:: functions are called on this live task pointer.
         unsafe {
             // Initial state: 1 ref, no flags
             assert_eq!(ref_count(ptr), 1);
@@ -1076,6 +1078,8 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 7, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. All task:: functions are
+        // called on this live task pointer through its lifecycle.
         unsafe {
             assert!(has_join(ptr));
             assert!(!is_aborted(ptr));
@@ -1107,6 +1111,8 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 0, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. All task:: functions are
+        // called on this live task pointer through its lifecycle.
         unsafe {
             // complete_and_unref with 2 refs → not terminal
             drop_task_future(ptr);
@@ -1134,6 +1140,9 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 0, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. Simulating the cross-thread
+        // waker lifecycle: ref_inc for waker clone, complete_and_unref for
+        // executor, ref_dec for handle and waker drops.
         unsafe {
             // Waker clone: ref_inc
             ref_inc(ptr);
@@ -1185,6 +1194,7 @@ mod tests {
 
         static NOOP_VTABLE: RawWakerVTable =
             RawWakerVTable::new(|p| RawWaker::new(p, &NOOP_VTABLE), |_| {}, |_| {}, |_| {});
+        // SAFETY: all vtable functions are no-ops; null data is never dereferenced.
         let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &NOOP_VTABLE)) };
         let mut cx = Context::from_waker(&waker);
 
@@ -1208,6 +1218,8 @@ mod tests {
         assert_eq!(drop_count, 1, "future should be dropped exactly once");
 
         // drop_fn should now be drop_noop — calling it must NOT double-drop F.
+        // SAFETY: ptr is a valid task; drop_fn was transitioned to drop_noop
+        // after the panic in poll_join.
         unsafe { drop_task_future(ptr) };
         assert_eq!(
             drop_count, 1,
@@ -1215,6 +1227,7 @@ mod tests {
         );
 
         // Clean up: dec both refs (executor + JoinHandle), then free.
+        // SAFETY: ptr is a valid task; decrementing both refs to reach terminal.
         unsafe {
             ref_dec(ptr);
             ref_dec(ptr);
@@ -1228,6 +1241,7 @@ mod tests {
 
         static NOOP_VTABLE: RawWakerVTable =
             RawWakerVTable::new(|p| RawWaker::new(p, &NOOP_VTABLE), |_| {}, |_| {}, |_| {});
+        // SAFETY: all vtable functions are no-ops; null data is never dereferenced.
         let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &NOOP_VTABLE)) };
         let mut cx = Context::from_waker(&waker);
 
@@ -1254,15 +1268,19 @@ mod tests {
         assert!(result.is_ready());
 
         // drop_fn should now target T (TrackedOutput).
+        // SAFETY: static mut access in single-threaded test.
         unsafe { OUTPUT_DROP_COUNT = 0 };
+        // SAFETY: ptr is a valid completed task; drop_fn now targets the output T.
         unsafe { drop_task_future(ptr) };
         assert_eq!(
+            // SAFETY: static mut access in single-threaded test.
             unsafe { OUTPUT_DROP_COUNT },
             1,
             "drop_fn should drop the output exactly once"
         );
 
         // Clean up.
+        // SAFETY: ptr is a valid task; decrementing both refs to reach terminal.
         unsafe {
             ref_dec(ptr);
             ref_dec(ptr);
@@ -1289,6 +1307,8 @@ mod tests {
         let task = Box::new(Task::new_boxed(Noop, 0));
         let ptr = Box::into_raw(task) as *mut u8;
 
+        // SAFETY: ptr is a valid fire-and-forget task created above.
+        // Exercising the full lifecycle: drop future, complete, free.
         unsafe {
             assert_eq!(ref_count(ptr), 1);
             assert!(!has_join(ptr));
@@ -1329,6 +1349,8 @@ mod tests {
         let task = new_joinable_slab(Noop, 0, slab_free, std::ptr::null());
         let ptr = Box::into_raw(Box::new(task)) as *mut u8;
 
+        // SAFETY: ptr is a valid slab-flagged joinable task. Exercising the
+        // full lifecycle: handle detach, executor completion, free.
         unsafe {
             assert_eq!(ref_count(ptr), 2); // executor + JoinHandle
             assert!(has_join(ptr));
@@ -1370,6 +1392,7 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 0, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. Exercising handle-drops-first lifecycle.
         unsafe {
             assert_eq!(ref_count(ptr), 2);
             assert!(has_join(ptr));
@@ -1403,6 +1426,7 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 0, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. Exercising completion-first lifecycle.
         unsafe {
             // complete_and_unref: sets COMPLETED, dec ref → 1 ref remains
             drop_task_future(ptr);
@@ -1434,6 +1458,8 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 0, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. Exercising waker-clone lifecycle:
+        // 3 refs (executor + handle + waker), completion, handle drop, waker drop.
         unsafe {
             // Waker clone: ref_inc
             ref_inc(ptr);
@@ -1472,6 +1498,8 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 0, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. Testing that a leaked
+        // HAS_JOIN flag prevents terminal state (safety net against misuse).
         unsafe {
             // complete_and_unref with 2 refs → Retain
             drop_task_future(ptr);
@@ -1510,6 +1538,7 @@ mod tests {
         let task = Box::new(Task::new_boxed(async {}, 0));
         let ptr = Box::into_raw(task) as *mut u8;
 
+        // SAFETY: ptr is a valid task. Testing acquire/drop refcount balance.
         unsafe {
             assert_eq!(ref_count(ptr), 1);
             let task_ref = TaskRef::acquire(ptr);
@@ -1532,6 +1561,8 @@ mod tests {
         let task = Box::new(Task::new_boxed(async {}, 0));
         let ptr = Box::into_raw(task) as *mut u8;
 
+        // SAFETY: ptr is a valid task. Testing from_owned wraps a
+        // pre-incremented pointer without extra ref_inc.
         unsafe {
             assert_eq!(ref_count(ptr), 1);
             ref_inc(ptr); // simulate handoff (e.g. RawWaker::data ownership)
@@ -1557,6 +1588,8 @@ mod tests {
         let task = Box::new(Task::new_boxed(async {}, 0));
         let ptr = Box::into_raw(task) as *mut u8;
 
+        // SAFETY: ptr is a valid task. Verifying that dropping a TaskRef
+        // when refcount > 1 does NOT invoke dispose_terminal.
         unsafe {
             // rc=1, acquire to rc=2, drop to rc=1. Not terminal (no
             // COMPLETED, lifecycle flags clear). Drop hits the Retain
@@ -1589,6 +1622,8 @@ mod tests {
         }
 
         let ptr = box_spawn_joinable(Noop, 0, std::ptr::null());
+        // SAFETY: ptr is a valid joinable task. Stress-testing convergence
+        // of 10 waker refs to terminal state.
         unsafe {
             // 10 waker clones: ref 2 → 12
             for _ in 0..10 {

@@ -47,6 +47,8 @@ struct Inner {
     rx_closed: AtomicBool,
 }
 
+// SAFETY: All fields use atomics or are designed for cross-thread use
+// (TaskWakerSlot, FallbackWaker, TxWakerSlot). No raw non-atomic state.
 unsafe impl Send for Inner {}
 unsafe impl Sync for Inner {}
 
@@ -303,7 +305,12 @@ impl<'a> Future for ClaimFut<'a> {
     type Output = Result<WriteClaim<'a>, ClaimError>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: ClaimFut has no self-referential fields — unpinning is safe.
         let this = unsafe { &mut *std::pin::Pin::into_inner_unchecked(self) };
+        // SAFETY: Extend the reborrow lifetime to 'a. This is sound because:
+        // - ClaimFut holds &'a mut Sender, so the Sender lives for 'a
+        // - WriteClaim borrows &mut Producer from that Sender
+        // - The future won't be polled again after returning Ready
         let sender: &'a mut Sender = unsafe { &mut *(this.sender as *mut Sender) };
 
         // Precondition check before any state inspection — `len == 0` is a
@@ -331,6 +338,7 @@ impl<'a> Future for ClaimFut<'a> {
     }
 }
 
+// SAFETY: ClaimFut borrows a Sender (Send) and holds a usize. All Send-safe.
 unsafe impl Send for ClaimFut<'_> {}
 
 impl Drop for Sender {
@@ -340,6 +348,7 @@ impl Drop for Sender {
     }
 }
 
+// SAFETY: Sender holds a Producer (Send) and Arc<Inner> (Send+Sync).
 unsafe impl Send for Sender {}
 
 // =============================================================================
@@ -421,6 +430,7 @@ impl<'a> Future for RecvFut<'a> {
     }
 }
 
+// SAFETY: RecvFut borrows a Receiver (Send). No non-Send fields.
 unsafe impl Send for RecvFut<'_> {}
 
 impl Drop for Receiver {
@@ -430,6 +440,7 @@ impl Drop for Receiver {
     }
 }
 
+// SAFETY: Receiver holds a Consumer (Send) and Arc<Inner> (Send+Sync).
 unsafe impl Send for Receiver {}
 
 // =============================================================================

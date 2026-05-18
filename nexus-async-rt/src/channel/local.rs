@@ -584,6 +584,8 @@ mod tests {
             RawWaker::new(p, &VTABLE)
         }
         const VTABLE: RawWakerVTable = RawWakerVTable::new(noop_clone, noop, noop, noop);
+        // SAFETY: all vtable functions are no-ops or trivial clones; the
+        // null data pointer is never dereferenced.
         unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
     }
 

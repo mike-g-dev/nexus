@@ -64,7 +64,8 @@ where
             !ptr.is_null(),
             "spawn_boxed() called outside of Runtime::block_on"
         );
-        // SAFETY: pointer valid for duration of block_on. Single-threaded.
+        // SAFETY: pointer was set by RuntimeGuard::enter at the start of
+        // block_on and is valid for the duration of block_on. Single-threaded.
         let executor = unsafe { &mut *ptr };
         executor.spawn_boxed(future)
     })
@@ -93,6 +94,7 @@ where
             !ptr.is_null(),
             "spawn_slab() called outside of Runtime::block_on"
         );
+        // SAFETY: pointer valid for duration of block_on. Single-threaded.
         let executor = unsafe { &mut *ptr };
         let tracker_key = executor.next_tracker_key();
         let task_ptr = crate::alloc::slab_spawn(future, tracker_key);
@@ -106,6 +108,7 @@ pub(crate) fn with_executor<R>(f: impl FnOnce(&mut Executor) -> R) -> R {
     CURRENT.with(|cell| {
         let ptr = cell.get();
         assert!(!ptr.is_null(), "called outside of Runtime::block_on");
+        // SAFETY: pointer valid for duration of block_on. Single-threaded.
         let executor = unsafe { &mut *ptr };
         f(executor)
     })
@@ -432,6 +435,7 @@ impl Runtime {
     /// Install signal handlers for SIGTERM and SIGINT.
     pub fn install_signal_handlers(&self) {
         // SAFETY: single-threaded, called during setup before block_on.
+        // UnsafeCell deref is safe because no TLS aliases exist yet.
         crate::shutdown::install_signal_handlers(
             &self.shutdown.flag_ptr(),
             &unsafe { &*self.io.get() }.mio_waker(),
@@ -932,7 +936,8 @@ impl Runtime {
         let woken = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         let root_waker = Waker::from(std::sync::Arc::new(RootWake {
             woken: std::sync::Arc::clone(&woken),
-            // SAFETY: single-threaded, called during block_on setup.
+            // SAFETY: single-threaded runtime; UnsafeCell deref is safe because
+            // we have exclusive access during setup (TLS not yet installed).
             mio_waker: unsafe { &*self.io.get() }.mio_waker(),
         }));
         let mut root_cx = Context::from_waker(&root_waker);
@@ -974,6 +979,7 @@ impl Runtime {
 
             // 4. Fire expired timers.
             // SAFETY: single-threaded runtime, no concurrent access.
+            // UnsafeCell deref for interior mutability (TLS pointer aliasing).
             unsafe { &mut *self.timers.get() }.fire_expired(Instant::now());
 
             // 4.5. Set parked early (park mode only) so cross-thread
@@ -993,6 +999,7 @@ impl Runtime {
             // 6. Periodic non-blocking IO check every event_interval ticks.
             //    Prevents IO starvation under sustained task load.
             if tick % self.event_interval == 0 {
+                // SAFETY: single-threaded; UnsafeCell deref for interior mutability.
                 if let Err(e) = unsafe { &mut *self.io.get() }.poll_io(Some(Duration::ZERO)) {
                     assert!(
                         e.kind() == std::io::ErrorKind::Interrupted,
@@ -1019,6 +1026,7 @@ impl Runtime {
             match mode {
                 ParkMode::Spin => {
                     // Non-blocking IO check before spinning again.
+                    // SAFETY: single-threaded; UnsafeCell deref for interior mutability.
                     if let Err(e) = unsafe { &mut *self.io.get() }.poll_io(Some(Duration::ZERO)) {
                         assert!(
                             e.kind() == std::io::ErrorKind::Interrupted,
@@ -1032,10 +1040,12 @@ impl Runtime {
                     // Park in epoll_wait until IO, timer, or cross-thread
                     // eventfd wakes us.
                     // SAFETY: single-threaded, no concurrent timer access.
+                    // UnsafeCell deref for interior mutability (shared ref for read).
                     let timeout = unsafe { &*self.timers.get() }
                         .next_deadline()
                         .map(|d| d.saturating_duration_since(Instant::now()));
 
+                    // SAFETY: single-threaded; UnsafeCell deref for interior mutability.
                     if let Err(e) = unsafe { &mut *self.io.get() }.poll_io(timeout) {
                         assert!(
                             e.kind() == std::io::ErrorKind::Interrupted,

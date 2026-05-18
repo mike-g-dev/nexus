@@ -27,6 +27,7 @@ impl<T> Slab<T> {
     #[inline]
     pub unsafe fn with_capacity(capacity: usize) -> Self {
         Self {
+            // SAFETY: Caller upholds the slab contract.
             inner: unsafe { crate::bounded::Slab::with_capacity(capacity) },
         }
     }
@@ -39,6 +40,9 @@ impl<T> Slab<T> {
     #[inline]
     pub fn alloc(&self, value: T) -> RcSlot<T> {
         let slot = self.inner.alloc(RcCell::new(value));
+        // SAFETY: slot is valid and occupied with RcCell<T>. into_raw disarms
+        // the Slot leak detector. The cast is sound because SlotCell value is
+        // at offset 0 (repr(C) union), so *mut SlotCell<RcCell<T>> == *mut RcCell<T>.
         unsafe { RcSlot::from_ptr(slot.into_raw().cast()) }
     }
 
@@ -46,6 +50,7 @@ impl<T> Slab<T> {
     #[inline]
     pub fn try_alloc(&self, value: T) -> Result<RcSlot<T>, Full<T>> {
         match self.inner.try_alloc(RcCell::new(value)) {
+            // SAFETY: Same as alloc — slot is valid, occupied, cast is sound.
             Ok(slot) => Ok(unsafe { RcSlot::from_ptr(slot.into_raw().cast()) }),
             Err(Full(rc_cell)) => Err(Full(rc_cell.into_inner())),
         }
@@ -61,9 +66,12 @@ impl<T> Slab<T> {
     pub fn free(&self, handle: RcSlot<T>) {
         let count = handle.dec_ref();
         if count == 0 {
+            // SAFETY: Refcount is 0 — no other handles exist. Drop the value
+            // and return the slot to the freelist.
             unsafe { handle.drop_value() };
             let cell_ptr = handle.slot_cell_ptr();
             core::mem::forget(handle);
+            // SAFETY: cell_ptr is within this slab. Value already dropped above.
             unsafe { self.inner.free_ptr(cell_ptr) };
         } else {
             core::mem::forget(handle);

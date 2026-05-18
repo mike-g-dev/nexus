@@ -174,7 +174,9 @@ impl<F: Future> Future for Timeout<F> {
     type Output = Result<F::Output, Elapsed>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // SAFETY: we never move the inner fields out of the Pin.
+        // SAFETY: Pin projection — we never move `future` or `sleep` out
+        // of the struct. `sleep` is Unpin (no self-referential data), so
+        // Pin::new is fine. `future` may not be Unpin, hence new_unchecked.
         let this = unsafe { self.get_unchecked_mut() };
 
         // Check the deadline first so already-expired timeouts reliably
@@ -183,7 +185,9 @@ impl<F: Future> Future for Timeout<F> {
             return Poll::Ready(Err(Elapsed));
         }
 
-        // SAFETY: this.future is pinned because self is pinned.
+        // SAFETY: `this.future` is structurally pinned — self is pinned
+        // and we never move future out (only into_inner consumes by value,
+        // which requires ownership of Self, not Pin<&mut Self>).
         if let Poll::Ready(val) = unsafe { Pin::new_unchecked(&mut this.future) }.poll(cx) {
             return Poll::Ready(Ok(val));
         }
@@ -376,6 +380,7 @@ mod tests {
             RawWaker::new(p, &VTABLE)
         }
         static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+        // SAFETY: all vtable fns are no-ops; null data is never deref'd.
         unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
     }
 

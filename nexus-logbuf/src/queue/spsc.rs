@@ -109,9 +109,11 @@ struct Shared {
     mask: usize,
 }
 
-// Safety: Buffer is only accessed by one producer and one consumer.
-// The atomic head provides synchronization.
+// SAFETY: Buffer is only accessed by one producer and one consumer.
+// The atomic head provides synchronization between them.
 unsafe impl Send for Shared {}
+// SAFETY: All mutable access to the buffer is partitioned between
+// producer (tail region) and consumer (head region) via atomic offsets.
 unsafe impl Sync for Shared {}
 
 impl Drop for Shared {
@@ -140,7 +142,8 @@ pub struct Producer {
     shared: Arc<Shared>,
 }
 
-// Safety: Producer is only used from one thread.
+// SAFETY: Producer is only used from one thread (not Clone, &mut self API).
+// Sending it to another thread is safe; using from multiple threads is not.
 unsafe impl Send for Producer {}
 
 impl Producer {
@@ -402,7 +405,8 @@ pub struct Consumer {
     shared: Arc<Shared>,
 }
 
-// Safety: Consumer is only used from one thread.
+// SAFETY: Consumer is only used from one thread (not Clone, &mut self API).
+// Sending it to another thread is safe; using from multiple threads is not.
 unsafe impl Send for Consumer {}
 
 impl Consumer {

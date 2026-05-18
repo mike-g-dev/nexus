@@ -313,8 +313,11 @@ impl Executor {
     /// Common enqueue logic for spawn and spawn_raw.
     fn enqueue(&mut self, ptr: *mut u8) {
         self.all_tasks.insert(ptr);
+        // SAFETY: ptr is a freshly constructed task. set_queued marks the
+        // dedup flag so the task isn't double-queued by a concurrent wake.
         unsafe { task::set_queued(ptr, true) };
         // SAFETY: single-threaded, no concurrent access during enqueue.
+        // UnsafeCell grants interior mutability for TLS pointer aliasing.
         unsafe { &mut *self.incoming.get() }.push(ptr);
         self.live_count += 1;
     }
@@ -335,16 +338,20 @@ impl Executor {
         while drained < limit {
             match inbox.pop() {
                 Some(task_ptr) => {
-                    // Clear QUEUED flag now that we've popped it.
+                    // SAFETY: task_ptr is a live task pushed by a cross-thread waker.
+                    // clear_queued clears the QUEUED dedup flag so the task can be re-queued.
                     unsafe { task::clear_queued(task_ptr) };
 
                     // Check if TERMINAL was reached (e.g., cross-thread waker
                     // produced TERMINAL via ref_dec while the task was queued).
                     // Only TERMINAL tasks go to deferred_free. Completed tasks
                     // with outstanding refs must NOT be freed prematurely.
+                    // SAFETY: task_ptr is a live task; is_terminal reads the packed state.
                     if unsafe { task::is_terminal(task_ptr) } {
+                        // SAFETY: UnsafeCell interior mutability; single-threaded.
                         unsafe { &mut *self.deferred_free.get() }.push(task_ptr);
                     } else {
+                        // SAFETY: UnsafeCell interior mutability; single-threaded.
                         unsafe { &mut *self.incoming.get() }.push(task_ptr);
                     }
                     drained += 1;
@@ -361,9 +368,12 @@ impl Executor {
 
         // Drain deferred frees from last cycle.
         // SAFETY: single-threaded, TLS not yet set for this cycle.
+        // UnsafeCell grants interior mutability.
         for ptr in unsafe { &mut *self.deferred_free.get() }.drain(..) {
+            // SAFETY: ptr is a terminal task; tracker_key reads offset 60 of the header.
             let key = unsafe { task::tracker_key(ptr) } as usize;
-            // SAFETY: free_fn was set at spawn time.
+            // SAFETY: ptr is terminal (refcount 0, COMPLETED set). free_fn was
+            // set at spawn time and dispatches to Box::dealloc or slab free.
             unsafe { task::free_task(ptr) };
             if self.all_tasks.contains(key) {
                 self.all_tasks.remove(key);
@@ -371,6 +381,7 @@ impl Executor {
         }
 
         // SAFETY: single-threaded, swapping before TLS is set.
+        // UnsafeCell grants interior mutability for incoming.
         std::mem::swap(unsafe { &mut *self.incoming.get() }, &mut self.draining);
 
         // Derive TLS pointers from UnsafeCell — NOT from &mut self field borrows.
@@ -381,13 +392,19 @@ impl Executor {
 
         let limit = self.tasks_per_cycle.min(self.draining.len());
         let draining_ptr: *const Vec<*mut u8> = &raw const self.draining;
+        // SAFETY: draining_ptr is derived from &raw const on a field we own.
+        // Slicing to limit avoids out-of-bounds.
         let drain_slice = unsafe { &(&*draining_ptr)[..limit] };
 
         for &ptr in drain_slice {
+            // SAFETY: ptr is a live task in all_tasks. is_completed reads
+            // the packed state word at offset 24.
             if unsafe { task::is_completed(ptr) } {
                 continue;
             }
 
+            // SAFETY: ptr is a live, non-completed task. Clearing the QUEUED
+            // dedup flag allows future wakes to re-queue it.
             unsafe { task::set_queued(ptr, false) };
 
             // SAFETY: ptr is a live task, ref_count >= 1 (executor holds a ref).
@@ -395,6 +412,8 @@ impl Executor {
             let waker = unsafe { crate::waker::task_waker(ptr) };
             let mut cx = Context::from_waker(&waker);
 
+            // SAFETY: ptr points to a live, non-completed task. poll_task
+            // pins the future and polls it with the provided context.
             let poll_result = unsafe { task::poll_task(ptr, &mut cx) };
 
             drop(waker);
@@ -409,7 +428,9 @@ impl Executor {
         }
 
         if limit < self.draining.len() {
-            // SAFETY: single-threaded, TLS guard is about to drop.
+            // SAFETY: single-threaded, UnsafeCell interior mutability.
+            // TLS guard is about to drop; remaining un-polled tasks are
+            // moved back to incoming for the next cycle.
             unsafe { &mut *self.incoming.get() }.extend_from_slice(&self.draining[limit..]);
         }
         self.draining.clear();
@@ -519,24 +540,33 @@ impl Executor {
     ///
     /// `ptr` must point to a task that just returned `Poll::Ready(())` from poll_task.
     fn complete_task(&mut self, ptr: *mut u8) {
+        // SAFETY: ptr just returned Poll::Ready from poll_task; the task is
+        // live and all header fields are valid for the state reads below.
         let aborted = unsafe { task::is_aborted(ptr) };
 
         if aborted {
             // Aborted: poll_join saw ABORTED and returned Ready without polling F.
             // F is still live in the union. drop_fn still targets F.
+            // SAFETY: F is live in the FutureOrOutput union; drop_fn targets F.
             unsafe { task::drop_task_future(ptr) };
             self.live_count -= 1;
 
+            // SAFETY: has_join reads a flag in the packed state word.
             if unsafe { task::has_join(ptr) } {
+                // SAFETY: take_join_waker reads the join waker slot at offset 40.
                 let waker = unsafe { task::take_join_waker(ptr) };
                 if let Some(w) = waker {
                     w.wake();
                 }
             }
 
+            // SAFETY: complete_and_unref atomically sets COMPLETED and
+            // decrements the executor's reference in one CAS.
             match unsafe { task::complete_and_unref(ptr) } {
                 task::FreeAction::Retain => {}
                 task::FreeAction::FreeBox | task::FreeAction::FreeSlab => {
+                    // SAFETY: terminal state; tracker_key at offset 60, free_task
+                    // dispatches through the header's free_fn.
                     let key = unsafe { task::tracker_key(ptr) } as usize;
                     unsafe { task::free_task(ptr) };
                     self.all_tasks.remove(key);
@@ -548,16 +578,20 @@ impl Executor {
             self.live_count -= 1;
 
             // Wake the joiner so it can poll the JoinHandle and read T.
+            // SAFETY: take_join_waker reads the join waker slot at offset 40.
             let waker = unsafe { task::take_join_waker(ptr) };
             if let Some(w) = waker {
                 w.wake();
             }
 
+            // SAFETY: see above -- complete_and_unref CAS on the packed state.
             match unsafe { task::complete_and_unref(ptr) } {
                 task::FreeAction::Retain => {}
                 task::FreeAction::FreeBox | task::FreeAction::FreeSlab => {
                     // Terminal — JoinHandle already dropped (detached). Drop output.
+                    // SAFETY: T is live in the union; drop_fn now targets T.
                     unsafe { task::drop_task_future(ptr) };
+                    // SAFETY: terminal state; read tracker_key then free.
                     let key = unsafe { task::tracker_key(ptr) } as usize;
                     unsafe { task::free_task(ptr) };
                     self.all_tasks.remove(key);
@@ -565,12 +599,15 @@ impl Executor {
             }
         } else {
             // Fire-and-forget or detached (HAS_JOIN cleared by JoinHandle::Drop).
+            // SAFETY: the value (F or T) in the union must be dropped.
             unsafe { task::drop_task_future(ptr) };
             self.live_count -= 1;
 
+            // SAFETY: see above -- complete_and_unref CAS on the packed state.
             match unsafe { task::complete_and_unref(ptr) } {
                 task::FreeAction::Retain => {}
                 task::FreeAction::FreeBox | task::FreeAction::FreeSlab => {
+                    // SAFETY: terminal state; read tracker_key then free.
                     let key = unsafe { task::tracker_key(ptr) } as usize;
                     unsafe { task::free_task(ptr) };
                     self.all_tasks.remove(key);
@@ -591,11 +628,12 @@ impl Executor {
     #[allow(dead_code)]
     pub(crate) fn cancel(&mut self, id: task::TaskId) {
         let ptr = id.0;
-        // Skip if already completed (e.g. double-cancel or cancel after poll).
+        // SAFETY: ptr is a task pointer; is_completed reads the packed state.
         if unsafe { task::is_completed(ptr) } {
             return;
         }
         // SAFETY: single-threaded, no TLS active during cancel.
+        // UnsafeCell grants interior mutability.
         unsafe { &mut *self.incoming.get() }.retain(|p| *p != ptr);
         self.draining.retain(|p| *p != ptr);
         self.complete_task(ptr);
@@ -649,18 +687,21 @@ impl Drop for Executor {
         // complete + maybe free), outstanding-refs (route to unwinding
         // or normal-shutdown handlers), or zero-refs (free).
         for (_, &ptr) in &self.all_tasks {
+            // SAFETY: ptr is a live task pointer tracked in all_tasks.
+            // is_terminal reads the packed state word.
             if unsafe { task::is_terminal(ptr) } {
                 // TERMINAL: completed, zero refs, all flags cleared.
-                // Happens when a cross-thread waker produced TERMINAL
-                // via ref_dec but the executor hadn't scanned yet.
+                // SAFETY: terminal state — safe to free via the header's free_fn.
                 unsafe { task::free_task(ptr) };
                 continue;
             }
 
+            // SAFETY: is_completed reads the packed state word.
             if !unsafe { task::is_completed(ptr) } && Self::drop_complete_and_maybe_free(ptr) {
                 continue;
             }
 
+            // SAFETY: ref_count reads bits 6+ of the packed state word.
             let rc = unsafe { task::ref_count(ptr) };
             if rc > 0 {
                 if std::thread::panicking() {
@@ -671,6 +712,7 @@ impl Drop for Executor {
                 continue;
             }
 
+            // SAFETY: completed with zero refs — terminal. Free via header's free_fn.
             unsafe { task::free_task(ptr) };
         }
     }
@@ -687,8 +729,12 @@ impl Executor {
     ///
     /// SAFETY: `&mut self` in Drop, no concurrent access.
     fn drop_drain_deferred_free(&mut self) {
+        // SAFETY: &mut self in Drop, single-threaded. UnsafeCell interior mutability.
         for ptr in unsafe { &mut *self.deferred_free.get() }.drain(..) {
+            // SAFETY: ptr is a terminal task. Read tracker_key (offset 60)
+            // before freeing the allocation.
             let key = unsafe { task::tracker_key(ptr) } as usize;
+            // SAFETY: terminal state — free via the header's free_fn.
             unsafe { task::free_task(ptr) };
             if self.all_tasks.contains(key) {
                 self.all_tasks.remove(key);
@@ -707,10 +753,15 @@ impl Executor {
     /// SAFETY: caller guarantees `ptr` references a not-yet-completed
     /// task with the executor's ref still held.
     fn drop_complete_and_maybe_free(ptr: *mut u8) -> bool {
+        // SAFETY: ptr is a live, not-yet-completed task. drop_task_future
+        // drops F (the future) via the header's drop_fn.
         unsafe { task::drop_task_future(ptr) };
+        // SAFETY: complete_and_unref atomically sets COMPLETED and decrements
+        // the executor's reference.
         match unsafe { task::complete_and_unref(ptr) } {
             task::FreeAction::Retain => false,
             task::FreeAction::FreeBox | task::FreeAction::FreeSlab => {
+                // SAFETY: terminal state — free via header's free_fn.
                 unsafe { task::free_task(ptr) };
                 true
             }
@@ -739,6 +790,8 @@ impl Executor {
     /// SAFETY: caller guarantees `ptr` references a completed task
     /// with rc > 0, called during unwind.
     fn drop_outstanding_unwinding(&self, ptr: *mut u8, rc: usize) {
+        // SAFETY: ptr is a completed task with outstanding refs.
+        // is_slab_allocated reads the SLAB_ALLOCATED flag in the packed state.
         if unsafe { task::is_slab_allocated(ptr) } {
             self.drop_outstanding_slab_unwinding(ptr);
         } else {
@@ -753,6 +806,9 @@ impl Executor {
     /// the counter via shared memory or memory-mapped logging.
     fn drop_outstanding_slab_unwinding(&self, ptr: *mut u8) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        // SAFETY: ref_count reads bits 6+ of the packed state word. The
+        // task allocation is alive (we haven't freed it). Spinning waits
+        // for cross-thread holders to release their refs.
         while unsafe { task::ref_count(ptr) } > 0 && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
@@ -770,6 +826,7 @@ impl Executor {
             std::process::abort();
         }
         // Refs settled — free cleanly. Avoid the panic path.
+        // SAFETY: refcount settled to 0; terminal state. Free via header's free_fn.
         unsafe { task::free_task(ptr) };
     }
 
@@ -1053,7 +1110,9 @@ mod tests {
     fn refcount_starts_at_one() {
         let task = Box::new(Task::new_boxed(async {}, 0));
         let ptr = Box::into_raw(task) as *mut u8;
+        // SAFETY: ptr is a valid task just created above.
         assert_eq!(unsafe { task::ref_count(ptr) }, 1);
+        // SAFETY: freeing the only reference; terminal state.
         unsafe { task::free_task(ptr) };
     }
 

@@ -153,7 +153,9 @@ pub(crate) fn current_shutdown_ptrs() -> (
 pub fn sleep(duration: Duration) -> crate::Sleep {
     let ptr = CTX_TIMER.with(Cell::get);
     assert!(!ptr.is_null(), "sleep() called outside Runtime::block_on");
-    // SAFETY: ptr valid for Runtime lifetime.
+    // SAFETY: ptr was installed by install() from a &mut TimerDriver owned
+    // by the Runtime. Valid for Runtime lifetime (block_on borrows &mut self).
+    // Single-threaded — no concurrent access.
     let handle = TimerHandle::new(unsafe { &mut *ptr });
     handle.sleep(duration)
 }
@@ -165,6 +167,8 @@ pub fn sleep_until(deadline: Instant) -> crate::Sleep {
         !ptr.is_null(),
         "sleep_until() called outside Runtime::block_on"
     );
+    // SAFETY: ptr was installed by install() from a &mut TimerDriver owned
+    // by the Runtime. Valid for Runtime lifetime. Single-threaded.
     let handle = TimerHandle::new(unsafe { &mut *ptr });
     handle.sleep_until(deadline)
 }
@@ -179,7 +183,9 @@ pub fn event_time() -> Instant {
         !ptr.is_null(),
         "event_time() called outside Runtime::block_on"
     );
-    // SAFETY: ptr valid for Runtime lifetime.
+    // SAFETY: ptr was installed by install() from a &Cell<Instant> owned
+    // by the Runtime. Valid for Runtime lifetime. Cell::get() is a read
+    // (no mutation), single-threaded.
     unsafe { &*ptr }.get()
 }
 

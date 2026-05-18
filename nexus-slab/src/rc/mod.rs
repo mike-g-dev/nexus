@@ -282,7 +282,7 @@ impl<T> RcSlot<T> {
     /// and vice versa.
     #[inline]
     pub unsafe fn value_ptr(&self) -> *const T {
-        // SAFETY: ptr is valid while any RcSlot exists.
+        // SAFETY: ptr is valid while any RcSlot exists (refcount > 0).
         unsafe { (*self.ptr).value_ptr().cast_const() }
     }
 
@@ -294,14 +294,14 @@ impl<T> RcSlot<T> {
     /// (no other pointers or guards are reading/writing the value).
     #[inline]
     pub unsafe fn value_ptr_mut(&self) -> *mut T {
-        // SAFETY: ptr is valid while any RcSlot exists.
+        // SAFETY: ptr is valid while any RcSlot exists (refcount > 0).
         unsafe { (*self.ptr).value_ptr() }
     }
 
     /// Returns the current reference count.
     #[inline]
     pub fn refcount(&self) -> usize {
-        // SAFETY: ptr is valid while any RcSlot exists.
+        // SAFETY: ptr is valid while any RcSlot exists (refcount > 0).
         unsafe { (*self.ptr).refcount() }
     }
 
@@ -312,7 +312,7 @@ impl<T> RcSlot<T> {
     /// Panics if the slot is already borrowed (by any handle, shared or exclusive).
     #[inline]
     pub fn borrow(&self) -> Ref<'_, T> {
-        // SAFETY: ptr is valid.
+        // SAFETY: ptr is valid (refcount > 0). acquire_borrow panics if already borrowed.
         unsafe { (*self.ptr).acquire_borrow() };
         Ref {
             cell: self.ptr,
@@ -327,7 +327,7 @@ impl<T> RcSlot<T> {
     /// Panics if the slot is already borrowed (by any handle, shared or exclusive).
     #[inline]
     pub fn borrow_mut(&self) -> RefMut<'_, T> {
-        // SAFETY: ptr is valid.
+        // SAFETY: ptr is valid (refcount > 0). acquire_borrow panics if already borrowed.
         unsafe { (*self.ptr).acquire_borrow() };
         RefMut {
             cell: self.ptr,
@@ -340,20 +340,21 @@ impl<T> RcSlot<T> {
     /// Slab memory never moves, so Pin is sound without `T: Unpin`.
     #[inline]
     pub fn pin(&self) -> core::pin::Pin<Ref<'_, T>> {
-        // SAFETY: slab memory is stable.
+        // SAFETY: Slab memory never moves after init — Pin is sound.
         unsafe { core::pin::Pin::new_unchecked(self.borrow()) }
     }
 
     /// Returns a pinned mutable reference guard.
     #[inline]
     pub fn pin_mut(&self) -> core::pin::Pin<RefMut<'_, T>> {
+        // SAFETY: Slab memory never moves after init — Pin is sound.
         unsafe { core::pin::Pin::new_unchecked(self.borrow_mut()) }
     }
 
     /// Increments the refcount (used by Clone).
     #[inline]
     fn inc_ref(&self) {
-        // SAFETY: ptr is valid while any RcSlot exists.
+        // SAFETY: ptr is valid while any RcSlot exists (refcount > 0).
         unsafe { (*self.ptr).inc_ref() };
     }
 
@@ -361,6 +362,7 @@ impl<T> RcSlot<T> {
     /// If 0, the caller must free the slot.
     #[inline]
     pub(crate) fn dec_ref(&self) -> usize {
+        // SAFETY: ptr is valid while any RcSlot exists (refcount > 0).
         unsafe { (*self.ptr).dec_ref() }
     }
 
@@ -371,6 +373,7 @@ impl<T> RcSlot<T> {
     /// Must only be called once, when refcount is 0.
     #[inline]
     pub(crate) unsafe fn drop_value(&self) {
+        // SAFETY: Caller guarantees refcount is 0 and this is the only call.
         unsafe { (*self.ptr).drop_value() };
     }
 
@@ -439,7 +442,7 @@ impl<T> Deref for Ref<'_, T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY: Borrow bit is set, guaranteeing no other active borrows.
+        // SAFETY: Borrow bit is set — no concurrent mutation. Cell pointer is valid.
         unsafe { (*self.cell).value_ref() }
     }
 }
@@ -447,7 +450,7 @@ impl<T> Deref for Ref<'_, T> {
 impl<T> Drop for Ref<'_, T> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: We set the borrow bit in acquire_borrow.
+        // SAFETY: Borrow bit was set by acquire_borrow when this guard was created.
         unsafe { (*self.cell).release_borrow() };
     }
 }
@@ -475,6 +478,7 @@ impl<T> Deref for RefMut<'_, T> {
 
     #[inline]
     fn deref(&self) -> &T {
+        // SAFETY: Borrow bit is set — no concurrent mutation. Cell pointer is valid.
         unsafe { (*self.cell).value_ref() }
     }
 }
@@ -482,7 +486,7 @@ impl<T> Deref for RefMut<'_, T> {
 impl<T> DerefMut for RefMut<'_, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: Borrow bit guarantees exclusive access.
+        // SAFETY: Borrow bit guarantees exclusive access. Cell pointer is valid.
         unsafe { (*self.cell).value_mut() }
     }
 }
@@ -490,6 +494,7 @@ impl<T> DerefMut for RefMut<'_, T> {
 impl<T> Drop for RefMut<'_, T> {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: Borrow bit was set by acquire_borrow when this guard was created.
         unsafe { (*self.cell).release_borrow() };
     }
 }

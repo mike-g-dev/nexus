@@ -154,6 +154,7 @@ impl<T> Slab<T> {
         // pointers from the owned Vec and then moving into UnsafeCell gives
         // them stale (read-only) provenance under stacked borrows.
         let slots = core::cell::UnsafeCell::new(slots);
+        // SAFETY: UnsafeCell::get provides write-provenance pointer to the Vec.
         let base = unsafe { (*slots.get()).as_mut_ptr() };
 
         // Wire up the freelist: each slot's next_free points to the next slot
@@ -181,9 +182,8 @@ impl<T> Slab<T> {
     /// Returns the base pointer to the slots array.
     #[inline]
     pub(crate) fn slots_ptr(&self) -> *mut SlotCell<T> {
-        // Derive from *mut Vec (via UnsafeCell::get) to preserve write provenance.
-        // Creating &Vec first would give read-only provenance — writes through
-        // the returned pointer would be UB under stacked/tree borrows.
+        // SAFETY: Derive from *mut Vec (via UnsafeCell::get) to preserve write
+        // provenance. Creating &Vec first would give read-only provenance.
         unsafe { (*self.slots.get()).as_mut_ptr() }
     }
 

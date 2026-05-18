@@ -197,11 +197,14 @@ impl UdpSocket {
     /// Deregisters from mio. The returned socket is still non-blocking.
     pub fn into_std(mut self) -> io::Result<std::net::UdpSocket> {
         if let Some(token) = self.token.take() {
+            // SAFETY: IoHandle's raw pointers are valid for the Runtime
+            // lifetime. Deregistering before conversion.
             let _ = unsafe { self.io.deregister(&mut self.inner, token) };
         }
         let fd = self.inner.as_raw_fd();
         std::mem::forget(self);
-        // SAFETY: fd is valid, we own it.
+        // SAFETY: fd is valid — we own it via mio::net::UdpSocket and
+        // prevented Drop from closing it via mem::forget.
         Ok(unsafe { std::net::UdpSocket::from_raw_fd(fd) })
     }
 

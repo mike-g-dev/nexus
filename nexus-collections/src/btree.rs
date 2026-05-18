@@ -428,19 +428,25 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
         let mut current = self.root;
 
         loop {
+            // SAFETY: current is non-null — initialized from self.root (checked above)
+            // or from child_at on a valid internal node. search_in_node requires a
+            // valid node pointer.
             let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, key) };
             if found {
+                // SAFETY: current is a valid node, idx < node.len (found == true).
                 let result = unsafe { self.remove_found(slab, current, idx, &path, path_len) };
                 self.len -= 1;
 
                 return Some(result);
             }
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
                 return None;
             }
             debug_assert!(path_len < MAX_DEPTH);
             path[path_len] = (current, idx);
             path_len += 1;
+            // SAFETY: current is a valid internal node, idx <= node.len.
             let next = unsafe { child_at(current, idx) };
             current = next;
         }
@@ -456,6 +462,9 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
         let mut path_len = 0usize;
         let mut current = self.root;
 
+        // SAFETY: all node_is_leaf/child_at calls below operate on `current`,
+        // which starts as self.root (non-null, checked above) and each iteration
+        // replaces it with a valid child pointer from a valid internal node.
         while !unsafe { node_is_leaf(current) } {
             debug_assert!(path_len < MAX_DEPTH);
             path[path_len] = (current, 0);
@@ -464,6 +473,8 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             current = next;
         }
 
+        // SAFETY: current is a valid leaf node with at least 1 key (tree is non-empty).
+        // take_kv reads initialized key/value at index 0. shift_left closes the gap.
         let result = unsafe { take_kv(current, 0) };
         unsafe { shift_left(current, 0) };
         self.fixup_after_remove(slab, current, &path, path_len);
@@ -482,6 +493,9 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
         let mut path_len = 0usize;
         let mut current = self.root;
 
+        // SAFETY: all node_is_leaf/node_len/child_at calls below operate on `current`,
+        // which starts as self.root (non-null, checked above) and each iteration
+        // replaces it with a valid child pointer from a valid internal node.
         while !unsafe { node_is_leaf(current) } {
             let len = unsafe { node_len(current) };
             debug_assert!(path_len < MAX_DEPTH);
@@ -491,6 +505,9 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             current = next;
         }
 
+        // SAFETY: current is a valid leaf with at least 1 key (tree is non-empty).
+        // take_kv reads initialized key/value at the last index. Decrementing len
+        // logically removes the last slot (already moved out by take_kv).
         let last = unsafe { node_len(current) } - 1;
         let result = unsafe { take_kv(current, last) };
         unsafe { (*node_deref_mut(current)).len -= 1 };
@@ -546,6 +563,7 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
     ) -> Entry<'a, K, V, B, C, S> {
         let mut current = self.root;
         while !current.is_null() {
+            // SAFETY: current is non-null and a valid tree node (root or child).
             let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, &key) };
             if found {
                 drop(key);
@@ -556,9 +574,11 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                     idx,
                 });
             }
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
                 break;
             }
+            // SAFETY: current is a valid internal node, idx <= node.len.
             let next = unsafe { child_at(current, idx) };
             current = next;
         }
@@ -794,13 +814,16 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
     fn find(&self, key: &K) -> Option<(NodePtr<K, V, B>, usize)> {
         let mut current = self.root;
         while !current.is_null() {
+            // SAFETY: current is non-null and a valid tree node (root or child).
             let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, key) };
             if found {
                 return Some((current, idx));
             }
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
                 return None;
             }
+            // SAFETY: current is a valid internal node, idx <= node.len.
             let next = unsafe { child_at(current, idx) };
             current = next;
         }
@@ -1240,11 +1263,14 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                     self.root = ptr;
                     self.len += 1;
                     self.depth = 0;
+                    // SAFETY: ptr is freshly allocated with len=1, so values[0] is initialized.
                     let val_ptr = unsafe { (*node_deref_mut(ptr)).values[0].as_mut_ptr() };
                     return Ok((val_ptr, None));
                 }
                 Err(full) => {
                     let node = full.into_inner();
+                    // SAFETY: we initialized keys[0] and values[0] above before try_alloc.
+                    // The alloc failed, returning the node. Read back the initialized slots.
                     let k = unsafe { node.keys[0].assume_init_read() };
                     let v = unsafe { node.values[0].assume_init_read() };
                     return Err(Full((k, v)));
@@ -1252,15 +1278,18 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             }
         }
 
+        // SAFETY: self.root is non-null (checked above). node_len reads the len field.
         if unsafe { node_len(self.root) } == B - 1 {
             let new_root = match slab.try_alloc(BTreeNode::new_internal()) {
                 Ok(slot) => slot.into_raw(),
                 Err(_) => return Err(Full((key, value))),
             };
+            // SAFETY: new_root is freshly allocated. Set its first child to old root.
             unsafe { (*node_deref_mut(new_root)).children[0] = self.root };
             let old_root = self.root;
             self.root = new_root;
 
+            // SAFETY: old_root is a valid node.
             let right_node = if unsafe { node_is_leaf(old_root) } {
                 BTreeNode::new_leaf()
             } else {
@@ -1270,24 +1299,31 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                 slot.into_raw()
             } else {
                 self.root = old_root;
+                // SAFETY: new_root was obtained from Slot::into_raw() above.
                 let slot = unsafe { Slot::from_raw(new_root) };
                 slab.free(slot);
                 return Err(Full((key, value)));
             };
+            // SAFETY: new_root is a valid internal node with 1 child. old_root
+            // (child 0) is full. right is freshly allocated empty node.
             unsafe { split_child_core(new_root, 0, right) };
             self.depth += 1;
         }
 
         let mut current = self.root;
         loop {
+            // SAFETY: current is non-null and a valid tree node.
             let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, &key) };
             if found {
+                // SAFETY: idx < node.len (found), current is valid; &mut self exclusivity.
                 let existing = unsafe { value_at_mut(current, idx) };
                 let old = std::mem::replace(existing, value);
                 let val_ptr = existing as *mut V;
                 return Ok((val_ptr, Some(old)));
             }
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
+                // SAFETY: current is a valid leaf with room (root was split if full).
                 unsafe { shift_right(current, idx) };
                 let node = unsafe { &mut *node_deref_mut(current) };
                 node.keys[idx] = MaybeUninit::new(key);
@@ -1299,8 +1335,11 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             }
 
             let mut child_idx = idx;
+            // SAFETY: current is a valid internal node, child_idx <= node.len.
             let child = unsafe { child_at(current, child_idx) };
+            // SAFETY: child is a valid node.
             if unsafe { node_len(child) } == B - 1 {
+                // SAFETY: child is a valid node.
                 let right = match slab.try_alloc(if unsafe { node_is_leaf(child) } {
                     BTreeNode::new_leaf()
                 } else {
@@ -1309,10 +1348,14 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                     Ok(slot) => slot.into_raw(),
                     Err(_) => return Err(Full((key, value))),
                 };
+                // SAFETY: current is non-full (proactive split ensures room),
+                // child at child_idx is full, right is freshly allocated.
                 unsafe { split_child_core(current, child_idx, right) };
+                // SAFETY: child_idx < current.len after split promoted the median.
                 let median = unsafe { key_at(current, child_idx) };
                 match C::cmp(&key, median) {
                     Ordering::Equal => {
+                        // SAFETY: child_idx < node.len; current is valid.
                         let existing = unsafe { value_at_mut(current, child_idx) };
                         let old = std::mem::replace(existing, value);
                         let val_ptr = existing as *mut V;
@@ -1322,6 +1365,7 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                     Ordering::Less => {}
                 }
             }
+            // SAFETY: current is a valid internal node, child_idx <= node.len.
             current = unsafe { child_at(current, child_idx) };
         }
     }
@@ -1342,15 +1386,19 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             self.root = ptr;
             self.len += 1;
             self.depth = 0;
+            // SAFETY: ptr is freshly allocated with len=1, so values[0] is initialized.
             let val_ptr = unsafe { (*node_deref_mut(ptr)).values[0].as_mut_ptr() };
             return (val_ptr, None);
         }
 
+        // SAFETY: self.root is non-null (checked above). node_len reads the len field.
         if unsafe { node_len(self.root) } == B - 1 {
             let new_root = slab.alloc(BTreeNode::new_internal()).into_raw();
+            // SAFETY: new_root is freshly allocated. Set its first child to old root.
             unsafe { (*node_deref_mut(new_root)).children[0] = self.root };
             let old_root = self.root;
             self.root = new_root;
+            // SAFETY: old_root is a valid node.
             let right = slab
                 .alloc(if unsafe { node_is_leaf(old_root) } {
                     BTreeNode::new_leaf()
@@ -1358,20 +1406,26 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                     BTreeNode::new_internal()
                 })
                 .into_raw();
+            // SAFETY: new_root has 1 child (old_root, which is full), right is
+            // freshly allocated empty node.
             unsafe { split_child_core(new_root, 0, right) };
             self.depth += 1;
         }
 
         let mut current = self.root;
         loop {
+            // SAFETY: current is non-null and a valid tree node.
             let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, &key) };
             if found {
+                // SAFETY: idx < node.len (found), current is valid; &mut self exclusivity.
                 let existing = unsafe { value_at_mut(current, idx) };
                 let old = std::mem::replace(existing, value);
                 let val_ptr = existing as *mut V;
                 return (val_ptr, Some(old));
             }
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
+                // SAFETY: current is a valid leaf with room (proactive split).
                 unsafe { shift_right(current, idx) };
                 let node = unsafe { &mut *node_deref_mut(current) };
                 node.keys[idx] = MaybeUninit::new(key);
@@ -1383,8 +1437,11 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             }
 
             let mut child_idx = idx;
+            // SAFETY: current is a valid internal node, child_idx <= node.len.
             let child = unsafe { child_at(current, child_idx) };
+            // SAFETY: child is a valid node.
             if unsafe { node_len(child) } == B - 1 {
+                // SAFETY: child is a valid node.
                 let right = slab
                     .alloc(if unsafe { node_is_leaf(child) } {
                         BTreeNode::new_leaf()
@@ -1392,10 +1449,14 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                         BTreeNode::new_internal()
                     })
                     .into_raw();
+                // SAFETY: current is non-full, child at child_idx is full,
+                // right is freshly allocated.
                 unsafe { split_child_core(current, child_idx, right) };
+                // SAFETY: child_idx < current.len after split promoted the median.
                 let median = unsafe { key_at(current, child_idx) };
                 match C::cmp(&key, median) {
                     Ordering::Equal => {
+                        // SAFETY: child_idx < node.len; current is valid.
                         let existing = unsafe { value_at_mut(current, child_idx) };
                         let old = std::mem::replace(existing, value);
                         let val_ptr = existing as *mut V;
@@ -1405,6 +1466,7 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
                     Ordering::Less => {}
                 }
             }
+            // SAFETY: current is a valid internal node, child_idx <= node.len.
             current = unsafe { child_at(current, child_idx) };
         }
     }
@@ -1417,10 +1479,12 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
         let mut result: (NodePtr<K, V, B>, u16) = (ptr::null_mut(), 0);
         let mut current = self.root;
         while !current.is_null() {
+            // SAFETY: current is non-null and a valid tree node (root or child).
             let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, key) };
             if found {
                 return (current, idx as u16);
             }
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
                 if idx < unsafe { node_len(current) } {
                     return (current, idx as u16);
@@ -1430,6 +1494,7 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             if idx < unsafe { node_len(current) } {
                 result = (current, idx as u16);
             }
+            // SAFETY: current is a valid internal node, idx <= node.len.
             current = unsafe { child_at(current, idx) };
         }
         result
@@ -1439,20 +1504,25 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
         let mut result: (NodePtr<K, V, B>, u16) = (ptr::null_mut(), 0);
         let mut current = self.root;
         while !current.is_null() {
+            // SAFETY: current is non-null and a valid tree node (root or child).
             let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, key) };
             if found {
+                // SAFETY: current is a valid node.
                 if unsafe { node_is_leaf(current) } {
                     if idx + 1 < unsafe { node_len(current) } {
                         return (current, (idx + 1) as u16);
                     }
                     return result;
                 }
+                // SAFETY: current is internal, idx+1 <= node.len (found at idx).
                 let mut c = unsafe { child_at(current, idx + 1) };
+                // SAFETY: c is a valid child node; loop descends leftmost children.
                 while !unsafe { node_is_leaf(c) } {
                     c = unsafe { child_at(c, 0) };
                 }
                 return (c, 0);
             }
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
                 if idx < unsafe { node_len(current) } {
                     return (current, idx as u16);
@@ -1462,6 +1532,7 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             if idx < unsafe { node_len(current) } {
                 result = (current, idx as u16);
             }
+            // SAFETY: current is a valid internal node, idx <= node.len.
             current = unsafe { child_at(current, idx) };
         }
         result
@@ -1509,6 +1580,8 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
         lower: Option<&K>,
         upper: Option<&K>,
     ) {
+        // SAFETY: ptr is non-null — root (verified non-null in verify_invariants)
+        // or a child pointer from a valid parent node (checked non-null above).
         let node = unsafe { &*node_deref(ptr) };
         let len = node.len as usize;
         assert!(len < B);
@@ -1518,15 +1591,18 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
         assert!(!(is_root && !node.leaf && len == 0));
 
         for i in 1..len {
+            // SAFETY: keys[i-1] and keys[i] are initialized for i < len.
             let prev = unsafe { node.keys[i - 1].assume_init_ref() };
             let curr = unsafe { node.keys[i].assume_init_ref() };
             assert!(C::cmp(prev, curr) == Ordering::Less);
         }
         if let Some(lo) = lower {
+            // SAFETY: keys[0] is initialized (len > 0, checked via min occupancy).
             let first = unsafe { node.keys[0].assume_init_ref() };
             assert!(C::cmp(first, lo) == Ordering::Greater);
         }
         if let Some(hi) = upper {
+            // SAFETY: keys[len-1] is initialized for len > 0.
             let last = unsafe { node.keys[len - 1].assume_init_ref() };
             assert!(C::cmp(last, hi) == Ordering::Less);
         }
@@ -1544,11 +1620,13 @@ impl<K, V, const B: usize, C: Compare<K>> BTree<K, V, B, C> {
             }
             for i in 0..=len {
                 let lo = if i > 0 {
+                    // SAFETY: keys[i-1] is initialized for i <= len.
                     Some(unsafe { node.keys[i - 1].assume_init_ref() })
                 } else {
                     lower
                 };
                 let hi = if i < len {
+                    // SAFETY: keys[i] is initialized for i < len.
                     Some(unsafe { node.keys[i].assume_init_ref() })
                 } else {
                     upper
@@ -1650,9 +1728,12 @@ impl<K, V, const B: usize, C> BTree<K, V, B, C> {
         }
         let mut current = self.root;
         loop {
+            // SAFETY: current is non-null (root checked above, then valid children).
             if unsafe { node_is_leaf(current) } {
+                // SAFETY: current is a valid leaf with at least 1 key.
                 return Some(unsafe { (key_at(current, 0), value_at(current, 0)) });
             }
+            // SAFETY: current is a valid internal node, child 0 exists.
             current = unsafe { child_at(current, 0) };
         }
     }
@@ -1664,10 +1745,13 @@ impl<K, V, const B: usize, C> BTree<K, V, B, C> {
         }
         let mut current = self.root;
         loop {
+            // SAFETY: current is non-null (root checked above, then valid children).
             let len = unsafe { node_len(current) };
             if unsafe { node_is_leaf(current) } {
+                // SAFETY: current is a valid leaf with at least 1 key; len-1 is valid.
                 return Some(unsafe { (key_at(current, len - 1), value_at(current, len - 1)) });
             }
+            // SAFETY: current is a valid internal node, child at index len exists.
             current = unsafe { child_at(current, len) };
         }
     }
@@ -1675,6 +1759,7 @@ impl<K, V, const B: usize, C> BTree<K, V, B, C> {
     /// Removes all nodes.
     pub fn clear(&mut self, slab: &impl SlabOps<BTreeNode<K, V, B>>) {
         if !self.root.is_null() {
+            // SAFETY: self.root is non-null and a valid tree root.
             unsafe { Self::clear_subtree(self.root, slab) };
         }
         self.root = ptr::null_mut();
@@ -1737,9 +1822,11 @@ fn push_leftmost_path<K, V, const B: usize>(
         debug_assert!(*stack_len < MAX_DEPTH);
         stack[*stack_len] = (node, 0);
         *stack_len += 1;
+        // SAFETY: node is non-null (initially from caller, then valid children).
         if unsafe { node_is_leaf(node) } {
             return;
         }
+        // SAFETY: node is a valid internal node, child 0 exists.
         node = unsafe { child_at(node, 0) };
     }
 }
@@ -1752,12 +1839,14 @@ fn init_lower_bound_stack<K, V, const B: usize, C: Compare<K>>(
 ) {
     let mut current = root;
     while !current.is_null() {
+        // SAFETY: current is non-null and a valid tree node (root or child).
         let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, key) };
         if found {
             stack[*stack_len] = (current, idx as u16);
             *stack_len += 1;
             return;
         }
+        // SAFETY: current is a valid node.
         if unsafe { node_is_leaf(current) } {
             if idx < unsafe { node_len(current) } {
                 stack[*stack_len] = (current, idx as u16);
@@ -1769,6 +1858,7 @@ fn init_lower_bound_stack<K, V, const B: usize, C: Compare<K>>(
             stack[*stack_len] = (current, idx as u16);
             *stack_len += 1;
         }
+        // SAFETY: current is a valid internal node, idx <= node.len.
         current = unsafe { child_at(current, idx) };
     }
 }
@@ -1781,8 +1871,10 @@ fn init_upper_bound_stack<K, V, const B: usize, C: Compare<K>>(
 ) {
     let mut current = root;
     while !current.is_null() {
+        // SAFETY: current is non-null and a valid tree node (root or child).
         let (idx, found) = unsafe { search_in_node::<K, V, B, C>(current, key) };
         if found {
+            // SAFETY: current is a valid node.
             if unsafe { node_is_leaf(current) } {
                 if idx + 1 < unsafe { node_len(current) } {
                     stack[*stack_len] = (current, (idx + 1) as u16);
@@ -1791,11 +1883,13 @@ fn init_upper_bound_stack<K, V, const B: usize, C: Compare<K>>(
             } else {
                 stack[*stack_len] = (current, (idx + 1) as u16);
                 *stack_len += 1;
+                // SAFETY: current is internal, idx+1 <= node.len.
                 let child = unsafe { child_at(current, idx + 1) };
                 push_leftmost_path(child, stack, stack_len);
             }
             return;
         }
+        // SAFETY: current is a valid node.
         if unsafe { node_is_leaf(current) } {
             if idx < unsafe { node_len(current) } {
                 stack[*stack_len] = (current, idx as u16);
@@ -1807,6 +1901,7 @@ fn init_upper_bound_stack<K, V, const B: usize, C: Compare<K>>(
             stack[*stack_len] = (current, idx as u16);
             *stack_len += 1;
         }
+        // SAFETY: current is a valid internal node, idx <= node.len.
         current = unsafe { child_at(current, idx) };
     }
 }
@@ -1817,6 +1912,7 @@ fn advance_stack<K, V, const B: usize>(
 ) -> Option<(NodePtr<K, V, B>, usize)> {
     while *stack_len > 0 {
         let (node, idx) = stack[*stack_len - 1];
+        // SAFETY: node is a valid tree node pushed during traversal.
         if (idx as usize) < unsafe { node_len(node) } {
             break;
         }
@@ -1828,7 +1924,9 @@ fn advance_stack<K, V, const B: usize>(
     let (node, idx) = stack[*stack_len - 1];
     let i = idx as usize;
     stack[*stack_len - 1].1 = (i + 1) as u16;
+    // SAFETY: node is a valid tree node from the traversal stack.
     if !unsafe { node_is_leaf(node) } {
+        // SAFETY: node is internal, i+1 <= node.len (we just yielded key at i).
         let child = unsafe { child_at(node, i + 1) };
         push_leftmost_path(child, stack, stack_len);
     }
@@ -1843,6 +1941,7 @@ fn advance_stack_range<K, V, const B: usize>(
 ) -> Option<(NodePtr<K, V, B>, usize)> {
     while *stack_len > 0 {
         let (node, idx) = stack[*stack_len - 1];
+        // SAFETY: node is a valid tree node pushed during traversal.
         if (idx as usize) < unsafe { node_len(node) } {
             break;
         }
@@ -1858,7 +1957,9 @@ fn advance_stack_range<K, V, const B: usize>(
     }
     let i = idx as usize;
     stack[*stack_len - 1].1 = (i + 1) as u16;
+    // SAFETY: node is a valid tree node from the traversal stack.
     if !unsafe { node_is_leaf(node) } {
+        // SAFETY: node is internal, i+1 <= node.len.
         let child = unsafe { child_at(node, i + 1) };
         push_leftmost_path(child, stack, stack_len);
     }
@@ -1882,6 +1983,7 @@ impl<'a, K: 'a, V: 'a, const B: usize> Iterator for Iter<'a, K, V, B> {
     fn next(&mut self) -> Option<Self::Item> {
         let (node, idx) = advance_stack(&mut self.stack, &mut self.stack_len)?;
         self.remaining -= 1;
+        // SAFETY: advance_stack returns a valid (node, idx) where idx < node.len.
         Some(unsafe { (key_at(node, idx), value_at(node, idx)) })
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -1948,6 +2050,8 @@ impl<'a, K: 'a, V: 'a, const B: usize> Iterator for IterMut<'a, K, V, B> {
     fn next(&mut self) -> Option<Self::Item> {
         let (node, idx) = advance_stack(&mut self.stack, &mut self.stack_len)?;
         self.remaining -= 1;
+        // SAFETY: advance_stack returns a valid (node, idx) where idx < node.len.
+        // &mut self ensures no other mutable references exist.
         Some(unsafe { (key_at(node, idx), value_at_mut(node, idx)) })
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -1988,6 +2092,7 @@ impl<'a, K: 'a, V: 'a, const B: usize> Iterator for Range<'a, K, V, B> {
             self.end_node,
             self.end_idx,
         )?;
+        // SAFETY: advance_stack_range returns a valid (node, idx) where idx < node.len.
         Some(unsafe { (key_at(node, idx), value_at(node, idx)) })
     }
 }
@@ -2009,6 +2114,8 @@ impl<'a, K: 'a, V: 'a, const B: usize> Iterator for RangeMut<'a, K, V, B> {
             self.end_node,
             self.end_idx,
         )?;
+        // SAFETY: advance_stack_range returns a valid (node, idx) where idx < node.len.
+        // &mut self ensures no other mutable references exist.
         Some(unsafe { (key_at(node, idx), value_at_mut(node, idx)) })
     }
 }
@@ -2123,6 +2230,7 @@ impl<'a, K, V, const B: usize, C: Compare<K>>
     pub fn try_insert(self, value: V) -> Result<&'a mut V, Full<(K, V)>> {
         let VacantEntry { tree, slab, key } = self;
         let (val_ptr, _) = tree.try_insert_inner(slab, key, value)?;
+        // SAFETY: val_ptr points to an initialized value in a valid slab-allocated node.
         Ok(unsafe { &mut *val_ptr })
     }
     /// Insert (panics if full).
@@ -2131,6 +2239,7 @@ impl<'a, K, V, const B: usize, C: Compare<K>>
         let (val_ptr, _) = tree
             .try_insert_inner(slab, key, value)
             .expect("slab is full");
+        // SAFETY: val_ptr points to an initialized value in a valid slab-allocated node.
         unsafe { &mut *val_ptr }
     }
 }
@@ -2144,6 +2253,7 @@ impl<'a, K, V, const B: usize, C: Compare<K>>
     pub fn insert(self, value: V) -> &'a mut V {
         let VacantEntry { tree, slab, key } = self;
         let (val_ptr, _) = tree.insert_inner(slab, key, value);
+        // SAFETY: val_ptr points to an initialized value in a valid slab-allocated node.
         unsafe { &mut *val_ptr }
     }
 }

@@ -190,6 +190,9 @@ impl Sender {
             // original `&mut self.inner` borrow is dead before the
             // returned claim is used, and the loop only re-borrows after
             // the previous iteration's borrow has fully expired.
+            // SAFETY: Polonius workaround — transmute is between identical types
+            // with identical lifetimes. Early return guarantees the original
+            // &mut self.inner borrow is dead before the claim is used.
             unsafe {
                 let inner_ptr: *mut queue::Producer = &raw mut self.inner;
                 if let Ok(claim) = (*inner_ptr).try_claim(len) {
@@ -333,6 +336,8 @@ impl Receiver {
             // SAFETY: see Polonius pattern at the top of `Sender::send` in
             // this file. Same shape: early return frees the borrow before
             // any reuse.
+            // SAFETY: Polonius workaround — same-type transmute, early return
+            // ensures borrow is dead before the claim is used.
             unsafe {
                 let inner_ptr: *mut queue::Consumer = &raw mut self.inner;
                 if let Some(claim) = (*inner_ptr).try_claim() {
@@ -355,6 +360,8 @@ impl Receiver {
             // SAFETY: see Polonius pattern at the top of `Sender::send` in
             // this file. Same shape: early return frees the borrow before
             // the next loop iteration reuses it.
+            // SAFETY: Polonius workaround — same-type transmute, early return
+            // ensures borrow is dead before the next iteration reborrows.
             unsafe {
                 let inner_ptr: *mut queue::Consumer = &raw mut self.inner;
                 if let Some(claim) = (*inner_ptr).try_claim() {
@@ -386,6 +393,8 @@ impl Receiver {
                 // Final try after park.
                 // SAFETY: see Polonius pattern at the top of
                 // `Sender::send` in this file.
+                // SAFETY: Polonius workaround — same-type transmute, early
+                // return ensures borrow is dead before the claim is used.
                 unsafe {
                     let inner_ptr: *mut queue::Consumer = &raw mut self.inner;
                     if let Some(claim) = (*inner_ptr).try_claim() {

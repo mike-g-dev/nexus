@@ -87,14 +87,14 @@ impl<T> fmt::Debug for Claim<'_, T> {
 
 impl<T> Drop for Claim<'_, T> {
     fn drop(&mut self) {
-        // Abandoned claim - return slot to the correct chunk's freelist
+        // Abandoned claim — return slot to the correct chunk's freelist
         let chunk = self.slab.chunk(self.chunk_idx);
         let chunk_slab = &*chunk.inner;
 
         let free_head = chunk_slab.free_head.get();
         let was_full = free_head.is_null();
 
-        // SAFETY: slot_ptr is valid and still vacant (never written to)
+        // SAFETY: slot_ptr is valid and vacant (claim was never written to).
         unsafe {
             (*self.slot_ptr).set_next_free(free_head);
         }
@@ -207,6 +207,8 @@ impl<T> Slab<T> {
     fn chunk(&self, chunk_idx: usize) -> &ChunkEntry<T> {
         let chunks = self.chunks();
         debug_assert!(chunk_idx < chunks.len());
+        // SAFETY: chunk_idx is validated by debug_assert above. In release,
+        // callers guarantee validity (from claim_ptr or freelist bookkeeping).
         unsafe { chunks.get_unchecked(chunk_idx) }
     }
 
@@ -407,6 +409,7 @@ impl<T> Slab<T> {
         let free_head = chunk_slab.free_head.get();
         let was_full = free_head.is_null();
 
+        // SAFETY: Caller guarantees slot_ptr is in chunk chunk_idx, transitioning to vacant.
         unsafe {
             (*slot_ptr).set_next_free(free_head);
         }

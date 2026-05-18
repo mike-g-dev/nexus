@@ -333,6 +333,7 @@ impl IoHandle {
 
     /// Clear the writable flag for a token.
     pub fn clear_writable(&self, token: Token) {
+        // SAFETY: driver pointer valid for Runtime lifetime. Single-threaded.
         let driver = unsafe { &mut *self.driver };
         driver.clear_writable(token);
     }

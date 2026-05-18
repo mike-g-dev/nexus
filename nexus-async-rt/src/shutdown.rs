@@ -148,8 +148,10 @@ impl ShutdownSignal {
             !waker_ptr.is_null(),
             "ShutdownSignal::current(): waker_ptr null while flag non-null (runtime install bug)"
         );
-        // SAFETY: install() writes flag and waker pointers together; both
-        // verified non-null above; pointers are valid for Runtime lifetime.
+        // SAFETY: install() writes flag and waker_ptr together; both verified
+        // non-null above. waker_ptr points to the Arc<Mutex<Option<Waker>>>
+        // inside the Runtime's ShutdownHandle. Valid for Runtime lifetime
+        // (block_on borrows &mut Runtime, which outlives all tasks).
         let task_waker = unsafe { (*waker_ptr).clone() };
         ShutdownSignal { flag, task_waker }
     }
@@ -160,8 +162,9 @@ impl Future for ShutdownSignal {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         // SAFETY: flag points to the AtomicBool inside the Runtime's
-        // ShutdownHandle (Arc-allocated, stable address). Valid for
-        // Runtime lifetime.
+        // ShutdownHandle (Arc-allocated, heap-stable address). Valid for
+        // Runtime lifetime — block_on borrows &mut Runtime which outlives
+        // all tasks. AtomicBool access is inherently thread-safe.
         if unsafe { &*self.flag }.load(Ordering::Acquire) {
             return Poll::Ready(());
         }
@@ -173,7 +176,8 @@ impl Future for ShutdownSignal {
             *guard = Some(cx.waker().clone());
         }
 
-        // Double-check after registration (lost wakeup prevention).
+        // SAFETY: Same pointer, same invariant as above — flag is valid
+        // for the Runtime lifetime.
         if unsafe { &*self.flag }.load(Ordering::Acquire) {
             Poll::Ready(())
         } else {
@@ -201,6 +205,9 @@ pub fn install_signal_handlers(flag: &Arc<AtomicBool>, mio_waker: &Arc<mio::Wake
     // signal-hook::flag::register sets the AtomicBool on signal, but
     // we also need to break epoll_wait. Register a second handler that
     // fires the mio waker.
+    // SAFETY: The closure is async-signal-safe — mio::Waker::wake() is
+    // an eventfd write (single syscall, no locks, no allocations). The
+    // Arc is cloned before registration so the waker outlives the handler.
     unsafe {
         signal_hook::low_level::register(signal_hook::consts::SIGTERM, move || {
             let _ = waker_ref.wake();
@@ -208,6 +215,7 @@ pub fn install_signal_handlers(flag: &Arc<AtomicBool>, mio_waker: &Arc<mio::Wake
         .expect("failed to register SIGTERM waker");
     }
     let waker_ref2 = Arc::clone(mio_waker);
+    // SAFETY: Same as above — async-signal-safe eventfd write only.
     unsafe {
         signal_hook::low_level::register(signal_hook::consts::SIGINT, move || {
             let _ = waker_ref2.wake();
@@ -313,6 +321,7 @@ mod tests {
         let mut signal = Box::pin(handle.signal());
 
         // First poll with noop waker — registers it.
+        // SAFETY: all vtable fns are no-ops; null data is never deref'd.
         let noop = unsafe {
             static V: RawWakerVTable =
                 RawWakerVTable::new(|p| RawWaker::new(p, &V), |_| {}, |_| {}, |_| {});
@@ -324,10 +333,16 @@ mod tests {
         // Second poll with a tracking waker — should overwrite.
         let woke = std::cell::Cell::new(false);
         let flag_ptr = &woke as *const std::cell::Cell<bool> as *const ();
+        // SAFETY: flag_ptr points to the stack-local `woke` Cell which
+        // outlives the waker. The vtable wake/wake_by_ref cast back to
+        // Cell<bool> and set true. clone copies the raw pointer. drop
+        // is a no-op.
         let tracking = unsafe {
             static V2: RawWakerVTable = RawWakerVTable::new(
                 |p| RawWaker::new(p, &V2),
+                // SAFETY: p is flag_ptr, valid for the test's lifetime.
                 |p| unsafe { (*(p as *const std::cell::Cell<bool>)).set(true) },
+                // SAFETY: p is flag_ptr, valid for the test's lifetime.
                 |p| unsafe { (*(p as *const std::cell::Cell<bool>)).set(true) },
                 |_| {},
             );
@@ -350,6 +365,7 @@ mod tests {
         handle.trigger();
 
         let mut signal = Box::pin(handle.signal());
+        // SAFETY: all vtable fns are no-ops; null data is never deref'd.
         let waker = unsafe {
             static V: RawWakerVTable =
                 RawWakerVTable::new(|p| RawWaker::new(p, &V), |_| {}, |_| {}, |_| {});

@@ -47,6 +47,9 @@ struct SenderWakerNode {
     cancelled: AtomicBool,
 }
 
+// SAFETY: SenderWakerNode fields use atomics (next, queued, cancelled) for
+// cross-thread access. The waker UnsafeCell is only written when the node
+// is NOT in any shared list (exclusive access enforced by the queued flag).
 unsafe impl Send for SenderWakerNode {}
 unsafe impl Sync for SenderWakerNode {}
 
@@ -87,9 +90,13 @@ impl SenderWaitList {
         // Bump refcount: the list now holds a reference.
         std::mem::forget(Arc::clone(node));
 
+        // SAFETY: ptr is derived from Arc::as_ptr — valid for the Arc's
+        // lifetime. The refcount was just bumped via forget(clone), so
+        // the node won't be freed. No concurrent reader yet (not linked).
         unsafe { (*ptr).queued.store(true, Ordering::Relaxed) };
         loop {
             let head = self.head.load(Ordering::Acquire);
+            // SAFETY: same ptr validity — setting next before CAS-linking.
             unsafe { (*ptr).next.store(head, Ordering::Relaxed) };
             if self
                 .head
@@ -114,9 +121,13 @@ impl SenderWaitList {
         let mut cursor = head;
         let mut woken = false;
         while !cursor.is_null() {
+            // SAFETY: cursor was in the linked list — its Arc refcount was
+            // bumped in push(), so the node is alive. Atomic loads are safe.
             let next = unsafe { (*cursor).next.load(Ordering::Acquire) };
             let cancelled = unsafe { (*cursor).cancelled.load(Ordering::Acquire) };
 
+            // SAFETY: node removed from list (head swapped to null above).
+            // Single consumer (receiver thread). No concurrent readers.
             unsafe {
                 (*cursor).queued.store(false, Ordering::Release);
                 (*cursor)
@@ -125,10 +136,12 @@ impl SenderWaitList {
             }
 
             if !cancelled && !woken {
+                // SAFETY: node is unlinked — exclusive access to the waker
+                // UnsafeCell. Read moves the waker out, write clears it.
                 let waker = unsafe { (*cursor).waker.get().read() };
                 unsafe { (*cursor).waker.get().write(None) };
-                // Drop the list's Arc refcount for this node.
-                // SAFETY: refcount was bumped in push().
+                // SAFETY: refcount was bumped in push(). Decrementing
+                // releases the list's ownership of this node.
                 unsafe { Arc::decrement_strong_count(cursor) };
                 if let Some(w) = waker {
                     w.wake();
@@ -139,6 +152,7 @@ impl SenderWaitList {
                 // Keep the refcount (list still owns it).
                 loop {
                     let cur_head = self.head.load(Ordering::Acquire);
+                    // SAFETY: cursor is unlinked and alive (refcount held).
                     unsafe { (*cursor).next.store(cur_head, Ordering::Relaxed) };
                     unsafe { (*cursor).queued.store(true, Ordering::Relaxed) };
                     if self
@@ -155,7 +169,8 @@ impl SenderWaitList {
                     }
                 }
             } else {
-                // Cancelled: drop the list's Arc refcount.
+                // SAFETY: cancelled node — drop the list's Arc refcount.
+                // Refcount was bumped in push().
                 unsafe { Arc::decrement_strong_count(cursor) };
             }
 
@@ -173,20 +188,24 @@ impl SenderWaitList {
     fn wake_all(&self) {
         let mut node = self.head.swap(std::ptr::null_mut(), Ordering::AcqRel);
         while !node.is_null() {
+            // SAFETY: node was in the linked list — Arc refcount bumped in
+            // push(), so memory is alive. Atomic loads are safe.
             let next = unsafe { (*node).next.load(Ordering::Acquire) };
             let cancelled = unsafe { (*node).cancelled.load(Ordering::Acquire) };
+            // SAFETY: node unlinked (head swapped to null). Exclusive access.
             unsafe {
                 (*node).next.store(std::ptr::null_mut(), Ordering::Relaxed);
                 (*node).queued.store(false, Ordering::Release);
             }
             if !cancelled {
+                // SAFETY: node unlinked — exclusive access to waker UnsafeCell.
                 let waker = unsafe { (*node).waker.get().read() };
                 unsafe { (*node).waker.get().write(None) };
                 if let Some(w) = waker {
                     w.wake();
                 }
             }
-            // Drop the list's Arc refcount.
+            // SAFETY: drop the list's Arc refcount. Bumped in push().
             unsafe { Arc::decrement_strong_count(node) };
             node = next;
         }
@@ -374,6 +393,8 @@ impl<T: Send> Future for SendFut<'_, T> {
     type Output = Result<(), SendError<T>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: SendFut has no self-referential fields and does not
+        // require pinning guarantees. Unpinning is safe.
         let this = unsafe { self.get_unchecked_mut() };
         let inner = &this.sender.inner;
 
@@ -409,6 +430,8 @@ impl<T: Send> Future for SendFut<'_, T> {
     }
 }
 
+// SAFETY: SendFut borrows a Sender (which is Send+Sync) and holds an
+// Option<T> where T: Send. All fields are Send-safe.
 unsafe impl<T: Send> Send for SendFut<'_, T> {}
 
 // =============================================================================
@@ -459,6 +482,8 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
+// SAFETY: Receiver holds Arc<Inner<T>> where T: Send. Arc is Send when T
+// is Send. Single-consumer semantics enforced by the API (no Clone).
 unsafe impl<T: Send> Send for Receiver<T> {}
 
 // =============================================================================
@@ -515,6 +540,7 @@ impl<T: Send> Future for RecvFut<'_, T> {
     }
 }
 
+// SAFETY: RecvFut borrows a Receiver (Send). No non-Send fields.
 unsafe impl<T: Send> Send for RecvFut<'_, T> {}
 
 // =============================================================================

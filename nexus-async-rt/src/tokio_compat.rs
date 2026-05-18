@@ -144,7 +144,8 @@ impl<F: Future> Future for TokioCompat<F> {
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // SAFETY: we only project to `future` (structurally pinned).
+        // SAFETY: structural pin projection to `future`. We never move
+        // `future` out of the struct.
         let this = unsafe { self.get_unchecked_mut() };
 
         // Build a cross-thread waker for this task.
@@ -153,6 +154,8 @@ impl<F: Future> Future for TokioCompat<F> {
 
         // Poll the inner future with cross-thread waker.
         // Tokio context installed via TLS (ensure_tokio_context).
+        // SAFETY: `this.future` is structurally pinned — self is pinned
+        // and we never move future out.
         let future = unsafe { Pin::new_unchecked(&mut this.future) };
         future.poll(&mut cross_cx)
     }
@@ -219,8 +222,9 @@ fn make_cross_task_waker(
     task_ptr: *mut u8,
     ctx: std::sync::Arc<crate::cross_wake::CrossWakeContext>,
 ) -> Waker {
-    // SAFETY: caller (make_cross_waker → task_ptr_from_local_waker)
+    // SAFETY: caller (make_cross_waker -> task_ptr_from_local_waker)
     // returned task_ptr from a live local waker, refcount >= 1.
+    // TaskRef::acquire increments the task's refcount.
     let inner = std::sync::Arc::new(CrossTaskWakerInner {
         task_ref: unsafe { crate::task::TaskRef::acquire(task_ptr) },
         ctx,
@@ -229,15 +233,18 @@ fn make_cross_task_waker(
         std::sync::Arc::into_raw(inner).cast::<()>(),
         &CROSS_TASK_VTABLE,
     );
+    // SAFETY: raw was constructed from a valid Arc and our CROSS_TASK_VTABLE.
+    // The vtable functions correctly manage the Arc's refcount.
     unsafe { Waker::from_raw(raw) }
 }
 
 /// Clone: bump the Arc refcount. No allocation, no task-level ref_inc
 /// (the inner already holds one TaskRef shared by all clones).
 unsafe fn cross_task_clone(data: *const ()) -> RawWaker {
-    // Reconstruct the Arc from the raw pointer. We MUST NOT drop it —
-    // the original Arc still belongs to whoever holds the RawWaker we
-    // were derived from.
+    // SAFETY: data was produced by Arc::into_raw in make_cross_task_waker
+    // or a previous clone. Reconstruct the Arc to clone it, then
+    // immediately into_raw the original to avoid dropping it (the source
+    // RawWaker still owns that ref).
     let arc = unsafe { std::sync::Arc::from_raw(data.cast::<CrossTaskWakerInner>()) };
     let cloned = std::sync::Arc::clone(&arc);
     // Hand the original Arc back to its owner (the source RawWaker).
@@ -252,6 +259,8 @@ unsafe fn cross_task_clone(data: *const ()) -> RawWaker {
 /// last ref, `Inner::drop` runs — `task_ref` drops first (releasing the
 /// task ref via `dispose_terminal` if terminal), then `ctx` drops.
 unsafe fn cross_task_wake(data: *const ()) {
+    // SAFETY: data was produced by Arc::into_raw. Reconstruct the Arc
+    // to consume it (wake by value).
     let arc = unsafe { std::sync::Arc::from_raw(data.cast::<CrossTaskWakerInner>()) };
     // SAFETY: arc.task_ref holds one ref on the task — alive across
     // this call. Same for arc.ctx (Arc).
@@ -264,7 +273,12 @@ unsafe fn cross_task_wake(data: *const ()) {
 
 /// Wake by ref: dispatch only. No Arc takeover, no ref change.
 unsafe fn cross_task_wake_by_ref(data: *const ()) {
+    // SAFETY: data was produced by Arc::into_raw. The Arc is still alive
+    // (wake_by_ref borrows, doesn't consume). Reading through the raw
+    // pointer is valid because Arc guarantees the allocation is live while
+    // any strong ref exists.
     let inner = unsafe { &*data.cast::<CrossTaskWakerInner>() };
+    // SAFETY: inner.task_ref holds a ref on the task; inner.ctx is an Arc.
     unsafe {
         crate::cross_wake::wake_task_cross_thread(inner.task_ref.as_ptr(), &inner.ctx);
     }
@@ -273,6 +287,9 @@ unsafe fn cross_task_wake_by_ref(data: *const ()) {
 /// Drop: drop our Arc. If we held the last ref, `Inner::drop` runs —
 /// see `cross_task_wake` for the cascade.
 unsafe fn cross_task_drop(data: *const ()) {
+    // SAFETY: data was produced by Arc::into_raw. Reconstruct the Arc
+    // to drop it. If this is the last Arc, Inner::drop runs: task_ref
+    // drops first (ref_dec), then ctx drops.
     let _arc = unsafe { std::sync::Arc::from_raw(data.cast::<CrossTaskWakerInner>()) };
     // _arc drops at end of scope.
 }
@@ -485,11 +502,13 @@ mod arc_tests {
         let task_ptr = make_test_task();
 
         // Baseline: rc = 1 (Task::new_boxed initial executor-style ref).
+        // SAFETY: task_ptr valid from make_test_task; reading refcount.
         assert_eq!(unsafe { task::ref_count(task_ptr) }, 1);
 
         // Construct the cross-task waker. ONE task-level ref_inc fires
         // here (TaskRef::acquire inside make_cross_task_waker).
         let waker0 = make_cross_task_waker(task_ptr, StdArc::clone(&ctx));
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             2,
@@ -503,6 +522,7 @@ mod arc_tests {
         let waker2 = waker0.clone();
         let waker3 = waker0.clone();
         let waker4 = waker0.clone();
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             2,
@@ -515,6 +535,7 @@ mod arc_tests {
         drop(waker4);
         drop(waker0);
         drop(waker1);
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             2,
@@ -525,6 +546,7 @@ mod arc_tests {
         // → if terminal, dispose_terminal (here: not terminal because
         // the original executor-style ref still exists, so rc 2 → 1).
         drop(waker3);
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             1,
@@ -533,6 +555,9 @@ mod arc_tests {
 
         // Cleanup: drop the executor-style ref via complete_and_unref →
         // terminal → free.
+        // SAFETY: task_ptr valid with rc=1. drop_task_future drops the
+        // inner future. complete_and_unref sets COMPLETED + rc → 0 →
+        // FreeBox. free_task reclaims the Box allocation.
         unsafe {
             task::drop_task_future(task_ptr);
             assert!(matches!(
@@ -554,12 +579,14 @@ mod arc_tests {
         let waker1 = waker0.clone();
 
         // After construction + clone: task rc=2, Arc strong=2.
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(unsafe { task::ref_count(task_ptr) }, 2);
 
         // wake() consumes waker0 → cross_task_wake → Arc::from_raw +
         // wake_task_cross_thread + Arc drop. Since waker1 still holds
         // an Arc, Inner::drop does NOT run; task ref_count unchanged.
         waker0.wake();
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             2,
@@ -568,16 +595,20 @@ mod arc_tests {
 
         // Drop the survivor → last Arc → Inner::drop → ref_dec.
         drop(waker1);
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(unsafe { task::ref_count(task_ptr) }, 1);
 
         // After wake(), the task is in the cross-queue. Drain it so
         // Drop on ctx doesn't leak the entry. (Stub-aware pop.)
         let _ = ctx.queue.pop();
         // Clear queued so cleanup works.
+        // SAFETY: task_ptr valid; reading and clearing atomic flag.
         if unsafe { task::is_queued(task_ptr) } {
             unsafe { task::clear_queued(task_ptr) };
         }
 
+        // SAFETY: task_ptr valid with rc=1. drop_task_future +
+        // complete_and_unref → FreeBox. free_task reclaims.
         unsafe {
             task::drop_task_future(task_ptr);
             assert!(matches!(
@@ -634,6 +665,8 @@ mod arc_tests {
 
         // Cleanup.
         drop(waker);
+        // SAFETY: task_ptr valid with rc=1 after last waker dropped.
+        // drop_task_future + complete_and_unref → free_task reclaims.
         unsafe {
             task::drop_task_future(task_ptr);
             let _ = task::complete_and_unref(task_ptr);

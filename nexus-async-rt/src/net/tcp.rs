@@ -87,12 +87,14 @@ impl TcpStream {
     /// Deregisters from mio. The returned stream is still non-blocking.
     pub fn into_std(mut self) -> io::Result<std::net::TcpStream> {
         if let Some(token) = self.token.take() {
-            // SAFETY: IoHandle valid (Runtime lifetime).
+            // SAFETY: IoHandle's raw pointers are valid for the Runtime
+            // lifetime (block_on borrows &mut Runtime which outlives all IO).
             let _ = unsafe { self.io.deregister(&mut self.inner, token) };
         }
         let fd = self.inner.as_raw_fd();
         std::mem::forget(self); // skip Drop (already deregistered)
-        // SAFETY: fd is valid, we own it.
+        // SAFETY: fd is valid — we own it via mio::net::TcpStream and
+        // just prevented Drop from closing it via mem::forget.
         Ok(unsafe { std::net::TcpStream::from_raw_fd(fd) })
     }
 
@@ -200,7 +202,9 @@ impl TcpStream {
 
     /// Read without consuming from the buffer (MSG_PEEK).
     pub fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
-        // SAFETY: u8 and MaybeUninit<u8> have the same layout.
+        // SAFETY: u8 and MaybeUninit<u8> have identical layout (size, alignment).
+        // Transmuting an initialized &mut [u8] to &mut [MaybeUninit<u8>] is
+        // sound — the bytes are initialized, and peek() will read into them.
         let buf = unsafe { &mut *(buf as *mut [u8] as *mut [std::mem::MaybeUninit<u8>]) };
         self.socket_ref().peek(buf)
     }
@@ -454,7 +458,9 @@ impl AsRawFd for TcpStream {
 impl Drop for TcpStream {
     fn drop(&mut self) {
         if let Some(token) = self.token {
-            // SAFETY: IoHandle valid (Runtime lifetime).
+            // SAFETY: IoHandle's raw pointers are valid for the Runtime
+            // lifetime. The stream is being dropped, so deregistering
+            // from mio is the correct cleanup.
             let _ = unsafe { self.io.deregister(&mut self.inner, token) };
         }
     }
@@ -479,7 +485,11 @@ pub struct ReadHalf<'a> {
 // aliased mutation of the same fields. Single-threaded.
 impl ReadHalf<'_> {
     fn stream(&mut self) -> &mut TcpStream {
-        // SAFETY: Borrowed from split(), single-threaded, read-only side.
+        // SAFETY: Borrowed from split(), single-threaded. ReadHalf and
+        // WriteHalf hold raw pointers to the same TcpStream, but
+        // ReadHalf only calls poll_read and WriteHalf only calls
+        // poll_write — no aliased mutation of the same mio fields.
+        // The PhantomData<&'a mut TcpStream> ties the lifetime.
         unsafe { &mut *self.stream }
     }
 }
@@ -506,7 +516,9 @@ pub struct WriteHalf<'a> {
 
 impl WriteHalf<'_> {
     fn stream(&mut self) -> &mut TcpStream {
-        // SAFETY: Borrowed from split(), single-threaded, write-only side.
+        // SAFETY: Borrowed from split(), single-threaded. WriteHalf only
+        // calls poll_write/poll_flush/poll_shutdown — disjoint from
+        // ReadHalf's poll_read. No aliased mutation.
         unsafe { &mut *self.stream }
     }
 }
@@ -559,12 +571,14 @@ impl OwnedReadHalf {
 
     /// Returns the peer address.
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        // SAFETY: single-threaded, immutable field access.
+        // SAFETY: single-threaded runtime. Shared ref to immutable fields
+        // (peer_addr reads from the kernel, doesn't mutate TcpStream).
         unsafe { &*self.stream.get() }.peer_addr()
     }
 
     /// Returns the local address.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        // SAFETY: same as peer_addr — single-threaded, immutable access.
         unsafe { &*self.stream.get() }.local_addr()
     }
 }
@@ -575,7 +589,9 @@ impl AsyncRead for OwnedReadHalf {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        // SAFETY: single-threaded. Only the read half calls poll_read.
+        // SAFETY: single-threaded runtime. OwnedReadHalf is the only
+        // half that calls poll_read; OwnedWriteHalf only calls poll_write.
+        // No aliased mutation of the same TcpStream fields.
         let stream = unsafe { &mut *self.stream.get() };
         Pin::new(stream).poll_read(cx, buf)
     }
@@ -596,11 +612,13 @@ impl OwnedWriteHalf {
 
     /// Returns the peer address.
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+        // SAFETY: single-threaded, immutable access to kernel state.
         unsafe { &*self.stream.get() }.peer_addr()
     }
 
     /// Returns the local address.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        // SAFETY: same as peer_addr — single-threaded, immutable access.
         unsafe { &*self.stream.get() }.local_addr()
     }
 }
@@ -611,17 +629,20 @@ impl AsyncWrite for OwnedWriteHalf {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        // SAFETY: single-threaded. Only the write half calls poll_write.
+        // SAFETY: single-threaded. OwnedWriteHalf is the only half that
+        // calls poll_write; OwnedReadHalf only calls poll_read.
         let stream = unsafe { &mut *self.stream.get() };
         Pin::new(stream).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // SAFETY: same as poll_write — single-threaded, write-side only.
         let stream = unsafe { &mut *self.stream.get() };
         Pin::new(stream).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // SAFETY: same as poll_write — single-threaded, write-side only.
         let stream = unsafe { &mut *self.stream.get() };
         Pin::new(stream).poll_shutdown(cx)
     }
@@ -755,6 +776,9 @@ impl AsRawFd for TcpListener {
 impl Drop for TcpListener {
     fn drop(&mut self) {
         if let Some(token) = self.token {
+            // SAFETY: IoHandle's raw pointers are valid for the Runtime
+            // lifetime. The listener is being dropped, so deregistering
+            // from mio is the correct cleanup.
             let _ = unsafe { self.io.deregister(&mut self.inner, token) };
         }
     }

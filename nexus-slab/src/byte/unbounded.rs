@@ -65,8 +65,8 @@ impl<const N: usize> Slab<N> {
 
         let (slot_ptr, _chunk_idx) = self.inner.claim_ptr();
 
-        // SAFETY: slot_ptr is valid and vacant. AlignedBytes<N> is
-        // repr(C, align(8)), suitable for T (asserted above).
+        // SAFETY: slot_ptr is a valid, vacant SlotCell<AlignedBytes<N>>.
+        // AlignedBytes<N> is repr(C, align(8)), suitable for T (asserted above).
         unsafe {
             let data_ptr = slot_ptr.cast::<T>();
             core::ptr::write(data_ptr, value);
@@ -88,7 +88,8 @@ impl<const N: usize> Slab<N> {
         let claim = self.inner.claim();
         let (ptr, chunk_idx) = claim.into_ptr();
         let slab_ptr = core::ptr::from_ref(&self.inner).cast::<u8>();
-        // SAFETY: ptr is a valid vacant slot. chunk_idx identifies the owning chunk.
+        // SAFETY: ptr is a valid, vacant slot. chunk_idx identifies the owning chunk.
+        // free_raw_impl will return it to the correct chunk's freelist on drop.
         unsafe {
             super::ByteClaim::from_raw_parts(
                 ptr.cast::<u8>(),
@@ -107,6 +108,7 @@ impl<const N: usize> Slab<N> {
     /// `ptr` must point to a slot in this slab.
     #[inline]
     pub unsafe fn free_raw(&self, ptr: *mut u8) {
+        // SAFETY: Caller guarantees ptr is a valid slot in this slab.
         unsafe {
             self.inner.free_ptr(ptr.cast());
         }
@@ -119,6 +121,7 @@ impl<const N: usize> Slab<N> {
     /// - `ptr` must point to a slot in chunk `chunk_idx` of this slab.
     #[inline]
     pub unsafe fn free_raw_in_chunk(&self, ptr: *mut u8, chunk_idx: usize) {
+        // SAFETY: Caller guarantees ptr is in chunk chunk_idx of this slab.
         unsafe {
             self.inner.free_ptr_in_chunk(ptr.cast(), chunk_idx);
         }
@@ -139,6 +142,7 @@ impl<const N: usize> Slab<N> {
         assert!(size <= N, "raw alloc size {size} exceeds slot size {N}");
         let (slot_ptr, _chunk_idx) = self.inner.claim_ptr();
         let dst = slot_ptr.cast::<u8>();
+        // SAFETY: dst is a valid vacant slot. Caller guarantees src has `size` valid bytes.
         unsafe { core::ptr::copy_nonoverlapping(src, dst, size) };
         dst
     }
@@ -155,6 +159,9 @@ impl<const N: usize> Slab<N> {
         );
         mem::forget(ptr);
 
+        // SAFETY: Slot handle guarantees data_ptr is valid and occupied with a T.
+        // forget(ptr) disarms the debug leak detector. free_ptr returns the slot
+        // to the freelist after the value is dropped.
         unsafe {
             core::ptr::drop_in_place(data_ptr.cast::<T>());
             self.inner
@@ -174,6 +181,8 @@ impl<const N: usize> Slab<N> {
         );
         mem::forget(ptr);
 
+        // SAFETY: Slot handle guarantees data_ptr is valid and occupied with a T.
+        // read moves the value out, then free_ptr returns the slot to the freelist.
         unsafe {
             let value = core::ptr::read(data_ptr.cast::<T>());
             self.inner
@@ -257,7 +266,7 @@ impl Builder {
     /// Panics if `chunk_capacity` is zero.
     #[inline]
     pub unsafe fn build<const N: usize>(self) -> Slab<N> {
-        // SAFETY: caller upholds the slab contract.
+        // SAFETY: Caller upholds the slab contract.
         let inner = unsafe {
             crate::unbounded::Builder::new()
                 .chunk_capacity(self.chunk_capacity)
@@ -287,7 +296,9 @@ impl core::fmt::Debug for Builder {
 ///
 /// Uses `free_ptr_in_chunk` for O(1) freelist return — no linear scan.
 unsafe fn free_raw_impl<const N: usize>(slab_ptr: *const u8, slot_ptr: *mut u8, chunk_idx: usize) {
+    // SAFETY: Caller guarantees slab_ptr points to a live unbounded Slab<AlignedBytes<N>>.
     let slab = unsafe { &*(slab_ptr as *const crate::unbounded::Slab<super::AlignedBytes<N>>) };
+    // SAFETY: slot_ptr is within chunk chunk_idx. free_ptr_in_chunk returns it to the freelist.
     unsafe {
         slab.free_ptr_in_chunk(slot_ptr.cast(), chunk_idx);
     }

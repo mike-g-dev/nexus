@@ -169,7 +169,10 @@ where
     let src = std::ptr::from_ref(&task).cast::<u8>();
 
     let claim = SLAB_CLAIM.with(Cell::get);
-    // SAFETY: claim copies `size` bytes from `src` into a slab slot.
+    // SAFETY: claim was installed by `install_slab` during Runtime
+    // construction and copies `size` bytes from `src` (the on-stack
+    // Task) into a vacant slab slot. The slab is alive for the
+    // duration of block_on (Runtime owns the SlabGuard).
     let ptr = unsafe { claim(src, size) };
     assert!(!ptr.is_null(), "slab full — spawn_slab failed");
 
@@ -180,8 +183,15 @@ where
 }
 
 /// Free function stored in slab-allocated task headers.
+///
+/// # Safety
+///
+/// `ptr` must point to a slab-allocated task slot that is ready to be freed
+/// (terminal state, no outstanding references).
 unsafe fn slab_free_task(ptr: *mut u8) {
     let free = SLAB_FREE.with(Cell::get);
+    // SAFETY: free was installed by `install_slab` during Runtime construction.
+    // The slab is alive (Runtime owns the SlabGuard, which drops AFTER the executor).
     unsafe { free(ptr) };
 }
 
@@ -287,7 +297,8 @@ impl std::fmt::Debug for SlabClaim {
 /// - If no slab is configured.
 pub(crate) fn try_claim() -> Option<SlabClaim> {
     let try_claim_fn = SLAB_TRY_CLAIM.with(Cell::get);
-    // SAFETY: try_claim_fn claims a slot from the slab.
+    // SAFETY: try_claim_fn was installed by `install_slab` during Runtime
+    // construction. The slab is alive for the duration of block_on.
     let (ptr, chunk_idx) = unsafe { try_claim_fn() };
     if ptr.is_null() {
         return None;
@@ -350,19 +361,26 @@ pub(crate) fn make_bounded_config<const S: usize>(slab_ptr: *const u8) -> SlabTl
 
 unsafe fn unbounded_claim<const S: usize>(src: *const u8, size: usize) -> *mut u8 {
     let slab_ptr = SLAB_PTR.with(Cell::get);
+    // SAFETY: slab_ptr was set by install_slab to point to a live unbounded::Slab<S>.
+    // The slab is alive for the duration of block_on (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::unbounded::Slab<S>) };
+    // SAFETY: src has `size` valid bytes (the on-stack Task). Slab allocates a slot.
     unsafe { slab.alloc_raw(src, size) }
 }
 
 unsafe fn unbounded_free<const S: usize>(ptr: *mut u8) {
     let slab_ptr = SLAB_PTR.with(Cell::get);
+    // SAFETY: slab_ptr points to a live unbounded::Slab<S> (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::unbounded::Slab<S>) };
+    // SAFETY: ptr was allocated by this slab's alloc_raw. Reconstructing
+    // the Slot gives ownership back so free can return it to the freelist.
     let slot = unsafe { nexus_slab::byte::Slot::<u8>::from_raw(ptr) };
     slab.free(slot);
 }
 
 unsafe fn unbounded_try_claim<const S: usize>() -> (*mut u8, usize) {
     let slab_ptr = SLAB_PTR.with(Cell::get);
+    // SAFETY: slab_ptr points to a live unbounded::Slab<S> (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::unbounded::Slab<S>) };
     let claim = slab.claim();
     let ptr = claim.as_ptr();
@@ -377,8 +395,11 @@ unsafe fn unbounded_claim_free<const S: usize>(
     ptr: *mut u8,
     chunk_idx: usize,
 ) {
+    // SAFETY: slab_ptr was captured at claim time and points to a live
+    // unbounded::Slab<S> (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::unbounded::Slab<S>) };
     // O(1) — goes directly to the correct chunk's freelist.
+    // SAFETY: ptr was claimed from this slab and never written to (SlabClaim::Drop path).
     unsafe { slab.free_raw_in_chunk(ptr, chunk_idx) };
 }
 
@@ -386,19 +407,26 @@ unsafe fn unbounded_claim_free<const S: usize>(
 
 unsafe fn bounded_claim<const S: usize>(src: *const u8, size: usize) -> *mut u8 {
     let slab_ptr = SLAB_PTR.with(Cell::get);
+    // SAFETY: slab_ptr was set by install_slab to point to a live bounded::Slab<S>.
+    // The slab is alive for the duration of block_on (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::bounded::Slab<S>) };
+    // SAFETY: src has `size` valid bytes (the on-stack Task). Returns null if full.
     unsafe { slab.alloc_raw(src, size) }
 }
 
 unsafe fn bounded_free<const S: usize>(ptr: *mut u8) {
     let slab_ptr = SLAB_PTR.with(Cell::get);
+    // SAFETY: slab_ptr points to a live bounded::Slab<S> (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::bounded::Slab<S>) };
+    // SAFETY: ptr was allocated by this slab's alloc_raw. Reconstructing
+    // the Slot gives ownership back so free can return it to the freelist.
     let slot = unsafe { nexus_slab::byte::Slot::<u8>::from_raw(ptr) };
     slab.free(slot);
 }
 
 unsafe fn bounded_try_claim<const S: usize>() -> (*mut u8, usize) {
     let slab_ptr = SLAB_PTR.with(Cell::get);
+    // SAFETY: slab_ptr points to a live bounded::Slab<S> (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::bounded::Slab<S>) };
     slab.try_claim().map_or((std::ptr::null_mut(), 0), |claim| {
         let ptr = claim.as_ptr();
@@ -408,6 +436,9 @@ unsafe fn bounded_try_claim<const S: usize>() -> (*mut u8, usize) {
 }
 
 unsafe fn bounded_claim_free<const S: usize>(slab_ptr: *const u8, ptr: *mut u8, _chunk_idx: usize) {
+    // SAFETY: slab_ptr was captured at claim time and points to a live
+    // bounded::Slab<S> (Runtime owns SlabGuard).
     let slab = unsafe { &*(slab_ptr as *const nexus_slab::byte::bounded::Slab<S>) };
+    // SAFETY: ptr was claimed from this slab and never written to (SlabClaim::Drop path).
     unsafe { slab.free_raw(ptr) };
 }

@@ -624,6 +624,9 @@ pub(crate) struct FallbackWaker {
     waker: UnsafeCell<Option<std::task::Waker>>,
 }
 
+// SAFETY: Access to the UnsafeCell<Option<Waker>> is coordinated by
+// the atomic state field (REGISTERING excludes concurrent writes,
+// CAS STORED→EMPTY excludes concurrent reads).
 unsafe impl Send for FallbackWaker {}
 unsafe impl Sync for FallbackWaker {}
 
@@ -638,6 +641,10 @@ impl FallbackWaker {
     pub(crate) fn register(&self, waker: &std::task::Waker) {
         let prev = self.state.swap(REGISTERING, Ordering::Acquire);
         debug_assert_ne!(prev, REGISTERING);
+        // SAFETY: REGISTERING state excludes concurrent access to the
+        // UnsafeCell. Only one thread can pass the swap-to-REGISTERING
+        // gate (single-registerer contract), and wake() CAS only succeeds
+        // from STORED, not REGISTERING.
         unsafe { *self.waker.get() = Some(waker.clone()) };
         self.state.store(STORED, Ordering::Release);
     }
@@ -648,6 +655,10 @@ impl FallbackWaker {
             .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
         {
+            // SAFETY: CAS STORED→EMPTY succeeded, giving us exclusive
+            // access to the UnsafeCell. No other thread can CAS from
+            // STORED (it's now EMPTY), and register swaps to REGISTERING
+            // first.
             let waker = unsafe { (*self.waker.get()).take() };
             if let Some(w) = waker {
                 w.wake();
@@ -681,6 +692,8 @@ pub(crate) struct TxWakerSlot {
     waker: UnsafeCell<Option<std::task::Waker>>,
 }
 
+// SAFETY: Access to the UnsafeCell<Option<Waker>> is coordinated by
+// the atomic state field. Single-sender register, single-receiver wake.
 unsafe impl Send for TxWakerSlot {}
 unsafe impl Sync for TxWakerSlot {}
 
@@ -696,6 +709,9 @@ impl TxWakerSlot {
     pub(crate) fn register(&self, waker: &std::task::Waker) {
         let prev = self.state.swap(REGISTERING, Ordering::Acquire);
         debug_assert_ne!(prev, REGISTERING);
+        // SAFETY: REGISTERING state excludes concurrent access to the
+        // UnsafeCell. Single-sender contract means no concurrent register,
+        // and wake() CAS only succeeds from STORED, not REGISTERING.
         unsafe { *self.waker.get() = Some(waker.clone()) };
         self.state.store(STORED, Ordering::Release);
     }
@@ -707,6 +723,10 @@ impl TxWakerSlot {
             .compare_exchange(STORED, EMPTY, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
         {
+            // SAFETY: CAS STORED→EMPTY succeeded, giving exclusive access
+            // to the UnsafeCell. No concurrent register (state is EMPTY,
+            // not STORED or REGISTERING) and no concurrent wake (single
+            // receiver thread).
             if let Some(w) = unsafe { (*self.waker.get()).take() } {
                 w.wake();
                 return true;
@@ -796,6 +816,7 @@ pub(crate) mod uaf_scenarios {
         let task_ptr = make_uaf_task();
 
         // Sanity: starting refcount is 1 (Task::new_boxed initial state).
+        // SAFETY: task_ptr was just created by make_uaf_task; valid task.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             1,
@@ -825,6 +846,9 @@ pub(crate) mod uaf_scenarios {
         // the task, which atomically sets COMPLETED and decrements the
         // executor's ref. Pre-fix this is the last ref → FreeBox.
         // Post-fix the slot still holds a ref → Retain.
+        // SAFETY: task_ptr is a valid task created by make_uaf_task. The
+        // executor-style ref (rc=1 or 2 depending on fix) is being
+        // decremented as part of the simulated completion path.
         let action = unsafe { task::complete_and_unref(task_ptr) };
 
         // Track which path we're on — the test must clean up differently
@@ -842,6 +866,8 @@ pub(crate) mod uaf_scenarios {
                 );
                 #[cfg(miri)]
                 {
+                    // SAFETY: FreeBox indicates rc=0 and task is terminal;
+                    // free_task reclaims the Box allocation.
                     unsafe { task::free_task(task_ptr) };
                     true
                 }
@@ -855,12 +881,16 @@ pub(crate) mod uaf_scenarios {
         // Sender continues with the captured pointer.
         // PRE-FIX: derefs freed memory → tree-borrows UAF.
         // POST-FIX: derefs alive task, observes COMPLETED, returns early.
+        // SAFETY: captured is a valid task pointer (post-fix: kept alive
+        // by the slot's ref_inc; pre-fix: freed — UAF under miri).
         unsafe { wake_task_cross_thread(captured, &cross_ctx) };
 
         if !pre_fix {
             // POST-FIX cleanup: release the slot's captured ref via
             // TaskRef. In real code this is `wake()`'s drop after
             // wake_task_cross_thread returns.
+            // SAFETY: captured is a valid task with rc >= 1 (the slot's
+            // ref). from_owned reconstructs the TaskRef for the drop.
             drop(unsafe { TaskRef::from_owned(captured) });
             // captured was the only remaining ref; now freed. Don't
             // touch task_ptr again.
@@ -886,9 +916,13 @@ pub(crate) mod uaf_scenarios {
         // Mark the task COMPLETED first via complete_and_unref. Bump the
         // ref to 2 so complete_and_unref returns Retain (rather than
         // freeing). After: refcount = 1, COMPLETED set.
+        // SAFETY: task_ptr is a valid task from make_uaf_task with rc=1.
+        // ref_inc brings rc to 2; complete_and_unref sets COMPLETED and
+        // decrements rc back to 1, returning Retain.
         unsafe { task::ref_inc(task_ptr) };
         let action = unsafe { task::complete_and_unref(task_ptr) };
         assert!(matches!(action, FreeAction::Retain));
+        // SAFETY: task_ptr is still valid (Retain means no free).
         let baseline_refcount = unsafe { task::ref_count(task_ptr) };
         assert_eq!(baseline_refcount, 1, "after complete_and_unref, refcount=1");
 
@@ -896,12 +930,14 @@ pub(crate) mod uaf_scenarios {
         slot.register(task_ptr);
         // Post-fix: register ref_inc → refcount = 2.
         // Pre-fix: register did NOT ref_inc → refcount = 1.
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         let after_register = unsafe { task::ref_count(task_ptr) };
 
         // Drop the slot WITHOUT calling wake() or clear().
         // Post-fix: Drop sees state == STORED, ref_dec → refcount = 1, returns Retain.
         // Pre-fix: no Drop impl → refcount unchanged.
         drop(slot);
+        // SAFETY: task_ptr valid (rc >= 1 in both pre/post-fix paths).
         let after_drop = unsafe { task::ref_count(task_ptr) };
 
         // The strengthened assertion: register-then-drop must net to
@@ -924,6 +960,8 @@ pub(crate) mod uaf_scenarios {
 
         // Cleanup: refcount is 1 (post-fix or pre-fix), COMPLETED set.
         // Final ref_dec should return FreeBox; free the allocation.
+        // SAFETY: task_ptr valid with rc=1, COMPLETED. ref_dec brings
+        // rc to 0 → FreeBox. free_task reclaims the Box allocation.
         let action = unsafe { task::ref_dec(task_ptr) };
         match action {
             FreeAction::FreeBox => unsafe { task::free_task(task_ptr) },
@@ -953,9 +991,12 @@ pub(crate) mod uaf_scenarios {
         // Bump the ref so the test's manual ref_decs don't trigger
         // free mid-test. After complete_and_unref, refcount = 1 with
         // COMPLETED set — this is our baseline.
+        // SAFETY: task_ptr valid from make_uaf_task (rc=1). ref_inc
+        // brings rc to 2; complete_and_unref sets COMPLETED, rc → 1.
         unsafe { task::ref_inc(task_ptr) };
         let action = unsafe { task::complete_and_unref(task_ptr) };
         assert!(matches!(action, FreeAction::Retain));
+        // SAFETY: task_ptr valid (Retain, rc=1).
         let baseline = unsafe { task::ref_count(task_ptr) };
         assert_eq!(baseline, 1, "baseline must be 1 (executor-style ref)");
 
@@ -963,6 +1004,7 @@ pub(crate) mod uaf_scenarios {
 
         // ---- T0: initial register ----
         slot.register(task_ptr);
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             baseline + 1,
@@ -984,6 +1026,7 @@ pub(crate) mod uaf_scenarios {
         // — same task_ptr. Pre-fix: register's gate sees prev==EMPTY,
         // skips the release, leaks the old ref. Post-fix: release fires.
         slot.register(task_ptr);
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             baseline + 1,
@@ -998,8 +1041,11 @@ pub(crate) mod uaf_scenarios {
         // wake's release-after-dispatch semantics).
         let captured = slot.task_ptr.swap(std::ptr::null_mut(), Ordering::Acquire);
         assert_eq!(captured, task_ptr);
+        // SAFETY: captured is a valid task pointer with the ref that
+        // register acquired. from_owned + drop releases that ref.
         drop(unsafe { TaskRef::from_owned(captured) });
 
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             baseline,
@@ -1013,13 +1059,15 @@ pub(crate) mod uaf_scenarios {
         // nothing — confirms the Drop impl correctly handles this
         // benign "post-race" inconsistency.
         drop(slot);
+        // SAFETY: task_ptr valid; reading refcount for assertion.
         assert_eq!(
             unsafe { task::ref_count(task_ptr) },
             baseline,
             "Drop on a STORED-but-null-task_ptr slot must be a no-op for refcount"
         );
 
-        // Final ref_dec → FreeBox.
+        // SAFETY: task_ptr valid with rc=baseline (1), COMPLETED.
+        // ref_dec → rc=0 → FreeBox. free_task reclaims the allocation.
         match unsafe { task::ref_dec(task_ptr) } {
             FreeAction::FreeBox => unsafe { task::free_task(task_ptr) },
             other => panic!("expected FreeBox on final ref_dec, got {other:?}"),
@@ -1061,10 +1109,13 @@ mod tests {
         let q = CrossWakeQueue::new();
         let t1 = make_task();
 
+        // SAFETY: t1 is a valid task pointer from make_task with a
+        // valid cross_next field. Not already in the queue.
         unsafe { q.push(t1) };
         assert_eq!(q.pop(), Some(t1));
         assert_eq!(q.pop(), None);
 
+        // SAFETY: t1 was popped from the queue; free reclaims the Box.
         unsafe { free(t1) };
     }
 
@@ -1075,6 +1126,8 @@ mod tests {
         let t2 = make_task();
         let t3 = make_task();
 
+        // SAFETY: t1, t2, t3 are valid task pointers with valid
+        // cross_next fields. Each pushed once, not already in queue.
         unsafe { q.push(t1) };
         unsafe { q.push(t2) };
         unsafe { q.push(t3) };
@@ -1084,6 +1137,7 @@ mod tests {
         assert_eq!(q.pop(), Some(t3));
         assert_eq!(q.pop(), None);
 
+        // SAFETY: all popped from queue; free reclaims each Box.
         unsafe { free(t1) };
         unsafe { free(t2) };
         unsafe { free(t3) };
@@ -1095,13 +1149,16 @@ mod tests {
         let t1 = make_task();
         let t2 = make_task();
 
+        // SAFETY: valid task pointers, not already in queue.
         unsafe { q.push(t1) };
         assert_eq!(q.pop(), Some(t1));
 
+        // SAFETY: valid task pointer, not already in queue.
         unsafe { q.push(t2) };
         assert_eq!(q.pop(), Some(t2));
         assert_eq!(q.pop(), None);
 
+        // SAFETY: both popped; free reclaims each Box.
         unsafe { free(t1) };
         unsafe { free(t2) };
     }
@@ -1119,11 +1176,14 @@ mod tests {
         let t1 = make_task();
 
         for _ in 0..100 {
+            // SAFETY: t1 is a valid task, popped before each re-push
+            // so it's never double-queued.
             unsafe { q.push(t1) };
             assert_eq!(q.pop(), Some(t1));
         }
         assert_eq!(q.pop(), None);
 
+        // SAFETY: t1 was popped on the last iteration; free reclaims it.
         unsafe { free(t1) };
     }
 
@@ -1174,6 +1234,9 @@ mod tests {
     /// then invokes `dispose_terminal(ptr)` directly to exercise the
     /// routing — no re-acquire (would violate ref_inc's >=1 contract).
     unsafe fn drive_to_terminal(ptr: *mut u8) {
+        // SAFETY: caller guarantees ptr is a freshly-spawned joinable
+        // task (rc=2, HAS_JOIN set). Each step is valid given the
+        // preceding state transitions documented inline.
         unsafe {
             crate::task::drop_task_future(ptr);
             assert!(matches!(
@@ -1205,6 +1268,10 @@ mod tests {
         let task = Box::new(crate::task::Task::new_boxed(Noop, 0));
         let ptr = Box::into_raw(task) as *mut u8;
 
+        // SAFETY: ptr is a valid box-allocated task (rc=1, no HAS_JOIN).
+        // drop_task_future drops the inner future. complete_and_unref
+        // sets COMPLETED + rc → 0 → FreeBox (terminal). dispose_terminal
+        // with null ctx + no TLS leaks intentionally. free_task reclaims.
         unsafe {
             // Walk to terminal: rc 1 → 0, COMPLETED, no lifecycle.
             crate::task::drop_task_future(ptr);
@@ -1237,6 +1304,9 @@ mod tests {
         let mut ready: Vec<*mut u8> = Vec::new();
         let _poll_guard = crate::waker::set_poll_context(&raw mut ready, &raw mut deferred);
 
+        // SAFETY: ptr is a valid spawned task (rc=2, HAS_JOIN).
+        // drive_to_terminal walks to terminal state. dispose_terminal
+        // defers to the deferred_free Vec via TLS.
         unsafe {
             drive_to_terminal(ptr);
             dispose_terminal(ptr);
@@ -1246,7 +1316,7 @@ mod tests {
         assert_eq!(deferred.len(), 1);
         assert_eq!(deferred[0], ptr);
 
-        // Cleanup: free the task ourselves (we own the deferred entry).
+        // SAFETY: ptr was deferred (not freed); free_task reclaims it.
         unsafe { crate::task::free_task(ptr) };
     }
 
@@ -1260,6 +1330,9 @@ mod tests {
         let _guard = install_runtime_cross_wake(&ctx);
         let ptr = make_spawned_task(&ctx);
 
+        // SAFETY: ptr is a valid spawned task. drive_to_terminal walks
+        // to terminal. dispose_terminal with matching TLS but null
+        // DEFERRED_FREE leaks intentionally.
         unsafe {
             drive_to_terminal(ptr);
             // No poll context installed → DEFERRED_FREE TLS stays null.
@@ -1267,8 +1340,10 @@ mod tests {
         }
 
         // Task header still valid (we leaked, didn't free).
+        // SAFETY: ptr was leaked, not freed; header is readable.
         assert!(unsafe { crate::task::is_terminal(ptr) });
 
+        // SAFETY: ptr leaked above; free_task reclaims the Box.
         unsafe { crate::task::free_task(ptr) };
     }
 
@@ -1280,6 +1355,9 @@ mod tests {
         let ctx = make_ctx();
         let ptr = make_spawned_task(&ctx);
 
+        // SAFETY: ptr is a valid spawned task. drive_to_terminal walks
+        // to terminal. dispose_terminal with non-null ctx but no
+        // matching TLS takes the off-thread path → cross-queue push.
         unsafe {
             drive_to_terminal(ptr);
             // No install_runtime_cross_wake → TLS null.
@@ -1289,8 +1367,10 @@ mod tests {
         // Verify push to cross-queue.
         let popped = ctx.queue.pop();
         assert_eq!(popped, Some(ptr));
+        // SAFETY: ptr was pushed to cross-queue, still valid.
         assert!(unsafe { crate::task::is_queued(ptr) });
 
+        // SAFETY: ptr popped from queue; clear queued flag and free.
         unsafe {
             crate::task::clear_queued(ptr);
             crate::task::free_task(ptr);
@@ -1378,6 +1458,9 @@ mod tests {
         //     route (which goes through dispose_terminal locally) and
         //     manually push to simulate the off-thread case.
         std::mem::forget(kept_handle);
+        // SAFETY: task_ptr is the raw pointer from the forgotten
+        // JoinHandle. Task is COMPLETED with rc=1. clear_has_join
+        // clears the lifecycle flag; ref_dec brings rc → 0 → terminal.
         unsafe {
             crate::task::clear_has_join(task_ptr);
             let action = crate::task::ref_dec(task_ptr);
@@ -1386,6 +1469,9 @@ mod tests {
         // Task is now in TERMINAL state, allocation alive, in all_tasks.
         // Set QUEUED + push to cross_queue to mirror the off-thread
         // dispose_terminal scenario.
+        // SAFETY: task_ptr is terminal but allocation is alive (no one
+        // freed it). try_set_queued is an atomic on the header. push
+        // uses the cross_next intrusive link.
         unsafe {
             assert!(crate::task::try_set_queued(task_ptr));
             ctx.queue.push(task_ptr);

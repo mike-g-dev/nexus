@@ -122,7 +122,8 @@ impl WorldCtx {
     pub fn with_world<R>(&self, f: impl FnOnce(&mut World) -> R) -> R {
         // SAFETY: Single-threaded executor guarantees only one task polls
         // at a time, so only one with_world is active. World outlives all
-        // tasks (caller invariant from WorldCtx::new).
+        // tasks (caller invariant from WorldCtx::new). The exclusive ref
+        // is valid because no other code holds a ref during this closure.
         let world = unsafe { &mut *self.ptr };
         f(world)
     }
@@ -131,8 +132,8 @@ impl WorldCtx {
     ///
     /// Use when you only need to read resources.
     pub fn with_world_ref<R>(&self, f: impl FnOnce(&World) -> R) -> R {
-        // SAFETY: Same invariants as with_world. Shared ref is strictly
-        // less powerful.
+        // SAFETY: Same invariants as with_world — single-threaded, World
+        // outlives tasks. Shared ref is strictly less powerful than &mut.
         let world = unsafe { &*self.ptr };
         f(world)
     }

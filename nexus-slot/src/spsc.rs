@@ -36,6 +36,10 @@ struct Inner<T> {
     data: UnsafeCell<MaybeUninit<T>>,
 }
 
+// SAFETY: Inner is shared via Arc between exactly one Writer and one Reader,
+// each on potentially different threads. All access to `data` goes through
+// word-at-a-time atomics (atomic_store/atomic_load), and the seqlock protocol
+// ensures no torn reads. T: Send is required because values cross thread boundaries.
 unsafe impl<T: Send> Send for Inner<T> {}
 unsafe impl<T: Send> Sync for Inner<T> {}
 
@@ -45,6 +49,9 @@ pub struct Writer<T> {
     inner: Arc<Inner<T>>,
 }
 
+// SAFETY: Writer holds an Arc<Inner<T>> and is the sole writer. Sending it to
+// another thread is safe because T: Send and the seqlock protocol coordinates
+// all shared access to Inner's data.
 unsafe impl<T: Send> Send for Writer<T> {}
 
 /// The reading half of a conflated slot.
@@ -53,6 +60,9 @@ pub struct Reader<T> {
     inner: Arc<Inner<T>>,
 }
 
+// SAFETY: Reader holds an Arc<Inner<T>> and is the sole reader. Sending it to
+// another thread is safe because T: Send and the seqlock protocol coordinates
+// all shared access to Inner's data.
 unsafe impl<T: Send> Send for Reader<T> {}
 
 /// Creates a new SPSC conflated slot.

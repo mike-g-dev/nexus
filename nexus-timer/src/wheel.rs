@@ -396,8 +396,9 @@ impl<T: 'static, S: BoundedStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
             }
             Err(full) => {
                 // Extract the user's T from the WheelEntry wrapper
-                // SAFETY: we just constructed this entry, take_value is valid
                 let wheel_entry = full.into_inner();
+                // SAFETY: entry was just constructed with Some(value) and never inserted
+                // into the wheel — no other code has accessed it. Single-threaded.
                 let value = unsafe { wheel_entry.take_value() }
                     .expect("entry was just constructed with Some(value)");
                 Err(Full(value))
@@ -422,6 +423,8 @@ impl<T: 'static, S: BoundedStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
             }
             Err(full) => {
                 let wheel_entry = full.into_inner();
+                // SAFETY: entry was just constructed with Some(value) and never inserted
+                // into the wheel — no other code has accessed it. Single-threaded.
                 let value = unsafe { wheel_entry.take_value() }
                     .expect("entry was just constructed with Some(value)");
                 Err(Full(value))
@@ -454,6 +457,8 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
 
         if refs == 2 {
             // Active timer with handle — unlink, extract, free
+            // SAFETY: single-threaded access; entry is still in the wheel (refs==2),
+            // so the value has not been taken by fire_entry.
             let value = unsafe { entry.take_value() };
             let cancelled_deadline = entry.deadline_ticks();
             self.remove_entry(ptr);
@@ -807,6 +812,8 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
                 let next_entry = entry.next();
 
                 if entry.deadline_ticks() <= now_ticks {
+                    // SAFETY: entry_ptr is in this slot's DLL (obtained from entry_head
+                    // and walked via next pointers within the same slot).
                     unsafe { slot.remove_entry(entry_ptr) };
 
                     if let Some(value) = self.fire_entry(entry_ptr) {
