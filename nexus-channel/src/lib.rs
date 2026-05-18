@@ -188,7 +188,7 @@ impl<T> Sender<T> {
     #[inline]
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.producer.is_disconnected() {
-            return Err(SendError(value));
+            return cold_send_err(value);
         }
 
         let mut val = value;
@@ -208,7 +208,7 @@ impl<T> Sender<T> {
             backoff.snooze();
 
             if self.producer.is_disconnected() {
-                return Err(SendError(val));
+                return cold_send_err(val);
             }
 
             match self.producer.push(val) {
@@ -226,7 +226,7 @@ impl<T> Sender<T> {
 
             if self.producer.is_disconnected() {
                 self.shared.sender_parked.store(false, Ordering::Relaxed);
-                return Err(SendError(val));
+                return cold_send_err(val);
             }
 
             match self.producer.push(val) {
@@ -242,7 +242,7 @@ impl<T> Sender<T> {
             self.shared.sender_parked.store(false, Ordering::Relaxed);
 
             if self.producer.is_disconnected() {
-                return Err(SendError(val));
+                return cold_send_err(val);
             }
 
             match self.producer.push(val) {
@@ -264,7 +264,7 @@ impl<T> Sender<T> {
     #[inline]
     pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
         if self.producer.is_disconnected() {
-            return Err(TrySendError::Disconnected(value));
+            return cold_try_send_disconnected(value);
         }
 
         match self.producer.push(value) {
@@ -375,7 +375,7 @@ impl<T> Receiver<T> {
 
             if self.consumer.is_disconnected() {
                 self.shared.receiver_parked.store(false, Ordering::Relaxed);
-                return Err(RecvError);
+                return cold_recv_err();
             }
 
             self.parker.park();
@@ -387,7 +387,7 @@ impl<T> Receiver<T> {
             }
 
             if self.consumer.is_disconnected() {
-                return Err(RecvError);
+                return cold_recv_err();
             }
         }
     }
@@ -443,7 +443,7 @@ impl<T> Receiver<T> {
 
             if self.consumer.is_disconnected() {
                 self.shared.receiver_parked.store(false, Ordering::Relaxed);
-                return Err(RecvTimeoutError::Disconnected);
+                return cold_recv_timeout_disconnected();
             }
 
             let remaining = deadline - now;
@@ -456,7 +456,7 @@ impl<T> Receiver<T> {
             }
 
             if self.consumer.is_disconnected() {
-                return Err(RecvTimeoutError::Disconnected);
+                return cold_recv_timeout_disconnected();
             }
         }
     }
@@ -477,7 +477,7 @@ impl<T> Receiver<T> {
             }
             None => {
                 if self.consumer.is_disconnected() {
-                    Err(TryRecvError::Disconnected)
+                    cold_try_recv_disconnected()
                 } else {
                     Err(TryRecvError::Empty)
                 }
@@ -669,6 +669,35 @@ impl fmt::Display for RecvTimeoutError {
 }
 
 impl std::error::Error for RecvTimeoutError {}
+
+// ============================================================================
+// Cold error constructors
+// ============================================================================
+
+#[cold]
+fn cold_send_err<T>(val: T) -> Result<(), SendError<T>> {
+    Err(SendError(val))
+}
+
+#[cold]
+fn cold_try_send_disconnected<T>(val: T) -> Result<(), TrySendError<T>> {
+    Err(TrySendError::Disconnected(val))
+}
+
+#[cold]
+fn cold_recv_err<T>() -> Result<T, RecvError> {
+    Err(RecvError)
+}
+
+#[cold]
+fn cold_try_recv_disconnected<T>() -> Result<T, TryRecvError> {
+    Err(TryRecvError::Disconnected)
+}
+
+#[cold]
+fn cold_recv_timeout_disconnected<T>() -> Result<T, RecvTimeoutError> {
+    Err(RecvTimeoutError::Disconnected)
+}
 
 // ============================================================================
 // Tests

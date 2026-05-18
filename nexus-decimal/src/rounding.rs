@@ -136,13 +136,13 @@ macro_rules! impl_decimal_rounding {
                     quotient - 1
                 } else if remainder == half {
                     // Banker's rounding: round to even
-                    if quotient % 2 != 0 {
+                    if quotient & 1 != 0 {
                         quotient + 1
                     } else {
                         quotient
                     }
                 } else if remainder == -half {
-                    if quotient % 2 != 0 {
+                    if quotient & 1 != 0 {
                         quotient - 1
                     } else {
                         quotient
@@ -193,13 +193,13 @@ macro_rules! impl_decimal_rounding {
                 } else if remainder < -half {
                     quotient - 1
                 } else if remainder == half {
-                    if quotient % 2 != 0 {
+                    if quotient & 1 != 0 {
                         quotient + 1
                     } else {
                         quotient
                     }
                 } else if remainder == -half {
-                    if quotient % 2 != 0 {
+                    if quotient & 1 != 0 {
                         quotient - 1
                     } else {
                         quotient

@@ -52,24 +52,24 @@ fn apply_mask_scalar(buf: &mut [u8], mask: [u8; 4]) {
 
     // Handle unaligned prefix
     for (i, byte) in prefix.iter_mut().enumerate() {
-        *byte ^= mask[i % 4];
+        *byte ^= mask[i & 3];
     }
 
     // Bulk XOR 8 bytes at a time
     // Rotate mask to align with prefix offset (no allocation)
-    let offset = prefix.len() % 4;
+    let offset = prefix.len() & 3;
     let aligned_mask = if offset == 0 {
         mask_u64
     } else {
         let rotated: [u8; 8] = [
-            mask[offset % 4],
-            mask[(offset + 1) % 4],
-            mask[(offset + 2) % 4],
-            mask[(offset + 3) % 4],
-            mask[offset % 4],
-            mask[(offset + 1) % 4],
-            mask[(offset + 2) % 4],
-            mask[(offset + 3) % 4],
+            mask[offset & 3],
+            mask[(offset + 1) & 3],
+            mask[(offset + 2) & 3],
+            mask[(offset + 3) & 3],
+            mask[offset & 3],
+            mask[(offset + 1) & 3],
+            mask[(offset + 2) & 3],
+            mask[(offset + 3) & 3],
         ];
         u64::from_ne_bytes(rotated)
     };
@@ -78,9 +78,9 @@ fn apply_mask_scalar(buf: &mut [u8], mask: [u8; 4]) {
     }
 
     // Handle unaligned suffix
-    let suffix_offset = (prefix.len() + middle.len() * 8) % 4;
+    let suffix_offset = (prefix.len() + middle.len() * 8) & 3;
     for (i, byte) in suffix.iter_mut().enumerate() {
-        *byte ^= mask[(suffix_offset + i) % 4];
+        *byte ^= mask[(suffix_offset + i) & 3];
     }
 }
 
@@ -118,7 +118,7 @@ unsafe fn apply_mask_sse2(buf: &mut [u8], mask: [u8; 4]) {
 
     while i < len {
         // SAFETY: i < len
-        unsafe { *buf.get_unchecked_mut(i) ^= mask[i % 4] };
+        unsafe { *buf.get_unchecked_mut(i) ^= mask[i & 3] };
         i += 1;
     }
 }
@@ -169,7 +169,7 @@ unsafe fn apply_mask_avx2(buf: &mut [u8], mask: [u8; 4]) {
 
     while i < len {
         // SAFETY: i < len
-        unsafe { *buf.get_unchecked_mut(i) ^= mask[i % 4] };
+        unsafe { *buf.get_unchecked_mut(i) ^= mask[i & 3] };
         i += 1;
     }
 }
