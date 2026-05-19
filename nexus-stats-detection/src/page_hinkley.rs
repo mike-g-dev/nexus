@@ -169,18 +169,18 @@ macro_rules! impl_page_hinkley {
                 let threshold = self
                     .threshold
                     .ok_or(nexus_stats_core::ConfigError::Missing("threshold"))?;
-                if threshold <= 0.0 as $ty || threshold.is_nan() {
+                if !threshold.is_finite() || threshold <= 0.0 as $ty {
                     return Err(nexus_stats_core::ConfigError::Invalid(
-                        "PageHinkley threshold must be positive",
+                        "PageHinkley threshold must be finite and positive",
                     ));
                 }
 
                 let alpha = self
                     .alpha
                     .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
-                if alpha < 0.0 as $ty || alpha.is_nan() {
+                if !alpha.is_finite() || alpha < 0.0 as $ty {
                     return Err(nexus_stats_core::ConfigError::Invalid(
-                        "PageHinkley alpha must be non-negative",
+                        "PageHinkley alpha must be finite and non-negative",
                     ));
                 }
 

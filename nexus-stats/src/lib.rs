@@ -3,7 +3,7 @@
 
 //! Fixed-memory, zero-allocation streaming statistics for real-time systems.
 //!
-//! 65+ algorithms, all O(1) per update (or O(d) for d-dimensional filters), fixed memory.
+//! 60+ algorithms, all O(1) per update (or O(d) for d-dimensional filters), fixed memory.
 //! Core types are `no_std` compatible; types marked *(std)* require the `std` feature,
 //! *(alloc)* require `alloc`, and *(std|libm)* require either `std` or `libm`.
 //!

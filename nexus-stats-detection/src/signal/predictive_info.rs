@@ -339,6 +339,11 @@ macro_rules! impl_predictive_info {
                 let x_width = (x_max - x_min) / bins as $ty;
                 let y_width = (y_max - y_min) / bins as $ty;
                 let min_samples = self.min_samples.unwrap_or((bins * bins) as u64);
+                if min_samples < 1 {
+                    return Err(nexus_stats_core::ConfigError::Invalid(
+                        "PredictiveInfoBound min_samples must be >= 1",
+                    ));
+                }
 
                 Ok($name {
                     bins,

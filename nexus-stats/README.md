@@ -46,7 +46,7 @@ if let Some(mean) = stats.mean() {
 
 ## Algorithms
 
-58+ algorithms across 10 categories. See [full documentation](docs/INDEX.md)
+60+ algorithms across 10 categories. See [full documentation](docs/INDEX.md)
 for deep-dives on each algorithm.
 
 ### Change Detection

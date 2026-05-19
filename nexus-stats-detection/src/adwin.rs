@@ -6,7 +6,6 @@ use nexus_stats_core::DataError;
 #[derive(Debug, Clone, Copy)]
 struct Bucket {
     total: f64,
-    variance: f64,
     count: u64,
 }
 
@@ -27,7 +26,6 @@ impl BucketList {
     fn insert(&mut self, value: f64) {
         self.levels[0].push(Bucket {
             total: value,
-            variance: 0.0,
             count: 1,
         });
         self.compress();
@@ -54,18 +52,9 @@ impl BucketList {
     }
 
     fn merge_buckets(a: Bucket, b: Bucket) -> Bucket {
-        let count = a.count + b.count;
-        let total = a.total + b.total;
-        let mean_a = a.total / a.count as f64;
-        let mean_b = b.total / b.count as f64;
-        let delta = mean_b - mean_a;
-        let variance = a.variance
-            + b.variance
-            + delta * delta * a.count as f64 * b.count as f64 / count as f64;
         Bucket {
-            total,
-            variance,
-            count,
+            total: a.total + b.total,
+            count: a.count + b.count,
         }
     }
 
@@ -97,6 +86,11 @@ macro_rules! impl_adwin {
         ///
         /// Bifet & Gavalda, 2007.
         ///
+        /// **Note:** The Hoeffding bound assumes bounded support. For best
+        /// results, normalize inputs to a known range (e.g. \[0, 1\]).
+        /// Detection still works on raw values but `delta` loses its
+        /// strict confidence interpretation.
+        ///
         /// # Parameters
         ///
         /// - `delta` (δ) — confidence parameter. Smaller values reduce false
@@ -124,7 +118,6 @@ macro_rules! impl_adwin {
             delta: $ty,
             buckets: BucketList,
             total: $ty,
-            variance: $ty,
             width: u64,
             count: u64,
             min_samples: u64,
@@ -169,12 +162,6 @@ macro_rules! impl_adwin {
 
                 self.buckets.insert(sample as f64);
                 self.total += sample;
-
-                if self.width > 1 {
-                    let mean = self.total / self.width as $ty;
-                    let delta_val = sample - mean;
-                    self.variance += delta_val * (sample - self.total / self.width as $ty);
-                }
 
                 if !self.is_primed() {
                     return Ok(false);
@@ -229,7 +216,6 @@ macro_rules! impl_adwin {
                         break;
                     }
 
-                    let old_width = self.width;
                     self.width -= removed;
 
                     let new_total_f64 = {
@@ -242,11 +228,6 @@ macro_rules! impl_adwin {
                         s
                     };
                     self.total = new_total_f64 as $ty;
-
-                    if self.width > 0 && old_width > 0 {
-                        let ratio = self.width as $ty / old_width as $ty;
-                        self.variance *= ratio;
-                    }
 
                     changed = true;
                 }
@@ -290,7 +271,6 @@ macro_rules! impl_adwin {
             pub fn reset(&mut self) {
                 self.buckets.reset();
                 self.total = 0.0 as $ty;
-                self.variance = 0.0 as $ty;
                 self.width = 0;
                 self.count = 0;
             }
@@ -351,7 +331,6 @@ macro_rules! impl_adwin {
                     delta,
                     buckets: BucketList::new(self.max_buckets),
                     total: 0.0 as $ty,
-                    variance: 0.0 as $ty,
                     width: 0,
                     count: 0,
                     min_samples: self.min_samples,
