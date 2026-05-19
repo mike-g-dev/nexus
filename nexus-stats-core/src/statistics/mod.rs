@@ -1,6 +1,7 @@
 //! Core streaming statistics.
 
 mod amihud;
+mod bipower;
 mod bucket;
 mod covariance;
 #[cfg(feature = "alloc")]
@@ -14,11 +15,16 @@ mod hit_rate;
 mod hurst;
 mod moments;
 mod percentile;
+#[cfg(any(feature = "std", feature = "libm"))]
+mod roll_spread;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod two_scale_rv;
 #[cfg(feature = "alloc")]
 mod variance_ratio;
 mod welford;
 
 pub use amihud::*;
+pub use bipower::*;
 pub use bucket::*;
 pub use covariance::*;
 #[cfg(feature = "alloc")]
@@ -32,6 +38,10 @@ pub use hit_rate::*;
 pub use hurst::*;
 pub use moments::*;
 pub use percentile::*;
+#[cfg(any(feature = "std", feature = "libm"))]
+pub use roll_spread::*;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+pub use two_scale_rv::*;
 #[cfg(feature = "alloc")]
 pub use variance_ratio::*;
 pub use welford::*;

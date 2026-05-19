@@ -67,8 +67,8 @@
 //! |--------|----------|
 //! | [`smoothing`] | EMA, AsymEma, Slew |
 //! | [`detection`] | CUSUM |
-//! | [`statistics`] | Welford, Moments, EwmaVar, Covariance, HarmonicMean, Percentile |
-//! | [`monitoring`] | Drawdown, Windowed Min/Max, CoDel, Liveness, EventRate, Jitter, ErrorRate, Saturation |
+//! | [`statistics`] | Welford, Moments, EwmaVar, Covariance, HarmonicMean, Percentile, BipowerVariation, RollSpread, TwoScaleRv |
+//! | [`monitoring`] | Drawdown, Windowed Min/Max, CoDel, Liveness, EventRate, Jitter, ErrorRate, Saturation, HawkesIntensity |
 //! | [`control`] | DeadBand, Hysteresis, Debounce, LevelCrossing, Diff |
 //!
 //! ## Advanced (feature-gated, re-exported from subcrates)
