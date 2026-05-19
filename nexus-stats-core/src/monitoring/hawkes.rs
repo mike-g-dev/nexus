@@ -103,7 +103,9 @@ macro_rules! impl_hawkes {
 
             /// Intensity at an arbitrary time (without recording an event).
             ///
-            /// Decays excitation from last event time to `time`.
+            /// Decays excitation from last event time to `time`. Assumes
+            /// monotonic timestamps; times before `last_time` are clamped
+            /// to zero delta, returning the current intensity.
             #[inline]
             #[must_use]
             pub fn intensity_at(&self, time: u64) -> $ty {

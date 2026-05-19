@@ -122,7 +122,8 @@ macro_rules! impl_roll_spread {
             /// Hasbrouck's adjusted spread: `spread · √(1 + ρ)` where
             /// `ρ = cov / var` is the first-order autocorrelation.
             ///
-            /// Returns `None` if Roll spread is `None` or variance is zero.
+            /// Returns `None` if Roll spread is `None`, variance is zero,
+            /// or `1 + ρ <= 0` (extreme mean-reversion).
             #[inline]
             #[must_use]
             pub fn hasbrouck_spread(&self) -> Option<$ty> {
@@ -272,18 +273,18 @@ mod tests {
             .build()
             .unwrap();
 
+        // Trend + bounce: negative autocov but ρ > -1
         for i in 0..200 {
-            let price = 100.0 + if i % 2 == 0 { 0.5 } else { -0.5 };
-            rs.update(price).unwrap();
+            let bounce = if i % 2 == 0 { 0.2 } else { -0.2 };
+            rs.update(100.0 + (i as f64) * 0.1 + bounce).unwrap();
         }
 
         let roll = rs.spread().unwrap();
-        if let Some(hasbrouck) = rs.hasbrouck_spread() {
-            assert!(
-                hasbrouck <= roll * 1.5,
-                "Hasbrouck should be reasonable relative to Roll: H={hasbrouck}, R={roll}"
-            );
-        }
+        let hasbrouck = rs.hasbrouck_spread().unwrap();
+        assert!(
+            hasbrouck > 0.0 && hasbrouck <= roll * 1.5,
+            "Hasbrouck ({hasbrouck}) should be positive and reasonable vs Roll ({roll})"
+        );
     }
 
     #[test]

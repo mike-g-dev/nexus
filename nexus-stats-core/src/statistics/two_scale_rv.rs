@@ -7,9 +7,9 @@ use alloc::vec;
 /// Combines high-frequency (all-tick) and subsampled (every K ticks)
 /// realized variance to cancel microstructure noise bias.
 ///
-/// TSRV = RV_slow - (n_bar / n) · RV_fast
+/// TSRV = [Y,Y]^{(avg)} - (n̄ / n) · [Y,Y]^{(all)}
 ///
-/// where n_bar = n_fast / K is the effective slow-scale sample count.
+/// where [Y,Y]^{(avg)} = Σ(K-tick returns²) / K and n̄ = n_slow / K.
 ///
 /// Zhang, Mykland, Aït-Sahalia (2005).
 ///
@@ -81,11 +81,10 @@ impl TwoScaleRvF64 {
             self.fast_sum_sq += fast_diff * fast_diff;
         }
 
-        let old_idx = (self.write_idx + 1) % self.k;
+        let oldest = if self.filled { Some(self.buffer[self.write_idx]) } else { None };
         self.buffer[self.write_idx] = price;
 
-        if self.filled {
-            let old_price = self.buffer[old_idx];
+        if let Some(old_price) = oldest {
             let slow_diff = price - old_price;
             self.slow_sum_sq += slow_diff * slow_diff;
             self.n_slow += 1;
@@ -114,9 +113,11 @@ impl TwoScaleRvF64 {
             return Option::None;
         }
 
-        let rv_slow = self.slow_sum_sq / self.n_slow as f64;
-        let n_bar = n_fast as f64 / self.k as f64;
-        let tsrv = rv_slow - (n_bar / n_fast as f64) * self.fast_sum_sq / n_fast as f64;
+        let n_bar = self.n_slow as f64 / self.k as f64;
+        let correction = n_bar / n_fast as f64;
+        let tsrv = crate::math::MulAdd::fma(
+            -correction, self.fast_sum_sq, self.slow_sum_sq / self.k as f64,
+        );
 
         Option::Some(if tsrv > 0.0 { tsrv } else { 0.0 })
     }
@@ -130,8 +131,9 @@ impl TwoScaleRvF64 {
         self.realized_variance().map(crate::math::sqrt)
     }
 
-    /// Raw all-tick realized variance (noisy).
+    /// Raw all-tick realized variance (noisy, unnormalized).
     ///
+    /// Returns the sum of squared one-tick returns: `[Y,Y]^{(all)}`.
     /// Returns `None` if not primed.
     #[inline]
     #[must_use]
@@ -139,10 +141,10 @@ impl TwoScaleRvF64 {
         if !self.is_primed() || self.count < 2 {
             return Option::None;
         }
-        Option::Some(self.fast_sum_sq / (self.count - 1) as f64)
+        Option::Some(self.fast_sum_sq)
     }
 
-    /// Estimated noise variance: `(RV_fast - TSRV) / 2`.
+    /// Estimated noise variance per observation: `([Y,Y]^{(all)} - TSRV) / 2n`.
     ///
     /// Returns `None` if not primed.
     #[inline]
@@ -150,7 +152,8 @@ impl TwoScaleRvF64 {
     pub fn noise_variance(&self) -> Option<f64> {
         let fast = self.fast_rv()?;
         let tsrv = self.realized_variance()?;
-        let noise = (fast - tsrv) / 2.0;
+        let n_fast = (self.count - 1) as f64;
+        let noise = (fast - tsrv) / (2.0 * n_fast);
         Option::Some(if noise > 0.0 { noise } else { 0.0 })
     }
 
