@@ -84,6 +84,9 @@ for deep-dives on each algorithm.
 | `EwmaVarF64` | Exponentially weighted variance | 12 |
 | `CovarianceF64` | Online covariance + Pearson correlation | 12 |
 | `HarmonicMeanF64` | Correct average for rates/throughputs | 5 |
+| `BipowerVariationF64` | Jump-robust volatility (BV vs RV) | TBD |
+| `RollSpreadF64` *(std\|libm)* | Implicit bid-ask spread from autocovariance | TBD |
+| `TwoScaleRvF64` *(alloc, std\|libm)* | Noise-corrected realized variance | TBD |
 
 ### Regression
 
@@ -128,6 +131,7 @@ for deep-dives on each algorithm.
 | `ErrorRateF64` | Failure rate with weighted severity | 6 |
 | `TrendAlertF64` | Trend direction (Stable/Rising/Falling) | 12 |
 | `JitterF64` | Signal variability measurement | 6 |
+| `HawkesIntensityF64` *(std\|libm)* | Self-exciting point process intensity | TBD |
 
 ### Frequency & Scoring
 
@@ -174,6 +178,10 @@ intrinsics; integer types use bit-shift arithmetic.
 | PageHinkley | ✓ | ✓ | | | |
 | ADWIN | ✓ | ✓ | | | |
 | PredictiveInfoBound | ✓ | ✓ | | | |
+| BipowerVariation | ✓ | ✓ | | | |
+| RollSpread | ✓ | ✓ | | | |
+| TwoScaleRv | | ✓ | | | |
+| HawkesIntensity | ✓ | ✓ | | | |
 | Saturation, ErrorRate, TrendAlert | ✓ | ✓ | | | |
 | ShiryaevRoberts | | ✓ | | | |
 
@@ -271,6 +279,10 @@ See [`docs/use-cases/trading.md`](docs/use-cases/trading.md) for full guide with
 | Random walk test | `VarianceRatioF64` | core |
 | Distribution change | `DistributionShiftF64` | core |
 | Win rate | `HitRateF64` | core |
+| Jump-robust volatility | `BipowerVariationF64` | core |
+| Implicit spread estimation | `RollSpreadF64` | core |
+| Noise-corrected realized vol | `TwoScaleRvF64` | core |
+| Bursty event intensity | `HawkesIntensityF64` | core |
 | Conditional smoothing | `ConditionalEmaF64` | smoothing |
 
 ## License

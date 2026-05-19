@@ -10,6 +10,21 @@ contained.
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-05-18
+
+### Added
+
+- **`BipowerVariationF64/F32`** — jump-robust volatility estimator using
+  products of consecutive absolute returns. Barndorff-Nielsen & Shephard (2004).
+- **`RollSpreadF64/F32`** — Roll's implicit spread estimator from
+  autocovariance of consecutive price changes, with Hasbrouck (2009) adjustment.
+  Requires `std` or `libm`.
+- **`TwoScaleRvF64`** — two-scale realized variance, noise-corrected volatility
+  estimator. Zhang, Mykland, Ait-Sahalia (2005). Requires `alloc` + `std`/`libm`.
+- **`HawkesIntensityF64/F32`** — self-exciting point process intensity
+  estimator. Models bursty event arrivals with exponential decay. Requires
+  `std` or `libm`.
+
 ## [2.0.0] — 2026-05-18
 
 Clock trait and Instant type removal.
