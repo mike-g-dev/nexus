@@ -100,6 +100,16 @@ for deep-dives on each algorithm.
 | `LogarithmicRegressionF64` | Logarithmic fit (`y = a·ln(x) + b`) | TBD |
 | `PowerRegressionF64` | Power law fit (`y = ax^b`) | TBD |
 
+### Multi-Armed Bandits *(alloc, std|libm)*
+
+| Type | What It Does | p50 |
+|------|-------------|-----|
+| `Ucb1F64` | UCB1 — deterministic explore/exploit | TBD |
+| `ThompsonBetaF64` | Thompson Sampling — Beta prior for [0,1] rewards | TBD |
+| `ThompsonGammaF64` | Thompson Sampling — Gamma prior for positive rewards | TBD |
+| `EpsilonGreedyF64` | ε-greedy — simplest bandit baseline | TBD |
+| `Exp3F64` | EXP3 — adversarial bandit (no stochastic assumption) | TBD |
+
 ### Signal Analysis
 
 | Type | What It Computes | p50 |
@@ -184,6 +194,7 @@ intrinsics; integer types use bit-shift arithmetic.
 | HawkesIntensity | ✓ | ✓ | | | |
 | Saturation, ErrorRate, TrendAlert | ✓ | ✓ | | | |
 | ShiryaevRoberts | | ✓ | | | |
+| Ucb1, ThompsonBeta, ThompsonGamma, EpsilonGreedy, Exp3 | ✓ | ✓ | | | |
 
 ## Common API Patterns
 
@@ -284,6 +295,9 @@ See [`docs/use-cases/trading.md`](docs/use-cases/trading.md) for full guide with
 | Noise-corrected realized vol | `TwoScaleRvF64` | core |
 | Bursty event intensity | `HawkesIntensityF64` | core |
 | Conditional smoothing | `ConditionalEmaF64` | smoothing |
+| Venue selection | `ThompsonBetaF64` / `Ucb1F64` | regression |
+| Parameter A/B testing | `Ucb1F64` / `EpsilonGreedyF64` | regression |
+| Adversarial strategy | `Exp3F64` | regression |
 
 ## License
 

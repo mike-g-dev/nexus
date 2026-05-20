@@ -80,7 +80,7 @@
 //! | `detection` | `signal` | Autocorrelation, CrossCorrelation, Entropy, TransferEntropy, PredictiveInfoBound |
 //! | `detection` | `estimation` | + SPRT |
 //! | `regression` | `regression` | Linear, Polynomial, EW variants, Transformed, LogisticRegression |
-//! | `regression` | `learning` | LMS, NLMS, RLS, OnlineKMeans, GD, AdaGrad, Adam |
+//! | `regression` | `learning` | LMS, NLMS, RLS, OnlineKMeans, GD, AdaGrad, Adam, UCB1, ThompsonBeta, ThompsonGamma, EpsilonGreedy, EXP3 |
 //! | `regression` | `estimation` | + Kalman 2d/3d, BetaBinomial, GammaPoisson |
 //! | `control` | `control` | + PeakDetector, BoolWindow |
 //! | `control` | `frequency` | TopK, FlexProportion, DecayAccum |

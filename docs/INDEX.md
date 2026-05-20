@@ -46,6 +46,12 @@ gotchas called out.
   reading p50/p99/p999/p9999, A/B comparison, common pitfalls.
   **Read this before running your first benchmark.**
 
+## Guides
+
+- [**bandits.md**](./bandits.md) — Multi-armed bandits: when to use
+  UCB1, Thompson, EpsilonGreedy, or EXP3. Discounting, reward
+  normalization, trading examples.
+
 ## Per-crate documentation
 
 Each crate owns its own deep-dive docs. When you need the internals of

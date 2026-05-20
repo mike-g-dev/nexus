@@ -8,8 +8,8 @@
 
 extern crate alloc;
 use alloc::boxed::Box;
-use nexus_stats_core::math::MulAdd;
 use alloc::vec;
+use nexus_stats_core::math::MulAdd;
 
 macro_rules! impl_lms_filter {
     ($name:ident, $builder:ident, $ty:ty) => {

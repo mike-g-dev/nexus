@@ -29,3 +29,27 @@ pub use online_gd::*;
 pub use online_kmeans::*;
 #[cfg(feature = "alloc")]
 pub use rls::*;
+
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod epsilon_greedy;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod exp3;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod sampling;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod thompson_beta;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod thompson_gamma;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod ucb1;
+
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+pub use epsilon_greedy::*;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+pub use exp3::*;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+pub use thompson_beta::*;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+pub use thompson_gamma::*;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+pub use ucb1::*;

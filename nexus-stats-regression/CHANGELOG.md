@@ -10,6 +10,26 @@ contained.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-05-19
+
+### Added
+
+- **`Ucb1F64/F32`** — UCB1 multi-armed bandit. Deterministic selection,
+  no RNG needed. Auer, Cesa-Bianchi, Fischer (2002).
+- **`ThompsonBetaF64/F32`** — Thompson Sampling with Beta conjugate
+  prior for binary/[0,1] rewards. Thompson (1933).
+- **`ThompsonGammaF64/F32`** — Thompson Sampling with Gamma conjugate
+  prior for positive continuous rewards.
+- **`EpsilonGreedyF64/F32`** — Epsilon-greedy bandit. Simplest baseline.
+- **`Exp3F64/F32`** — EXP3 adversarial bandit. Robust to non-stochastic
+  rewards. Auer, Cesa-Bianchi, Freund, Schapire (2002).
+- All five types support exponential discounting via `decay` parameter
+  for non-stationary reward environments.
+- Internal sampling utilities (Marsaglia polar, Marsaglia-Tsang Gamma,
+  Beta from Gamma ratio).
+
+All bandit types require `alloc` + (`std` or `libm`).
+
 ## [1.2.0] and earlier
 
 Earlier history is not documented in this CHANGELOG. See git history

@@ -18,6 +18,11 @@ Online regression, learning, and estimation for [nexus-stats](https://crates.io/
 - **OnlineGdF64** — Online gradient descent (requires `alloc`)
 - **AdaGradF64** — AdaGrad optimizer (requires `alloc` + (`std` or `libm`))
 - **AdamF64** — Adam optimizer (requires `alloc` + (`std` or `libm`))
+- **Ucb1F64** — UCB1 multi-armed bandit (requires `alloc` + (`std` or `libm`))
+- **ThompsonBetaF64** — Thompson Sampling with Beta prior (requires `alloc` + (`std` or `libm`))
+- **ThompsonGammaF64** — Thompson Sampling with Gamma prior (requires `alloc` + (`std` or `libm`))
+- **EpsilonGreedyF64** — Epsilon-greedy bandit (requires `alloc` + (`std` or `libm`))
+- **Exp3F64** — EXP3 adversarial bandit (requires `alloc` + (`std` or `libm`))
 
 ## Estimation Types
 

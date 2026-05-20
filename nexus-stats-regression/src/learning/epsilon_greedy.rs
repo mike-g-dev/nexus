@@ -1,0 +1,526 @@
+extern crate alloc;
+use alloc::boxed::Box;
+use alloc::vec;
+
+macro_rules! impl_epsilon_greedy {
+    ($name:ident, $builder:ident, $ty:ty) => {
+        /// Epsilon-greedy multi-armed bandit.
+        ///
+        /// With probability `epsilon`, selects a uniformly random arm
+        /// (explore). Otherwise selects the arm with the highest mean
+        /// reward (exploit). Ties broken by lowest index.
+        ///
+        /// Arms with zero pulls are selected first (round-robin, lowest
+        /// index priority) before the epsilon-greedy rule applies.
+        ///
+        /// The simplest bandit algorithm. Useful as a baseline and when
+        /// operational simplicity matters more than convergence speed.
+        ///
+        /// # Parameters
+        ///
+        /// - `arms` — number of arms (>= 2)
+        /// - `epsilon` — exploration probability, in (0, 1)
+        /// - `decay` — exponential discount on counts/rewards (default: 1.0)
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use nexus_stats_regression::learning::EpsilonGreedyF64;
+        ///
+        /// let mut bandit = EpsilonGreedyF64::builder()
+        ///     .arms(3)
+        ///     .epsilon(0.1)
+        ///     .build()
+        ///     .unwrap();
+        ///
+        /// let mut s: u64 = 42;
+        /// let mut rng = || -> f64 {
+        ///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+        ///     (s >> 33) as f64 / (1u64 << 31) as f64
+        /// };
+        /// let arm = bandit.select(&mut rng);
+        /// bandit.update(arm, 1.0).unwrap();
+        /// ```
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            counts: Box<[$ty]>,
+            rewards: Box<[$ty]>,
+            epsilon: $ty,
+            decay: $ty,
+            total_pulls: u64,
+            num_arms: usize,
+            min_samples: u64,
+        }
+
+        /// Builder for [`
+        #[doc = stringify!($name)]
+        /// `].
+        #[derive(Debug, Clone)]
+        pub struct $builder {
+            arms: Option<usize>,
+            epsilon: Option<$ty>,
+            decay: $ty,
+            min_samples: Option<u64>,
+        }
+
+        impl $name {
+            /// Creates a builder.
+            #[inline]
+            #[must_use]
+            pub fn builder() -> $builder {
+                $builder {
+                    arms: Option::None,
+                    epsilon: Option::None,
+                    decay: 1.0 as $ty,
+                    min_samples: Option::None,
+                }
+            }
+
+            /// Selects an arm: random with probability epsilon, best mean otherwise.
+            ///
+            /// Unpulled arms are selected first (lowest index priority).
+            /// `rng` must return a uniform sample in [0, 1).
+            #[must_use]
+            #[allow(clippy::float_cmp)]
+            pub fn select(&self, rng: &mut impl FnMut() -> $ty) -> usize {
+                // Round-robin unpulled arms first
+                for i in 0..self.num_arms {
+                    if self.counts[i] == 0.0 as $ty {
+                        return i;
+                    }
+                }
+
+                let coin = rng();
+                if coin < self.epsilon {
+                    // Explore: uniform random arm
+                    let r = rng();
+                    let idx = (r * self.num_arms as $ty) as usize;
+                    // Clamp to valid range (r could be very close to 1.0)
+                    if idx >= self.num_arms {
+                        self.num_arms - 1
+                    } else {
+                        idx
+                    }
+                } else {
+                    // Exploit: best mean reward
+                    let mut best_arm = 0;
+                    let mut best_mean = self.rewards[0] / self.counts[0];
+                    for i in 1..self.num_arms {
+                        let mean = self.rewards[i] / self.counts[i];
+                        if mean > best_mean {
+                            best_mean = mean;
+                            best_arm = i;
+                        }
+                    }
+                    best_arm
+                }
+            }
+
+            /// Records a reward for an arm.
+            ///
+            /// # Errors
+            ///
+            /// Returns `DataError` if reward is NaN or infinite.
+            ///
+            /// # Panics
+            ///
+            /// Panics if `arm >= num_arms`.
+            #[inline]
+            pub fn update(
+                &mut self,
+                arm: usize,
+                reward: $ty,
+            ) -> Result<(), nexus_stats_core::DataError> {
+                check_finite!(reward);
+                assert!(
+                    arm < self.num_arms,
+                    "arm {arm} >= num_arms {}",
+                    self.num_arms
+                );
+
+                if self.decay < 1.0 as $ty {
+                    for i in 0..self.num_arms {
+                        self.counts[i] *= self.decay;
+                        self.rewards[i] *= self.decay;
+                    }
+                }
+
+                self.counts[arm] += 1.0 as $ty;
+                self.rewards[arm] += reward;
+                self.total_pulls += 1;
+                Ok(())
+            }
+
+            /// Mean reward for an arm, or `None` if never pulled.
+            #[inline]
+            #[must_use]
+            #[allow(clippy::float_cmp)]
+            pub fn mean_reward(&self, arm: usize) -> Option<$ty> {
+                assert!(
+                    arm < self.num_arms,
+                    "arm {arm} >= num_arms {}",
+                    self.num_arms
+                );
+                if self.counts[arm] == 0.0 as $ty {
+                    return Option::None;
+                }
+                Option::Some(self.rewards[arm] / self.counts[arm])
+            }
+
+            /// Effective pull count for an arm (decayed).
+            #[inline]
+            #[must_use]
+            pub fn pulls(&self, arm: usize) -> $ty {
+                assert!(
+                    arm < self.num_arms,
+                    "arm {arm} >= num_arms {}",
+                    self.num_arms
+                );
+                self.counts[arm]
+            }
+
+            /// Total pulls across all arms (un-decayed counter).
+            #[inline]
+            #[must_use]
+            pub fn total_pulls(&self) -> u64 {
+                self.total_pulls
+            }
+
+            /// Number of arms.
+            #[inline]
+            #[must_use]
+            pub fn num_arms(&self) -> usize {
+                self.num_arms
+            }
+
+            /// Whether all arms have been pulled at least once
+            /// and `total_pulls >= min_samples`.
+            #[inline]
+            #[must_use]
+            pub fn is_primed(&self) -> bool {
+                self.total_pulls >= self.min_samples && self.counts.iter().all(|&c| c > 0.0 as $ty)
+            }
+
+            /// Returns the number of updates performed.
+            #[inline]
+            #[must_use]
+            pub fn count(&self) -> u64 {
+                self.total_pulls
+            }
+
+            /// Resets all state, keeping configuration.
+            #[inline]
+            pub fn reset(&mut self) {
+                self.counts.fill(0.0 as $ty);
+                self.rewards.fill(0.0 as $ty);
+                self.total_pulls = 0;
+            }
+        }
+
+        impl $builder {
+            /// Sets the number of arms (required, >= 2).
+            #[inline]
+            #[must_use]
+            pub fn arms(mut self, n: usize) -> Self {
+                self.arms = Option::Some(n);
+                self
+            }
+
+            /// Sets the exploration probability (required, in (0, 1)).
+            #[inline]
+            #[must_use]
+            pub fn epsilon(mut self, e: $ty) -> Self {
+                self.epsilon = Option::Some(e);
+                self
+            }
+
+            /// Sets the decay factor (default: 1.0, in (0, 1]).
+            #[inline]
+            #[must_use]
+            pub fn decay(mut self, d: $ty) -> Self {
+                self.decay = d;
+                self
+            }
+
+            /// Sets the minimum samples before `is_primed()` returns true.
+            #[inline]
+            #[must_use]
+            pub fn min_samples(mut self, n: u64) -> Self {
+                self.min_samples = Option::Some(n);
+                self
+            }
+
+            /// Builds the bandit.
+            #[inline]
+            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
+                let arms = self
+                    .arms
+                    .ok_or(nexus_stats_core::ConfigError::Missing("arms"))?;
+                let epsilon = self
+                    .epsilon
+                    .ok_or(nexus_stats_core::ConfigError::Missing("epsilon"))?;
+                if arms < 2 {
+                    return Err(nexus_stats_core::ConfigError::Invalid("arms must be >= 2"));
+                }
+                if epsilon <= 0.0 as $ty || epsilon >= 1.0 as $ty || !epsilon.is_finite() {
+                    return Err(nexus_stats_core::ConfigError::Invalid(
+                        "epsilon must be in (0, 1)",
+                    ));
+                }
+                if self.decay <= 0.0 as $ty || self.decay > 1.0 as $ty || !self.decay.is_finite() {
+                    return Err(nexus_stats_core::ConfigError::Invalid(
+                        "decay must be in (0, 1]",
+                    ));
+                }
+                let min_samples = self.min_samples.unwrap_or(arms as u64);
+                Ok($name {
+                    counts: vec![0.0 as $ty; arms].into_boxed_slice(),
+                    rewards: vec![0.0 as $ty; arms].into_boxed_slice(),
+                    epsilon,
+                    decay: self.decay,
+                    total_pulls: 0,
+                    num_arms: arms,
+                    min_samples,
+                })
+            }
+        }
+    };
+}
+
+impl_epsilon_greedy!(EpsilonGreedyF64, EpsilonGreedyF64Builder, f64);
+impl_epsilon_greedy!(EpsilonGreedyF32, EpsilonGreedyF32Builder, f32);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_rng(seed: u64) -> impl FnMut() -> f64 {
+        let mut state = seed;
+        move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as f64 / (1u64 << 31) as f64
+        }
+    }
+
+    #[test]
+    fn explore_all_first() {
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(3)
+            .epsilon(0.1)
+            .build()
+            .unwrap();
+        let mut rng = make_rng(42);
+
+        let a0 = bandit.select(&mut rng);
+        bandit.update(a0, 0.5).unwrap();
+        let a1 = bandit.select(&mut rng);
+        assert_ne!(a1, a0);
+        bandit.update(a1, 0.5).unwrap();
+        let a2 = bandit.select(&mut rng);
+        assert_ne!(a2, a0);
+        assert_ne!(a2, a1);
+    }
+
+    #[test]
+    fn pure_exploit() {
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(3)
+            .epsilon(0.01) // very low exploration
+            .build()
+            .unwrap();
+
+        // Seed all arms
+        bandit.update(0, 0.0).unwrap();
+        bandit.update(1, 1.0).unwrap();
+        bandit.update(2, 0.0).unwrap();
+
+        let mut rng = make_rng(42);
+        let mut best_count = 0u32;
+        let trials = 500;
+        for _ in 0..trials {
+            let arm = bandit.select(&mut rng);
+            if arm == 1 {
+                best_count += 1;
+            }
+            bandit
+                .update(arm, if arm == 1 { 1.0 } else { 0.0 })
+                .unwrap();
+        }
+
+        assert!(
+            best_count as f64 / trials as f64 > 0.9,
+            "best arm fraction = {}",
+            best_count as f64 / trials as f64
+        );
+    }
+
+    #[test]
+    fn explores_at_rate() {
+        let epsilon = 0.3;
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(2)
+            .epsilon(epsilon)
+            .build()
+            .unwrap();
+
+        // Seed both arms — arm 0 is clearly better
+        bandit.update(0, 1.0).unwrap();
+        bandit.update(1, 0.0).unwrap();
+
+        let mut rng = make_rng(42);
+        let mut explore_count = 0u32;
+        let trials = 2000;
+        for _ in 0..trials {
+            let arm = bandit.select(&mut rng);
+            if arm == 1 {
+                explore_count += 1;
+            }
+            bandit
+                .update(arm, if arm == 0 { 1.0 } else { 0.0 })
+                .unwrap();
+        }
+
+        // Should explore ~epsilon/2 of the time (half of explores go to arm 1)
+        let explore_rate = explore_count as f64 / trials as f64;
+        assert!(
+            explore_rate > 0.05 && explore_rate < 0.4,
+            "explore_rate={explore_rate}, expected ~{}",
+            epsilon / 2.0
+        );
+    }
+
+    #[test]
+    fn decay_adapts() {
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(2)
+            .epsilon(0.1)
+            .decay(0.9)
+            .build()
+            .unwrap();
+
+        // Phase 1: arm 0 best
+        for _ in 0..50 {
+            bandit.update(0, 1.0).unwrap();
+            bandit.update(1, 0.0).unwrap();
+        }
+        assert!(bandit.mean_reward(0).unwrap() > bandit.mean_reward(1).unwrap());
+
+        // Phase 2: arm 1 best
+        for _ in 0..100 {
+            bandit.update(0, 0.0).unwrap();
+            bandit.update(1, 1.0).unwrap();
+        }
+        assert!(
+            bandit.mean_reward(1).unwrap() > bandit.mean_reward(0).unwrap(),
+            "should adapt: arm0={}, arm1={}",
+            bandit.mean_reward(0).unwrap(),
+            bandit.mean_reward(1).unwrap(),
+        );
+    }
+
+    #[test]
+    fn reset_clears() {
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(2)
+            .epsilon(0.1)
+            .build()
+            .unwrap();
+        bandit.update(0, 1.0).unwrap();
+        bandit.reset();
+        assert_eq!(bandit.total_pulls(), 0);
+        assert_eq!(bandit.mean_reward(0), Option::None);
+    }
+
+    #[test]
+    fn nan_rejected() {
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(2)
+            .epsilon(0.1)
+            .build()
+            .unwrap();
+        assert_eq!(
+            bandit.update(0, f64::NAN),
+            Err(nexus_stats_core::DataError::NotANumber)
+        );
+    }
+
+    #[test]
+    fn inf_rejected() {
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(2)
+            .epsilon(0.1)
+            .build()
+            .unwrap();
+        assert_eq!(
+            bandit.update(0, f64::INFINITY),
+            Err(nexus_stats_core::DataError::Infinite)
+        );
+    }
+
+    #[test]
+    fn builder_validation() {
+        assert!(
+            EpsilonGreedyF64::builder()
+                .arms(1)
+                .epsilon(0.1)
+                .build()
+                .is_err()
+        );
+        assert!(
+            EpsilonGreedyF64::builder()
+                .arms(2)
+                .epsilon(0.0)
+                .build()
+                .is_err()
+        );
+        assert!(
+            EpsilonGreedyF64::builder()
+                .arms(2)
+                .epsilon(1.0)
+                .build()
+                .is_err()
+        );
+        assert!(
+            EpsilonGreedyF64::builder()
+                .arms(2)
+                .epsilon(-0.1)
+                .build()
+                .is_err()
+        );
+        assert!(
+            EpsilonGreedyF64::builder()
+                .arms(2)
+                .epsilon(0.1)
+                .decay(0.0)
+                .build()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn mean_reward_tracks() {
+        let mut bandit = EpsilonGreedyF64::builder()
+            .arms(2)
+            .epsilon(0.1)
+            .build()
+            .unwrap();
+
+        for _ in 0..100 {
+            bandit.update(0, 0.8).unwrap();
+            bandit.update(1, 0.2).unwrap();
+        }
+
+        let m0 = bandit.mean_reward(0).unwrap();
+        let m1 = bandit.mean_reward(1).unwrap();
+        assert!(
+            (m0 - 0.8).abs() < 0.01,
+            "mean_reward(0)={m0}, expected ~0.8"
+        );
+        assert!(
+            (m1 - 0.2).abs() < 0.01,
+            "mean_reward(1)={m1}, expected ~0.2"
+        );
+    }
+}

@@ -150,9 +150,9 @@ macro_rules! impl_rls_filter {
                 let inv_lambda = 1.0 as $ty / lambda;
                 for i in 0..d {
                     for j in 0..d {
-                        self.p_matrix[i * d + j] =
-                            (-self.scratch_k[i]).fma(self.scratch_px[j], self.p_matrix[i * d + j])
-                                * inv_lambda;
+                        self.p_matrix[i * d + j] = (-self.scratch_k[i])
+                            .fma(self.scratch_px[j], self.p_matrix[i * d + j])
+                            * inv_lambda;
                     }
                 }
 

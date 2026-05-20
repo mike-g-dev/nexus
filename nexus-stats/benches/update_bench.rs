@@ -18,8 +18,8 @@ use nexus_stats::{
     },
     estimation::{Kalman2dF64, Kalman3dF64},
     learning::{
-        AdaGradF64, AdamF64, LmsFilterF64, NlmsFilterF64, OnlineGdF64, OnlineKMeansF64,
-        RlsFilterF64,
+        AdaGradF64, AdamF64, EpsilonGreedyF64, Exp3F64, LmsFilterF64, NlmsFilterF64, OnlineGdF64,
+        OnlineKMeansF64, RlsFilterF64, ThompsonBetaF64, ThompsonGammaF64, Ucb1F64,
     },
     monitoring::{
         DrawdownF64, ErrorRateF64, JitterF64, RunningMaxF64, RunningMinF64, SaturationF64,
@@ -51,6 +51,10 @@ impl Lcg {
         self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
         // Map to [-1, 1) range — realistic for feature vectors
         ((self.0 >> 33) as f64 / (1u64 << 31) as f64) * 2.0 - 1.0
+    }
+    fn next_unit(&mut self) -> f64 {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (self.0 >> 33) as f64 / (1u64 << 31) as f64
     }
 }
 
@@ -938,6 +942,138 @@ fn bench_entropy_query(c: &mut Criterion) {
 }
 
 // ============================================================
+// Group 8: Bandits
+// ============================================================
+
+fn bench_ucb1_select(c: &mut Criterion) {
+    for k in [2, 5, 10, 25, 50] {
+        let mut rng = Lcg::new(42);
+        let mut b = Ucb1F64::builder().arms(k).build().unwrap();
+        for _ in 0..(k * 100) {
+            let arm = b.select();
+            let _ = b.update(arm, rng.next_unit());
+        }
+        c.bench_function(&format!("Ucb1F64::select (K={k})"), |bench| {
+            bench.iter(|| black_box(b.select()))
+        });
+    }
+}
+
+fn bench_ucb1_update(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    for k in [2, 5, 10, 25, 50] {
+        let mut b = Ucb1F64::builder().arms(k).build().unwrap();
+        for _ in 0..(k * 100) {
+            let arm = b.select();
+            let _ = b.update(arm, rng.next_unit());
+        }
+        c.bench_function(&format!("Ucb1F64::update (K={k})"), |bench| {
+            let mut arm = 0;
+            bench.iter(|| {
+                arm = (arm + 1) % k;
+                b.update(black_box(arm), black_box(rng.next_unit())).unwrap()
+            })
+        });
+    }
+}
+
+fn bench_ucb1_update_decay(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    for k in [2, 5, 10, 25, 50] {
+        let mut b = Ucb1F64::builder().arms(k).decay(0.99).build().unwrap();
+        for _ in 0..(k * 100) {
+            let arm = b.select();
+            let _ = b.update(arm, rng.next_unit());
+        }
+        c.bench_function(&format!("Ucb1F64::update decay=0.99 (K={k})"), |bench| {
+            let mut arm = 0;
+            bench.iter(|| {
+                arm = (arm + 1) % k;
+                b.update(black_box(arm), black_box(rng.next_unit())).unwrap()
+            })
+        });
+    }
+}
+
+fn bench_thompson_beta_select(c: &mut Criterion) {
+    for k in [2, 5, 10, 25, 50] {
+        let mut rng = Lcg::new(42);
+        let mut b = ThompsonBetaF64::builder().arms(k).build().unwrap();
+        for _ in 0..(k * 100) {
+            let arm = b.select(&mut || rng.next_unit());
+            let _ = b.update(arm, rng.next_unit());
+        }
+        c.bench_function(&format!("ThompsonBetaF64::select (K={k})"), |bench| {
+            bench.iter(|| black_box(b.select(&mut || rng.next_unit())))
+        });
+    }
+}
+
+fn bench_thompson_beta_update(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    for k in [2, 5, 10, 25, 50] {
+        let mut b = ThompsonBetaF64::builder().arms(k).build().unwrap();
+        for _ in 0..(k * 100) {
+            let arm = b.select(&mut || rng.next_unit());
+            let _ = b.update(arm, rng.next_unit());
+        }
+        c.bench_function(&format!("ThompsonBetaF64::update (K={k})"), |bench| {
+            let mut arm = 0;
+            bench.iter(|| {
+                arm = (arm + 1) % k;
+                b.update(black_box(arm), black_box(rng.next_unit())).unwrap()
+            })
+        });
+    }
+}
+
+fn bench_thompson_gamma_select(c: &mut Criterion) {
+    for k in [2, 5, 10, 25, 50] {
+        let mut rng = Lcg::new(42);
+        let mut b = ThompsonGammaF64::builder().arms(k).build().unwrap();
+        for _ in 0..(k * 100) {
+            let arm = b.select(&mut || rng.next_unit());
+            let _ = b.update(arm, rng.next_unit() + 0.01);
+        }
+        c.bench_function(&format!("ThompsonGammaF64::select (K={k})"), |bench| {
+            bench.iter(|| black_box(b.select(&mut || rng.next_unit())))
+        });
+    }
+}
+
+fn bench_epsilon_greedy_select(c: &mut Criterion) {
+    for k in [2, 5, 10, 25, 50] {
+        let mut rng = Lcg::new(42);
+        let mut b = EpsilonGreedyF64::builder()
+            .arms(k)
+            .epsilon(0.1)
+            .build()
+            .unwrap();
+        for _ in 0..(k * 100) {
+            let arm = b.select(&mut || rng.next_unit());
+            let _ = b.update(arm, rng.next_unit());
+        }
+        c.bench_function(&format!("EpsilonGreedyF64::select (K={k})"), |bench| {
+            bench.iter(|| black_box(b.select(&mut || rng.next_unit())))
+        });
+    }
+}
+
+fn bench_exp3_select(c: &mut Criterion) {
+    for k in [2, 5, 10, 25, 50] {
+        let mut rng = Lcg::new(42);
+        let mut b = Exp3F64::builder().arms(k).gamma(0.1).build().unwrap();
+        for _ in 0..(k * 100) {
+            let (arm, prob) = b.select(&mut || rng.next_unit());
+            let _ = b.update(arm, rng.next_unit(), prob);
+        }
+        c.bench_function(&format!("Exp3F64::select (K={k})"), |bench| {
+            bench.iter(|| black_box(b.select(&mut || rng.next_unit())))
+        });
+    }
+}
+
+// ============================================================
 // Criterion groups and main
 // ============================================================
 
@@ -1013,6 +1149,18 @@ criterion_group!(
     bench_entropy_query,
 );
 
+criterion_group!(
+    bandits,
+    bench_ucb1_select,
+    bench_ucb1_update,
+    bench_ucb1_update_decay,
+    bench_thompson_beta_select,
+    bench_thompson_beta_update,
+    bench_thompson_gamma_select,
+    bench_epsilon_greedy_select,
+    bench_exp3_select,
+);
+
 criterion_main!(
     core_stats,
     const_generic,
@@ -1021,4 +1169,5 @@ criterion_main!(
     state_estimation,
     optimizers,
     queries,
+    bandits,
 );

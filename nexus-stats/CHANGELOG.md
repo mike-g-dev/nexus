@@ -19,6 +19,11 @@ contained.
 - **`PageHinkleyF64/F32`** — Page-Hinkley change detection (detection feature).
 - **`AdwinF64/F32`** — ADWIN adaptive windowing (detection feature).
 - **`PredictiveInfoBoundF64/F32`** — predictive information bound (detection feature).
+- **`Ucb1F64/F32`** — UCB1 multi-armed bandit (regression feature).
+- **`ThompsonBetaF64/F32`** — Thompson Sampling with Beta prior (regression feature).
+- **`ThompsonGammaF64/F32`** — Thompson Sampling with Gamma prior (regression feature).
+- **`EpsilonGreedyF64/F32`** — epsilon-greedy bandit (regression feature).
+- **`Exp3F64/F32`** — EXP3 adversarial bandit (regression feature).
 
 ## [5.0.0] — 2026-05-18
 

@@ -12,6 +12,7 @@ use nexus_stats::{
     control::{BoolWindow, HysteresisF64},
     detection::{CusumF64, CusumI64, MosumF64, MultiGateF64, RobustZScoreF64, ShiryaevRobertsF64},
     frequency::TopK,
+    learning::{EpsilonGreedyF64, Exp3F64, ThompsonBetaF64, ThompsonGammaF64, Ucb1F64},
     monitoring::{
         CoDelI64, DrawdownF64, EventRateF64, LivenessF64, PeakHoldF64, RunningMaxF64,
         RunningMinF64, WindowedMaxF64, WindowedMinF64,
@@ -89,6 +90,11 @@ fn next_val(state: &mut u64) -> u64 {
     *state ^= *state >> 7;
     *state ^= *state << 17;
     *state
+}
+
+#[inline(always)]
+fn next_unit(state: &mut u64) -> f64 {
+    (next_val(state) >> 33) as f64 / (1u64 << 31) as f64
 }
 
 // ============================================================================
@@ -812,6 +818,172 @@ fn bench_transfer_entropy_f64(samples: &mut [u64]) {
 // Main
 // ============================================================================
 
+// ============================================================================
+// Bandits — parameterized by K
+// ============================================================================
+
+const BANDIT_KS: &[usize] = &[2, 5, 10, 25, 50];
+
+fn bench_bandit_select_sweep(samples: &mut [u64]) {
+    println!(
+        "\n  {:<28} {:>6} {:>6} {:>6} {:>7} {:>7}",
+        "(cycles/op)", "p50", "p90", "p99", "p99.9", "max"
+    );
+
+    for &k in BANDIT_KS {
+        // UCB1
+        let mut b = Ucb1F64::builder().arms(k).build().unwrap();
+        let mut rng = 12345u64;
+        for _ in 0..(k * 100) {
+            let arm = b.select();
+            let _ = b.update(arm, next_unit(&mut rng));
+        }
+        for s in samples.iter_mut() {
+            let start = rdtsc_start();
+            for _ in 0..BATCH {
+                black_box(b.select());
+            }
+            let end = rdtsc_end();
+            *s = (end - start) / BATCH;
+        }
+        print_row(&format!("Ucb1::select K={k}"), samples);
+    }
+
+    println!();
+    for &k in BANDIT_KS {
+        // ThompsonBeta
+        let mut b = ThompsonBetaF64::builder().arms(k).build().unwrap();
+        let mut rng = 12345u64;
+        for _ in 0..(k * 100) {
+            let arm = b.select(&mut || next_unit(&mut rng));
+            let _ = b.update(arm, next_unit(&mut rng));
+        }
+        for s in samples.iter_mut() {
+            let start = rdtsc_start();
+            for _ in 0..BATCH {
+                black_box(b.select(&mut || next_unit(&mut rng)));
+            }
+            let end = rdtsc_end();
+            *s = (end - start) / BATCH;
+        }
+        print_row(&format!("ThompsonBeta::select K={k}"), samples);
+    }
+
+    println!();
+    for &k in BANDIT_KS {
+        // ThompsonGamma
+        let mut b = ThompsonGammaF64::builder().arms(k).build().unwrap();
+        let mut rng = 12345u64;
+        for _ in 0..(k * 100) {
+            let arm = b.select(&mut || next_unit(&mut rng));
+            let _ = b.update(arm, next_unit(&mut rng) + 0.01);
+        }
+        for s in samples.iter_mut() {
+            let start = rdtsc_start();
+            for _ in 0..BATCH {
+                black_box(b.select(&mut || next_unit(&mut rng)));
+            }
+            let end = rdtsc_end();
+            *s = (end - start) / BATCH;
+        }
+        print_row(&format!("ThompsonGamma::select K={k}"), samples);
+    }
+
+    println!();
+    for &k in BANDIT_KS {
+        // EpsilonGreedy
+        let mut b = EpsilonGreedyF64::builder()
+            .arms(k)
+            .epsilon(0.1)
+            .build()
+            .unwrap();
+        let mut rng = 12345u64;
+        for _ in 0..(k * 100) {
+            let arm = b.select(&mut || next_unit(&mut rng));
+            let _ = b.update(arm, next_unit(&mut rng));
+        }
+        for s in samples.iter_mut() {
+            let start = rdtsc_start();
+            for _ in 0..BATCH {
+                black_box(b.select(&mut || next_unit(&mut rng)));
+            }
+            let end = rdtsc_end();
+            *s = (end - start) / BATCH;
+        }
+        print_row(&format!("EpsGreedy::select K={k}"), samples);
+    }
+
+    println!();
+    for &k in BANDIT_KS {
+        // EXP3
+        let mut b = Exp3F64::builder().arms(k).gamma(0.1).build().unwrap();
+        let mut rng = 12345u64;
+        for _ in 0..(k * 100) {
+            let (arm, prob) = b.select(&mut || next_unit(&mut rng));
+            let _ = b.update(arm, next_unit(&mut rng), prob);
+        }
+        for s in samples.iter_mut() {
+            let start = rdtsc_start();
+            for _ in 0..BATCH {
+                black_box(b.select(&mut || next_unit(&mut rng)));
+            }
+            let end = rdtsc_end();
+            *s = (end - start) / BATCH;
+        }
+        print_row(&format!("Exp3::select K={k}"), samples);
+    }
+}
+
+fn bench_bandit_update_sweep(samples: &mut [u64]) {
+    println!(
+        "\n  {:<28} {:>6} {:>6} {:>6} {:>7} {:>7}",
+        "(cycles/op)", "p50", "p90", "p99", "p99.9", "max"
+    );
+
+    for &k in BANDIT_KS {
+        // UCB1 stationary
+        let mut b = Ucb1F64::builder().arms(k).build().unwrap();
+        let mut rng = 12345u64;
+        for _ in 0..(k * 100) {
+            let arm = b.select();
+            let _ = b.update(arm, next_unit(&mut rng));
+        }
+        let mut arm_cycle: usize = 0;
+        for s in samples.iter_mut() {
+            let start = rdtsc_start();
+            for _ in 0..BATCH {
+                arm_cycle = (arm_cycle + 1) % k;
+                let _ = b.update(black_box(arm_cycle), black_box(next_unit(&mut rng)));
+            }
+            let end = rdtsc_end();
+            *s = (end - start) / BATCH;
+        }
+        print_row(&format!("Ucb1::update K={k}"), samples);
+    }
+
+    println!();
+    for &k in BANDIT_KS {
+        // UCB1 decay
+        let mut b = Ucb1F64::builder().arms(k).decay(0.99).build().unwrap();
+        let mut rng = 12345u64;
+        for _ in 0..(k * 100) {
+            let arm = b.select();
+            let _ = b.update(arm, next_unit(&mut rng));
+        }
+        let mut arm_cycle: usize = 0;
+        for s in samples.iter_mut() {
+            let start = rdtsc_start();
+            for _ in 0..BATCH {
+                arm_cycle = (arm_cycle + 1) % k;
+                let _ = b.update(black_box(arm_cycle), black_box(next_unit(&mut rng)));
+            }
+            let end = rdtsc_end();
+            *s = (end - start) / BATCH;
+        }
+        print_row(&format!("Ucb1::update(decay) K={k}"), samples);
+    }
+}
+
 fn main() {
     println!("\nnexus-stats benchmark — cycles per operation (batch={BATCH})");
     println!("=========================================================");
@@ -914,6 +1086,12 @@ fn main() {
     print_row("Entropy<8>::update", &mut buf);
     bench_transfer_entropy_f64(&mut buf);
     print_row("TransferEntropy(8,1)::update", &mut buf);
+
+    section("Bandits — select() scaling");
+    bench_bandit_select_sweep(&mut buf);
+
+    section("Bandits — update() scaling");
+    bench_bandit_update_sweep(&mut buf);
 
     println!();
 }
