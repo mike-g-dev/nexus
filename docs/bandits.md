@@ -24,8 +24,10 @@ with provable regret bounds.
 Trading examples: which exchange fills fastest, which spread parameter
 yields the best P&L, which order size captures the most edge. The
 environment is often non-stationary — venue performance shifts, market
-regimes change, competitors adapt. All five types support exponential
-discounting via the `decay` builder parameter to handle this.
+regimes change, competitors adapt. Four types (UCB1, ThompsonBeta,
+ThompsonGamma, EpsilonGreedy) support exponential discounting via
+the `decay` builder parameter. EXP3 handles non-stationarity through
+its `gamma` exploration mixing rate.
 
 ---
 
@@ -164,7 +166,7 @@ let mut rng = || -> f64 {
     rng_state ^= rng_state << 13;
     rng_state ^= rng_state >> 7;
     rng_state ^= rng_state << 17;
-    (rng_state as f64) / (u64::MAX as f64)
+    (rng_state >> 11) as f64 / (1u64 << 53) as f64
 };
 
 // On each order:
@@ -237,7 +239,7 @@ let mut rng = || -> f64 {
     rng_state ^= rng_state << 13;
     rng_state ^= rng_state >> 7;
     rng_state ^= rng_state << 17;
-    (rng_state as f64) / (u64::MAX as f64)
+    (rng_state >> 11) as f64 / (1u64 << 53) as f64
 };
 
 // EXP3 returns both the arm and the selection probability

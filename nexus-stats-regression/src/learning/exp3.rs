@@ -13,7 +13,10 @@ macro_rules! impl_exp3 {
         ///
         /// Selection probability: `p_i = (1 - gamma) * w_i / sum(w) + gamma / K`
         ///
-        /// Weight update: `w_i *= exp(eta * reward / (K * p_i))`
+        /// Weight update (log-space): `ln(w_i) += eta * reward / (K * p_i)`
+        ///
+        /// Internally stores log-weights for numerical stability. No
+        /// overflow possible regardless of learning rate or horizon.
         ///
         /// Auer, Cesa-Bianchi, Freund, Schapire (2002).
         ///
@@ -48,7 +51,7 @@ macro_rules! impl_exp3 {
         /// ```
         #[derive(Debug, Clone)]
         pub struct $name {
-            weights: Box<[$ty]>,
+            log_weights: Box<[$ty]>,
             gamma: $ty,
             eta: $ty,
             total_pulls: u64,
@@ -84,19 +87,33 @@ macro_rules! impl_exp3 {
             ///
             /// Returns `(arm_index, selection_probability)`. The caller
             /// must pass the probability back to `update()`.
+            ///
+            /// Uses log-sum-exp internally for numerical stability.
             #[must_use]
-            #[allow(clippy::suboptimal_flops)]
+            #[allow(clippy::suboptimal_flops, clippy::cast_possible_truncation)]
             pub fn select(&self, rng: &mut impl FnMut() -> $ty) -> (usize, $ty) {
-                let sum_w: $ty = self.weights.iter().copied().sum();
                 let k = self.num_arms as $ty;
                 let gamma = self.gamma;
-                let scale = (1.0 as $ty - gamma) / sum_w;
+
+                // Log-sum-exp: find max for numerical stability
+                let max_lw = self.log_weights.iter().copied()
+                    .fold(-(1.0 as $ty / 0.0 as $ty), |a, b| if a > b { a } else { b });
+
+                // First pass: sum of exp(lw - max_lw)
+                let mut sum_exp = 0.0 as $ty;
+                for &lw in self.log_weights.iter() {
+                    sum_exp += nexus_stats_core::math::exp((lw - max_lw) as f64) as $ty;
+                }
+
+                // Second pass: sample from CDF
+                let scale = (1.0 as $ty - gamma) / sum_exp;
                 let gamma_over_k = gamma / k;
                 let u = rng();
                 let mut cumulative = 0.0 as $ty;
 
-                for (i, &w) in self.weights.iter().enumerate() {
-                    let p_i = w * scale + gamma_over_k;
+                for (i, &lw) in self.log_weights.iter().enumerate() {
+                    let exp_w = nexus_stats_core::math::exp((lw - max_lw) as f64) as $ty;
+                    let p_i = exp_w * scale + gamma_over_k;
                     cumulative += p_i;
                     if u < cumulative {
                         return (i, p_i);
@@ -105,13 +122,15 @@ macro_rules! impl_exp3 {
 
                 // Numerical safety: return last arm
                 let last = self.num_arms - 1;
-                let p_last = self.weights[last] * scale + gamma_over_k;
+                let exp_last = nexus_stats_core::math::exp((self.log_weights[last] - max_lw) as f64) as $ty;
+                let p_last = exp_last * scale + gamma_over_k;
                 (last, p_last)
             }
 
             /// Records a reward for the selected arm.
             ///
             /// `prob` is the selection probability returned by `select()`.
+            /// Log-weight update: `ln(w_arm) += eta * reward / (K * prob)`.
             ///
             /// # Errors
             ///
@@ -122,7 +141,6 @@ macro_rules! impl_exp3 {
             ///
             /// Panics if `arm >= num_arms`.
             #[inline]
-            #[allow(clippy::cast_possible_truncation)]
             pub fn update(
                 &mut self,
                 arm: usize,
@@ -144,27 +162,7 @@ macro_rules! impl_exp3 {
                 );
 
                 let k = self.num_arms as $ty;
-                let estimated_reward = reward / prob;
-                let exponent = self.eta * estimated_reward / k;
-                self.weights[arm] *= nexus_stats_core::math::exp(exponent as f64) as $ty;
-
-                // Prevent weight overflow: normalize if max weight exceeds threshold
-                let threshold = if core::mem::size_of::<$ty>() >= 8 {
-                    1e30 as $ty
-                } else {
-                    1e15 as $ty
-                };
-                let max_w = self
-                    .weights
-                    .iter()
-                    .copied()
-                    .fold(0.0 as $ty, |a, b| if a > b { a } else { b });
-                if max_w > threshold {
-                    for w in self.weights.iter_mut() {
-                        *w /= max_w;
-                    }
-                }
-
+                self.log_weights[arm] += self.eta * reward / (k * prob);
                 self.total_pulls += 1;
                 Ok(())
             }
@@ -174,7 +172,7 @@ macro_rules! impl_exp3 {
             /// # Panics
             ///
             /// Panics if `out.len() != num_arms`.
-            #[allow(clippy::suboptimal_flops)]
+            #[allow(clippy::suboptimal_flops, clippy::cast_possible_truncation)]
             pub fn probabilities(&self, out: &mut [$ty]) {
                 assert_eq!(
                     out.len(),
@@ -183,13 +181,21 @@ macro_rules! impl_exp3 {
                     out.len(),
                     self.num_arms,
                 );
-                let sum_w: $ty = self.weights.iter().copied().sum();
                 let k = self.num_arms as $ty;
                 let gamma = self.gamma;
-                let scale = (1.0 as $ty - gamma) / sum_w;
+
+                // Log-sum-exp: use output buffer as scratch for exp values
+                let max_lw = self.log_weights.iter().copied()
+                    .fold(-(1.0 as $ty / 0.0 as $ty), |a, b| if a > b { a } else { b });
+                let mut sum_exp = 0.0 as $ty;
+                for (o, &lw) in out.iter_mut().zip(self.log_weights.iter()) {
+                    *o = nexus_stats_core::math::exp((lw - max_lw) as f64) as $ty;
+                    sum_exp += *o;
+                }
+                let scale = (1.0 as $ty - gamma) / sum_exp;
                 let gamma_over_k = gamma / k;
-                for (o, &w) in out.iter_mut().zip(self.weights.iter()) {
-                    *o = w * scale + gamma_over_k;
+                for o in out.iter_mut() {
+                    *o = *o * scale + gamma_over_k;
                 }
             }
 
@@ -221,10 +227,10 @@ macro_rules! impl_exp3 {
                 self.total_pulls
             }
 
-            /// Resets weights to uniform.
+            /// Resets log-weights to uniform (all zero = equal weight).
             #[inline]
             pub fn reset(&mut self) {
-                self.weights.fill(1.0 as $ty);
+                self.log_weights.fill(0.0 as $ty);
                 self.total_pulls = 0;
             }
         }
@@ -287,7 +293,7 @@ macro_rules! impl_exp3 {
                 }
                 let min_samples = self.min_samples.unwrap_or(arms as u64);
                 Ok($name {
-                    weights: vec![1.0 as $ty; arms].into_boxed_slice(),
+                    log_weights: vec![0.0 as $ty; arms].into_boxed_slice(),
                     gamma,
                     eta,
                     total_pulls: 0,
@@ -387,25 +393,29 @@ mod tests {
     }
 
     #[test]
-    fn weight_normalization() {
+    fn log_weights_no_overflow() {
         let mut bandit = Exp3F64::builder()
             .arms(2)
             .gamma(0.1)
-            .eta(1.0) // aggressive learning rate
+            .eta(10.0) // aggressive learning rate
             .build()
             .unwrap();
 
-        // Many updates with high reward to trigger normalization
-        for _ in 0..500 {
-            bandit.update(0, 1.0, 0.5).unwrap();
+        // Many updates that would overflow raw weights
+        for _ in 0..10_000 {
+            bandit.update(0, 1.0, 0.05).unwrap();
         }
 
-        // Weights should be finite after normalization
+        // Log-weights stay finite, probabilities still valid
         assert!(
-            bandit.weights.iter().all(|w| w.is_finite()),
-            "weights should be finite: {:?}",
-            &*bandit.weights,
+            bandit.log_weights.iter().all(|w| w.is_finite()),
+            "log_weights should be finite: {:?}",
+            &*bandit.log_weights,
         );
+        let mut probs = vec![0.0; 2];
+        bandit.probabilities(&mut probs);
+        let sum: f64 = probs.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-10, "prob sum={sum}");
     }
 
     #[test]
