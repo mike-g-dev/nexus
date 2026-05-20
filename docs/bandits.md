@@ -59,9 +59,12 @@ Is the reward binary (success/failure)?
 
 ## Discounting and non-stationarity
 
-All five types support `decay` in the builder. Default is `1.0`
-(stationary — all observations weighted equally). Set `decay < 1.0`
-to exponentially discount old observations.
+Four types (UCB1, ThompsonBeta, ThompsonGamma, EpsilonGreedy) support
+`decay` in the builder. Default is `1.0` (stationary — all observations
+weighted equally). Set `decay < 1.0` to exponentially discount old
+observations. EXP3 handles non-stationarity differently — its `gamma`
+parameter controls exploration mixing, ensuring continued exploration
+without explicit discounting.
 
 ### Why discount
 
@@ -96,6 +99,11 @@ Before each `update()`, all per-arm statistics are multiplied by
 sums shrink. For Thompson variants, the prior parameters (α/β or
 shape/rate) shrink toward zero, widening the posterior and
 encouraging re-exploration of arms that haven't been pulled recently.
+
+EXP3 does not use `decay`. Its exploration is governed by `gamma`,
+which mixes uniform exploration into every selection. This provides
+inherent adaptivity without discounting — the multiplicative weight
+updates naturally track shifting reward distributions.
 
 ---
 

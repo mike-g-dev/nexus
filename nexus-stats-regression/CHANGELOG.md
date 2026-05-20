@@ -23,8 +23,10 @@ contained.
 - **`EpsilonGreedyF64/F32`** — Epsilon-greedy bandit. Simplest baseline.
 - **`Exp3F64/F32`** — EXP3 adversarial bandit. Robust to non-stochastic
   rewards. Auer, Cesa-Bianchi, Freund, Schapire (2002).
-- All five types support exponential discounting via `decay` parameter
-  for non-stationary reward environments.
+- UCB1, ThompsonBeta, ThompsonGamma, and EpsilonGreedy support
+  exponential discounting via `decay` parameter for non-stationary
+  reward environments. EXP3 handles non-stationarity through its
+  `gamma` exploration mixing rate.
 - Internal sampling utilities (Marsaglia polar, Marsaglia-Tsang Gamma,
   Beta from Gamma ratio).
 

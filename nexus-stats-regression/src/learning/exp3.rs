@@ -21,7 +21,7 @@ macro_rules! impl_exp3 {
         ///
         /// - `arms` — number of arms K (>= 2)
         /// - `gamma` — exploration mixing rate, in (0, 1]. Higher = more uniform.
-        /// - `eta` — learning rate (default: gamma / K)
+        /// - `eta` — learning rate (default: gamma)
         ///
         /// # Reward range
         ///
@@ -241,7 +241,7 @@ macro_rules! impl_exp3 {
                 self
             }
 
-            /// Sets the learning rate (default: gamma / K, must be > 0).
+            /// Sets the learning rate (default: gamma, must be > 0).
             #[inline]
             #[must_use]
             pub fn eta(mut self, e: $ty) -> Self {
@@ -274,7 +274,7 @@ macro_rules! impl_exp3 {
                         "gamma must be in (0, 1]",
                     ));
                 }
-                let eta = self.eta.unwrap_or(gamma / arms as $ty);
+                let eta = self.eta.unwrap_or(gamma);
                 if eta <= 0.0 as $ty || !eta.is_finite() {
                     return Err(nexus_stats_core::ConfigError::Invalid(
                         "eta must be positive and finite",
