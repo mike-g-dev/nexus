@@ -19,6 +19,8 @@ Streaming, fixed-memory, O(1)-per-update statistical primitives. Module path: `n
 | `HalfLifeF64` | Mean-reversion half-life estimator | small |
 | `HurstF64` | Hurst exponent (R/S estimator) | alloc, windowed |
 | `VarianceRatioF64` | Lo-MacKinlay variance ratio (mean-reversion test) | small |
+| `LpmF64` / `LpmF32` | Lower partial moments (downside risk, semivariance) | 5 words |
+| `CvarF64` / `CvarF32` | Conditional Value at Risk (expected shortfall) | small, fixed |
 
 ---
 
@@ -270,6 +272,59 @@ let ratio = vr.ratio().unwrap();
 ```
 
 **Use for:** quantitative mean-reversion testing, complement to `HalfLifeF64` and `HurstF64`.
+
+---
+
+## LpmF64 — Lower Partial Moments (downside risk)
+
+Measures deviations below a target threshold, raised to a configurable integer order. Fishburn (1977), Sortino & van der Meer (1991).
+
+- **Order 0**: shortfall probability (fraction of samples below target)
+- **Order 1**: expected shortfall (mean distance below target)
+- **Order 2**: semivariance (variance of downside deviations only)
+
+```rust
+use nexus_stats_core::statistics::LpmF64;
+
+// Semivariance (order 2) with target = 0.0
+let mut lpm = LpmF64::semivariance(0.0).unwrap();
+for &v in &[-3.0, -1.0, 0.0, 2.0, 5.0] {
+    lpm.update(v).unwrap();
+}
+let sv = lpm.lpm().unwrap();  // (9 + 1 + 0 + 0 + 0) / 5 = 2.0
+
+// Shortfall probability (order 0)
+let mut sp = LpmF64::builder().target(50.0).order(0).build().unwrap();
+for i in 0..100 { sp.update(i as f64).unwrap(); }
+let prob = sp.lpm().unwrap();  // ~0.5
+```
+
+**Use for:** downside risk measurement, Sortino ratio inputs, tail-sensitive risk metrics. Semivariance is the most common application — use the `semivariance(target)` convenience constructor.
+
+**Caveats:** orders >= 3 use a manual multiply loop (`powi` unavailable in no_std). Fine in practice — nobody runs order > 3.
+
+---
+
+## CvarF64 — Conditional Value at Risk (Expected Shortfall)
+
+Streaming CVaR: the average loss in the worst α-tail, estimated online using a P² percentile estimator for VaR.
+
+```rust
+use nexus_stats_core::statistics::CvarF64;
+
+let mut cvar = CvarF64::builder().alpha(0.05).build().unwrap();
+for i in 0..2000 {
+    cvar.update((i % 1000 + 1) as f64).unwrap();
+}
+if cvar.is_primed() {
+    let var  = cvar.var().unwrap();   // 5th percentile estimate
+    let es   = cvar.cvar().unwrap();  // mean of samples <= VaR
+}
+```
+
+**Use for:** tail risk measurement, position sizing, drawdown budgeting. More informative than VaR alone — tells you how bad the bad cases are, not just where the threshold is.
+
+**Caveats:** tail tracking starts after P² primes (~5 samples). During P² convergence the VaR estimate is evolving, so early tail classifications may be slightly off. Not windowed — streaming with a priming phase. For windowed tail risk, compose with a ring buffer upstream.
 
 ---
 

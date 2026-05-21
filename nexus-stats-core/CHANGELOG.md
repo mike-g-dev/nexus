@@ -10,6 +10,24 @@ contained.
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-05-20
+
+### Added
+
+- **`LpmF64/F32`** — Lower Partial Moments. Streaming downside risk
+  with configurable target and integer order. Order 0 = shortfall
+  probability, 1 = expected shortfall, 2 = semivariance.
+  Convenience: `LpmF64::semivariance(target)`.
+- **`CvarF64/F32`** — Conditional Value at Risk (Expected Shortfall).
+  Streaming CVaR at configurable confidence level. Composes P²
+  percentile internally.
+- **`normalization` module** — Online feature normalization:
+  - `ZScoreNormF64/F32` — EW z-score: `(x - mean) / std_dev`.
+    Requires `std` or `libm`.
+  - `MinMaxNormF64/F32` — Windowed min-max scaling to [0, 1].
+  - `QuantileNormF64/F32` — Quantile transform via P² grid.
+    Requires `alloc`.
+
 ## [2.1.0] — 2026-05-18
 
 ### Added

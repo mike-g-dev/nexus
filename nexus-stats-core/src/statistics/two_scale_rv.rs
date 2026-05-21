@@ -81,7 +81,11 @@ impl TwoScaleRvF64 {
             self.fast_sum_sq += fast_diff * fast_diff;
         }
 
-        let oldest = if self.filled { Some(self.buffer[self.write_idx]) } else { None };
+        let oldest = if self.filled {
+            Some(self.buffer[self.write_idx])
+        } else {
+            None
+        };
         self.buffer[self.write_idx] = price;
 
         if let Some(old_price) = oldest {
@@ -116,7 +120,9 @@ impl TwoScaleRvF64 {
         let n_bar = self.n_slow as f64 / self.k as f64;
         let correction = n_bar / n_fast as f64;
         let tsrv = crate::math::MulAdd::fma(
-            -correction, self.fast_sum_sq, self.slow_sum_sq / self.k as f64,
+            -correction,
+            self.fast_sum_sq,
+            self.slow_sum_sq / self.k as f64,
         );
 
         Option::Some(if tsrv > 0.0 { tsrv } else { 0.0 })

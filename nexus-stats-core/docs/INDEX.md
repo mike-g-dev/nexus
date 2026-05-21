@@ -12,7 +12,8 @@ Most users should depend on the umbrella `nexus-stats` crate, which re-exports e
 ## Start Here
 
 - [Overview](overview.md) — Design conventions, error handling, no_std, features.
-- [Statistics](statistics.md) — Welford, Moments, EwmaVar, Covariance, Percentile, HarmonicMean, HitRate, HalfLife, Hurst, VarianceRatio, Amihud, BucketAccumulator.
+- [Statistics](statistics.md) — Welford, Moments, EwmaVar, Covariance, Percentile, HarmonicMean, HitRate, HalfLife, Hurst, VarianceRatio, Amihud, BucketAccumulator, LPM, CVaR.
+- [Normalization](normalization.md) — ZScoreNorm, MinMaxNorm, QuantileNorm.
 - [Smoothing](smoothing.md) — EMA, AsymEMA, SlewLimiter.
 - [Monitoring](monitoring.md) — Drawdown, RunningMax/Min, WindowedMax/Min, PeakHold, MaxGauge, Liveness, EventRate, CoDel, Saturation, ErrorRate, Jitter.
 - [Detection](detection.md) — CUSUM, DistributionShift.
@@ -26,7 +27,8 @@ nexus_stats_core::
 ├── smoothing       // EMA family
 ├── monitoring      // health, gauges, rate tracking
 ├── detection       // CUSUM and distribution shift
-└── control         // thresholds, hysteresis, differencing
+├── control         // thresholds, hysteresis, differencing
+└── normalization   // streaming normalizers (z-score, min-max, quantile)
 ```
 
 Each submodule is namespaced. You import like `use nexus_stats_core::statistics::WelfordF64;`.

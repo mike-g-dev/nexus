@@ -138,6 +138,9 @@ pub mod detection {
     pub use nexus_stats_detection::detection::*;
 }
 
+/// Online feature normalization.
+pub use nexus_stats_core::normalization;
+
 /// Core streaming statistics.
 pub use nexus_stats_core::statistics;
 

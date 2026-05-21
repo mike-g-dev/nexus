@@ -29,8 +29,10 @@ use nexus_stats::{
     },
     signal::{AutocorrelationF64, CrossCorrelationF64, EntropyF64, TransferEntropyF64},
     smoothing::{AsymEmaF64, EmaF64, HoltF64, Kalman1dF64, SlewF64, SpringF64},
+    normalization::{MinMaxNormF64, ZScoreNormF64},
     statistics::{
-        CovarianceF64, EwmaVarF64, HarmonicMeanF64, MomentsF64, PercentileF64, WelfordF64,
+        CovarianceF64, CvarF64, EwmaVarF64, HarmonicMeanF64, LpmF64, MomentsF64, PercentileF64,
+        WelfordF64,
     },
 };
 
@@ -971,7 +973,8 @@ fn bench_ucb1_update(c: &mut Criterion) {
             let mut arm = 0;
             bench.iter(|| {
                 arm = (arm + 1) % k;
-                b.update(black_box(arm), black_box(rng.next_unit())).unwrap()
+                b.update(black_box(arm), black_box(rng.next_unit()))
+                    .unwrap()
             })
         });
     }
@@ -989,7 +992,8 @@ fn bench_ucb1_update_decay(c: &mut Criterion) {
             let mut arm = 0;
             bench.iter(|| {
                 arm = (arm + 1) % k;
-                b.update(black_box(arm), black_box(rng.next_unit())).unwrap()
+                b.update(black_box(arm), black_box(rng.next_unit()))
+                    .unwrap()
             })
         });
     }
@@ -1021,7 +1025,8 @@ fn bench_thompson_beta_update(c: &mut Criterion) {
             let mut arm = 0;
             bench.iter(|| {
                 arm = (arm + 1) % k;
-                b.update(black_box(arm), black_box(rng.next_unit())).unwrap()
+                b.update(black_box(arm), black_box(rng.next_unit()))
+                    .unwrap()
             })
         });
     }
@@ -1071,6 +1076,58 @@ fn bench_exp3_select(c: &mut Criterion) {
             bench.iter(|| black_box(b.select(&mut || rng.next_unit())))
         });
     }
+}
+
+// ============================================================
+// Risk metrics + normalization
+// ============================================================
+
+fn bench_lpm(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    let mut lpm = LpmF64::builder().target(0.0).order(2).build().unwrap();
+    for _ in 0..1000 {
+        let _ = lpm.update(rng.next_f64() - 50.0);
+    }
+    c.bench_function("LpmF64::update (order=2)", |b| {
+        b.iter(|| lpm.update(black_box(rng.next_f64() - 50.0)).unwrap())
+    });
+}
+
+fn bench_cvar(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    let mut cv = CvarF64::builder().alpha(0.05).build().unwrap();
+    for _ in 0..1000 {
+        let _ = cv.update(rng.next_f64());
+    }
+    c.bench_function("CvarF64::update (alpha=0.05)", |b| {
+        b.iter(|| cv.update(black_box(rng.next_f64())).unwrap())
+    });
+}
+
+fn bench_zscore_norm(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    let mut zs = ZScoreNormF64::builder().span(20).build().unwrap();
+    for _ in 0..1000 {
+        let _ = zs.update(rng.next_f64());
+    }
+    c.bench_function("ZScoreNormF64::update", |b| {
+        b.iter(|| zs.update(black_box(rng.next_f64())).unwrap())
+    });
+}
+
+fn bench_minmax_norm(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    let mut mm = MinMaxNormF64::builder().window(100).build().unwrap();
+    for i in 0..1000u64 {
+        let _ = mm.update(i, rng.next_f64());
+    }
+    let mut ts = 1000u64;
+    c.bench_function("MinMaxNormF64::update", |b| {
+        b.iter(|| {
+            ts += 1;
+            mm.update(black_box(ts), black_box(rng.next_f64())).unwrap()
+        })
+    });
 }
 
 // ============================================================
@@ -1150,6 +1207,14 @@ criterion_group!(
 );
 
 criterion_group!(
+    risk_norm,
+    bench_lpm,
+    bench_cvar,
+    bench_zscore_norm,
+    bench_minmax_norm,
+);
+
+criterion_group!(
     bandits,
     bench_ucb1_select,
     bench_ucb1_update,
@@ -1170,4 +1235,5 @@ criterion_main!(
     optimizers,
     queries,
     bandits,
+    risk_norm,
 );

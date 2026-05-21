@@ -6,6 +6,7 @@ mod bucket;
 mod covariance;
 #[cfg(feature = "alloc")]
 mod covariance_matrix;
+mod cvar;
 mod ewma_var;
 #[cfg(any(feature = "std", feature = "libm"))]
 mod half_life;
@@ -13,6 +14,7 @@ mod harmonic_mean;
 mod hit_rate;
 #[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
 mod hurst;
+mod lpm;
 mod moments;
 mod percentile;
 #[cfg(any(feature = "std", feature = "libm"))]
@@ -29,6 +31,7 @@ pub use bucket::*;
 pub use covariance::*;
 #[cfg(feature = "alloc")]
 pub use covariance_matrix::*;
+pub use cvar::*;
 pub use ewma_var::*;
 #[cfg(any(feature = "std", feature = "libm"))]
 pub use half_life::*;
@@ -36,6 +39,7 @@ pub use harmonic_mean::*;
 pub use hit_rate::*;
 #[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
 pub use hurst::*;
+pub use lpm::*;
 pub use moments::*;
 pub use percentile::*;
 #[cfg(any(feature = "std", feature = "libm"))]
