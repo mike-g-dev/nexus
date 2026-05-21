@@ -98,6 +98,73 @@ pub fn ln(x: f64) -> f64 {
     }
 }
 
+/// Natural logarithm (f32).
+///
+/// Requires `std` or `libm` feature.
+#[doc(hidden)]
+#[cfg(any(feature = "std", feature = "libm"))]
+#[inline]
+pub fn ln_f32(x: f32) -> f32 {
+    #[cfg(feature = "std")]
+    {
+        x.ln()
+    }
+    #[cfg(all(not(feature = "std"), feature = "libm"))]
+    {
+        libm::logf(x)
+    }
+}
+
+/// Exponential function (f32).
+///
+/// Requires `std` or `libm` feature.
+#[doc(hidden)]
+#[cfg(any(feature = "std", feature = "libm"))]
+#[inline]
+pub fn exp_f32(x: f32) -> f32 {
+    #[cfg(feature = "std")]
+    {
+        x.exp()
+    }
+    #[cfg(all(not(feature = "std"), feature = "libm"))]
+    {
+        libm::expf(x)
+    }
+}
+
+/// Log-gamma function via Lanczos approximation (g=7).
+///
+/// Accurate to ~15 digits for x > 0.
+#[doc(hidden)]
+#[cfg(any(feature = "std", feature = "libm"))]
+#[allow(
+    clippy::excessive_precision,
+    clippy::unreadable_literal,
+    clippy::suboptimal_flops
+)]
+pub fn ln_gamma(x: f64) -> f64 {
+    const G: f64 = 7.5;
+    const C: [f64; 9] = [
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    ];
+
+    let x = x - 1.0;
+    let mut sum = C[0];
+    for i in 1..9 {
+        sum += C[i] / (x + i as f64);
+    }
+    let t = x + G;
+    0.5 * ln(2.0 * core::f64::consts::PI) + (x + 0.5) * ln(t) - t + ln(sum)
+}
+
 /// Trait providing `fma` (fused multiply-add) across all feature configurations.
 ///
 /// With `std`: uses hardware FMA intrinsic.
@@ -141,6 +208,49 @@ impl MulAdd for f32 {
         #[cfg(not(any(feature = "std", feature = "libm")))]
         {
             self * b + c
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(any(feature = "std", feature = "libm"))]
+    use super::*;
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn ln_gamma_factorial_values() {
+        // Γ(1) = 1, so ln_gamma(1) = 0
+        assert!((ln_gamma(1.0) - 0.0).abs() < 1e-12);
+        // Γ(5) = 4! = 24, so ln_gamma(5) = ln(24)
+        assert!((ln_gamma(5.0) - ln(24.0)).abs() < 1e-12);
+        // Γ(1/2) = √π, so ln_gamma(0.5) = 0.5 * ln(π)
+        assert!((ln_gamma(0.5) - 0.5 * ln(core::f64::consts::PI)).abs() < 1e-12);
+    }
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn ln_f32_matches_f64() {
+        for &x in &[0.5f32, 1.0, 2.0, 10.0, 100.0] {
+            let f32_result = ln_f32(x);
+            let f64_result = ln(x as f64) as f32;
+            assert!(
+                (f32_result - f64_result).abs() < 1e-6,
+                "ln_f32({x}) = {f32_result}, expected ≈ {f64_result}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn exp_f32_matches_f64() {
+        for &x in &[-2.0f32, -1.0, 0.0, 1.0, 2.0] {
+            let f32_result = exp_f32(x);
+            let f64_result = exp(x as f64) as f32;
+            assert!(
+                (f32_result - f64_result).abs() < 1e-5,
+                "exp_f32({x}) = {f32_result}, expected ≈ {f64_result}"
+            );
         }
     }
 }

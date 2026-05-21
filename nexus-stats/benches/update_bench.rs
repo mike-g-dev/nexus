@@ -14,7 +14,8 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use nexus_stats::{
     control::{DeadBandF64, FirstDiffF64, HysteresisF64, LevelCrossingF64, SecondDiffF64},
     detection::{
-        AdaptiveThresholdF64, CusumF64, RobustZScoreF64, ShiryaevRobertsF64, TrendAlertF64,
+        AdaptiveThresholdF64, BocpdF64, CusumF64, DistDriftF64, RobustZScoreF64,
+        ShiryaevRobertsF64, TrendAlertF64,
     },
     estimation::{Kalman2dF64, Kalman3dF64},
     learning::{
@@ -24,12 +25,12 @@ use nexus_stats::{
     monitoring::{
         DrawdownF64, ErrorRateF64, JitterF64, RunningMaxF64, RunningMinF64, SaturationF64,
     },
+    normalization::{MinMaxNormF64, ZScoreNormF64},
     regression::{
         EwLinearRegressionF64, LinearRegressionF64, LogisticRegressionF64, PolynomialRegressionF64,
     },
     signal::{AutocorrelationF64, CrossCorrelationF64, EntropyF64, TransferEntropyF64},
     smoothing::{AsymEmaF64, EmaF64, HoltF64, Kalman1dF64, SlewF64, SpringF64},
-    normalization::{MinMaxNormF64, ZScoreNormF64},
     statistics::{
         CovarianceF64, CvarF64, EwmaVarF64, HarmonicMeanF64, LpmF64, MomentsF64, PercentileF64,
         WelfordF64,
@@ -1131,6 +1132,45 @@ fn bench_minmax_norm(c: &mut Criterion) {
 }
 
 // ============================================================
+// Distribution drift + BOCPD
+// ============================================================
+
+fn bench_dist_drift_update(c: &mut Criterion) {
+    let mut rng = Lcg::new(42);
+    let mut drift = DistDriftF64::builder()
+        .num_bins(50)
+        .min_val(0.0)
+        .max_val(100.0)
+        .build()
+        .unwrap();
+    for i in 0..1000u64 {
+        drift.update_reference((i % 100) as f64).unwrap();
+    }
+    c.bench_function("DistDriftF64::update (50 bins)", |b| {
+        b.iter(|| {
+            drift.update(black_box(rng.next_f64())).unwrap();
+        });
+    });
+}
+
+fn bench_bocpd_update(c: &mut Criterion) {
+    let mut bocpd = BocpdF64::builder()
+        .max_run_length(200)
+        .hazard_lambda(100.0)
+        .build()
+        .unwrap();
+    for i in 0..50 {
+        bocpd.update(i as f64).unwrap();
+    }
+    let mut rng = Lcg::new(42);
+    c.bench_function("BocpdF64::update (W=200)", |b| {
+        b.iter(|| {
+            bocpd.update(black_box(rng.next_f64())).unwrap();
+        });
+    });
+}
+
+// ============================================================
 // Criterion groups and main
 // ============================================================
 
@@ -1214,6 +1254,8 @@ criterion_group!(
     bench_minmax_norm,
 );
 
+criterion_group!(drift_bocpd, bench_dist_drift_update, bench_bocpd_update,);
+
 criterion_group!(
     bandits,
     bench_ucb1_select,
@@ -1236,4 +1278,5 @@ criterion_main!(
     queries,
     bandits,
     risk_norm,
+    drift_bocpd,
 );

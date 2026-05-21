@@ -37,6 +37,10 @@ mod trend_alert;
 mod adaptive_threshold;
 #[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
 mod adwin;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod bocpd;
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod dist_drift;
 #[cfg(feature = "alloc")]
 mod mosum;
 #[cfg(any(feature = "std", feature = "libm"))]
@@ -55,6 +59,10 @@ pub mod detection {
     pub use super::adaptive_threshold::*;
     #[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
     pub use super::adwin::*;
+    #[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+    pub use super::bocpd::*;
+    #[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+    pub use super::dist_drift::*;
     #[cfg(feature = "alloc")]
     pub use super::mosum::*;
     #[cfg(any(feature = "std", feature = "libm"))]

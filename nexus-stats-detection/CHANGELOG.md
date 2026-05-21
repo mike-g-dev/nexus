@@ -10,6 +10,19 @@ contained.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-05-20
+
+### Added
+
+- **`DistDriftF64` / `DistDriftF32`** — distribution drift metrics: KL divergence,
+  Jensen-Shannon divergence, Wasserstein-1 distance over reference/live histograms.
+  Equi-width bins with Laplace smoothing. Requires `alloc` + (`std` or `libm`).
+- **`BocpdF64`** — Bayesian Online Change Point Detection (Adams & MacKay 2007).
+  Gaussian observation model, Normal-Inverse-Gamma conjugate prior, truncated
+  run-length posterior. O(W) per update. Requires `alloc` + (`std` or `libm`).
+- **`nexus_stats_core::math::ln_gamma`** — Lanczos approximation for log-gamma (f64).
+- **`nexus_stats_core::math::ln_f32`** / **`exp_f32`** — f32 transcendental functions.
+
 ## [1.1.0] — 2026-05-18
 
 ### Added

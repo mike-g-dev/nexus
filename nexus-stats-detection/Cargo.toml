@@ -1,6 +1,6 @@
 [package]
 name = "nexus-stats-detection"
-version = "1.1.0"
+version = "1.2.0"
 description = "Advanced change detection and signal analysis for nexus-stats"
 readme = "README.md"
 edition.workspace = true
