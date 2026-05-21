@@ -44,7 +44,8 @@ macro_rules! impl_gbdt {
         /// ```
         #[derive(Debug, Clone)]
         pub struct $name {
-            trees: Box<[Box<[Node]>]>,
+            nodes: Box<[Node]>,
+            tree_offsets: Box<[u32]>,
             n_features: usize,
             base_score: $ty,
         }
@@ -64,9 +65,11 @@ macro_rules! impl_gbdt {
             /// Panics if `features.len() != self.n_features()`.
             pub fn predict(&self, features: &[$ty]) -> $ty {
                 assert_eq!(features.len(), self.n_features);
+                let base = self.nodes.as_ptr();
                 let mut score = self.base_score;
-                for tree in &*self.trees {
-                    score += Self::walk_tree(tree, features, true);
+                for &offset in &*self.tree_offsets {
+                    // SAFETY: offset is the validated start of a tree within self.nodes.
+                    score += Self::walk_tree(unsafe { base.add(offset as usize) }, features, true);
                 }
                 score
             }
@@ -85,9 +88,11 @@ macro_rules! impl_gbdt {
             /// Panics if `features.len() != self.n_features()`.
             pub fn predict_unchecked(&self, features: &[$ty]) -> $ty {
                 assert_eq!(features.len(), self.n_features);
+                let base = self.nodes.as_ptr();
                 let mut score = self.base_score;
-                for tree in &*self.trees {
-                    score += Self::walk_tree(tree, features, false);
+                for &offset in &*self.tree_offsets {
+                    // SAFETY: offset is the validated start of a tree within self.nodes.
+                    score += Self::walk_tree(unsafe { base.add(offset as usize) }, features, false);
                 }
                 score
             }
@@ -97,10 +102,12 @@ macro_rules! impl_gbdt {
             /// Clamped to `self.n_trees()` if `n_trees` exceeds the ensemble size.
             pub fn predict_n(&self, features: &[$ty], n_trees: usize) -> $ty {
                 assert_eq!(features.len(), self.n_features);
-                let n = n_trees.min(self.trees.len());
+                let n = n_trees.min(self.tree_offsets.len());
+                let base = self.nodes.as_ptr();
                 let mut score = self.base_score;
-                for tree in &self.trees[..n] {
-                    score += Self::walk_tree(tree, features, true);
+                for &offset in &self.tree_offsets[..n] {
+                    // SAFETY: offset is the validated start of a tree within self.nodes.
+                    score += Self::walk_tree(unsafe { base.add(offset as usize) }, features, true);
                 }
                 score
             }
@@ -111,17 +118,19 @@ macro_rules! impl_gbdt {
             /// Caller guarantees all features are finite.
             pub fn predict_n_unchecked(&self, features: &[$ty], n_trees: usize) -> $ty {
                 assert_eq!(features.len(), self.n_features);
-                let n = n_trees.min(self.trees.len());
+                let n = n_trees.min(self.tree_offsets.len());
+                let base = self.nodes.as_ptr();
                 let mut score = self.base_score;
-                for tree in &self.trees[..n] {
-                    score += Self::walk_tree(tree, features, false);
+                for &offset in &self.tree_offsets[..n] {
+                    // SAFETY: offset is the validated start of a tree within self.nodes.
+                    score += Self::walk_tree(unsafe { base.add(offset as usize) }, features, false);
                 }
                 score
             }
 
             /// Number of trees in the ensemble.
             pub fn n_trees(&self) -> usize {
-                self.trees.len()
+                self.tree_offsets.len()
             }
 
             /// Number of features expected by the model.
@@ -134,21 +143,33 @@ macro_rules! impl_gbdt {
                 self.base_score
             }
 
-            fn walk_tree(nodes: &[Node], features: &[$ty], nan_aware: bool) -> $ty {
+            /// # Safety
+            ///
+            /// `tree` must point to the root of a valid tree within `self.nodes`.
+            /// Node indices (left/right) are tree-relative, validated by
+            /// `remap_child` during loading.
+            fn walk_tree(tree: *const Node, features: &[$ty], nan_aware: bool) -> $ty {
                 let mut idx = 0usize;
                 loop {
-                    let node = nodes[idx];
+                    // SAFETY: idx=0 at entry. Subsequent values from node.left/right,
+                    // validated by remap_child during loading.
+                    let node = unsafe { *tree.add(idx) };
                     if node.feature_idx == LEAF_SENTINEL {
                         return node.value as $ty;
                     }
-                    let feat = features[node.feature_idx as usize];
-                    idx = if nan_aware && feat.is_nan() {
-                        if node.flags & 1 != 0 {
-                            node.left as usize
-                        } else {
-                            node.right as usize
+                    // SAFETY: feature_idx < n_features validated in convert_tree.
+                    // Caller asserts features.len() == n_features.
+                    let feat = unsafe { *features.get_unchecked(node.feature_idx as usize) };
+                    let go_left = if nan_aware {
+                        match feat.partial_cmp(&(node.value as $ty)) {
+                            Some(core::cmp::Ordering::Greater) => false,
+                            None => node.flags & 1 != 0,
+                            _ => true,
                         }
-                    } else if feat <= node.value as $ty {
+                    } else {
+                        feat <= node.value as $ty
+                    };
+                    idx = if go_left {
                         node.left as usize
                     } else {
                         node.right as usize
@@ -162,10 +183,16 @@ macro_rules! impl_gbdt {
                 n_features: usize,
                 base_score: $ty,
             ) -> Self {
-                let trees: Vec<Box<[Node]>> =
-                    trees.into_iter().map(|t| t.into_boxed_slice()).collect();
+                let total: usize = trees.iter().map(|t| t.len()).sum();
+                let mut nodes = Vec::with_capacity(total);
+                let mut tree_offsets = Vec::with_capacity(trees.len());
+                for tree in trees {
+                    tree_offsets.push(nodes.len() as u32);
+                    nodes.extend_from_slice(&tree);
+                }
                 Self {
-                    trees: trees.into_boxed_slice(),
+                    nodes: nodes.into_boxed_slice(),
+                    tree_offsets: tree_offsets.into_boxed_slice(),
                     n_features,
                     base_score,
                 }
