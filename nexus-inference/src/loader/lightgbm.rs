@@ -11,7 +11,7 @@
 use alloc::{vec, vec::Vec};
 
 use crate::error::LoadError;
-use crate::gbdt::{GbdtF32, GbdtF64, LEAF_SENTINEL, Node};
+use crate::gbdt::{GbdtF32, GbdtF64, LEAF_SENTINEL, RawNode};
 
 struct TreeBlock {
     num_leaves: usize,
@@ -122,7 +122,7 @@ fn parse_tree_block(lines: &[&str]) -> Result<TreeBlock, LoadError> {
     })
 }
 
-fn convert_tree(block: &TreeBlock, n_features: usize) -> Result<Vec<Node>, LoadError> {
+fn convert_tree(block: &TreeBlock, n_features: usize) -> Result<Vec<RawNode>, LoadError> {
     let num_internal = block.num_leaves - 1;
     let total_nodes = 2 * block.num_leaves - 1;
 
@@ -153,12 +153,12 @@ fn convert_tree(block: &TreeBlock, n_features: usize) -> Result<Vec<Node>, LoadE
     }
 
     let mut nodes = vec![
-        Node {
+        RawNode {
             feature_idx: 0,
             left: 0,
             right: 0,
-            flags: 0,
-            value: 0.0
+            default_left: false,
+            value: 0.0,
         };
         total_nodes
     ];
@@ -173,26 +173,26 @@ fn convert_tree(block: &TreeBlock, n_features: usize) -> Result<Vec<Node>, LoadE
 
         // decision_type bit 0 = categorical (rejected above)
         // decision_type bit 1 = default_left for NaN routing
-        let default_left = (block.decision_type[i] >> 1) & 1;
+        let default_left = (block.decision_type[i] >> 1) & 1 == 1;
 
         let left = remap_child(block.left_child[i], num_internal, block.num_leaves)?;
         let right = remap_child(block.right_child[i], num_internal, block.num_leaves)?;
 
-        nodes[i] = Node {
+        nodes[i] = RawNode {
             feature_idx: feat as u16,
             left: left as u16,
             right: right as u16,
-            flags: u16::from(default_left),
+            default_left,
             value: block.threshold[i],
         };
     }
 
     for i in 0..block.num_leaves {
-        nodes[num_internal + i] = Node {
+        nodes[num_internal + i] = RawNode {
             feature_idx: LEAF_SENTINEL,
             left: 0,
             right: 0,
-            flags: 0,
+            default_left: false,
             value: block.leaf_value[i],
         };
     }
@@ -216,7 +216,7 @@ fn remap_child(child: i32, num_internal: usize, num_leaves: usize) -> Result<usi
     }
 }
 
-fn parse_model(bytes: &[u8]) -> Result<(Vec<Vec<Node>>, usize, f64), LoadError> {
+fn parse_model(bytes: &[u8]) -> Result<(Vec<Vec<RawNode>>, usize, f64), LoadError> {
     let text = core::str::from_utf8(bytes).map_err(|_| LoadError::Parse("invalid UTF-8"))?;
 
     let lines: Vec<&str> = text.lines().collect();

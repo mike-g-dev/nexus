@@ -7,20 +7,99 @@ use alloc::{boxed::Box, vec::Vec};
 #[cfg(feature = "alloc")]
 pub(crate) const LEAF_SENTINEL: u16 = u16::MAX;
 
-/// Decision tree node. 16 bytes, cache-line friendly.
+/// Intermediate node used during loading and tree construction.
 ///
-/// Internal nodes: `feature_idx < LEAF_SENTINEL`, `value` = threshold.
-/// Leaf nodes: `feature_idx == LEAF_SENTINEL`, `value` = leaf prediction.
+/// Explicit fields for clarity: `right` and `default_left` are separate.
+/// Converted to compact [`Node`] by [`reorder_and_compact`] during model
+/// construction.
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub(crate) struct RawNode {
+    pub(crate) feature_idx: u16,
+    pub(crate) left: u16,
+    pub(crate) right: u16,
+    pub(crate) default_left: bool,
+    pub(crate) value: f64,
+}
+
+/// Compact 16-byte decision tree node.
+///
+/// The `right` child field is absent: false-branch-next (DFS right-first)
+/// layout guarantees the right child is always at `idx + 1`. This saves
+/// a stored index per node and enables sequential memory access on ~50%
+/// of decisions (the false/right path), which the hardware prefetcher
+/// serves from L1 instead of incurring an L2/L3 miss.
+///
+/// 12-byte packed (`repr(C, packed)`) was benchmarked: the 25% smaller
+/// working set doesn't change the L3-vs-L2 tier for any configuration,
+/// and the non-power-of-2 stride (×12 vs ×16) plus feature-mask overhead
+/// regressed the L2-resident cases by ~25%. 16-byte `repr(C)` with
+/// implicit padding after `flags` is the measured optimum.
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub(crate) struct Node {
     pub(crate) feature_idx: u16,
     pub(crate) left: u16,
-    pub(crate) right: u16,
-    // bit 0: default_left (NaN routing)
+    // bit 0: default_left (NaN routing). 2 bytes implicit padding after
+    // this field for f64 alignment.
     pub(crate) flags: u16,
     pub(crate) value: f64,
+}
+
+#[cfg(feature = "alloc")]
+const _: () = assert!(core::mem::size_of::<Node>() == 16);
+
+/// Reorder tree to false-branch-next layout and convert to compact [`Node`].
+///
+/// DFS right-first traversal: the right (false) child is always placed at
+/// `idx + 1`, so `walk_tree` uses `idx + 1` instead of loading a stored
+/// index. This gives sequential memory access on ~50% of decisions,
+/// enabling hardware prefetch. Only the left child index is stored.
+#[cfg(feature = "alloc")]
+fn reorder_and_compact(raw: &[RawNode]) -> Vec<Node> {
+    let n = raw.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    debug_assert!(n <= u16::MAX as usize + 1);
+
+    let mut nodes = Vec::with_capacity(n);
+    let mut old_to_new = alloc::vec![0u16; n];
+    let mut stack = Vec::with_capacity(32);
+    stack.push(0usize);
+
+    while let Some(old_idx) = stack.pop() {
+        old_to_new[old_idx] = nodes.len() as u16;
+        let r = &raw[old_idx];
+
+        if r.feature_idx == LEAF_SENTINEL {
+            nodes.push(Node {
+                feature_idx: LEAF_SENTINEL,
+                left: 0,
+                flags: 0,
+                value: r.value,
+            });
+        } else {
+            nodes.push(Node {
+                feature_idx: r.feature_idx,
+                left: r.left, // old index; remapped below
+                flags: u16::from(r.default_left),
+                value: r.value,
+            });
+            // Push left first so right pops first (right lands at idx+1)
+            stack.push(r.left as usize);
+            stack.push(r.right as usize);
+        }
+    }
+
+    for node in &mut nodes {
+        if node.feature_idx != LEAF_SENTINEL {
+            node.left = old_to_new[node.left as usize];
+        }
+    }
+
+    nodes
 }
 
 #[cfg(feature = "alloc")]
@@ -146,13 +225,13 @@ macro_rules! impl_gbdt {
             /// # Safety
             ///
             /// `tree` must point to the root of a valid tree within `self.nodes`.
-            /// Node indices (left/right) are tree-relative, validated by
-            /// `remap_child` during loading.
+            /// Nodes use false-branch-next layout: right child is at `idx + 1`.
+            /// Left child index validated by `remap_child` during loading.
             fn walk_tree(tree: *const Node, features: &[$ty], nan_aware: bool) -> $ty {
                 let mut idx = 0usize;
                 loop {
-                    // SAFETY: idx=0 at entry. Subsequent values from node.left/right,
-                    // validated by remap_child during loading.
+                    // SAFETY: idx=0 at entry. Subsequent values from node.left
+                    // (validated by remap_child) or idx+1 (DFS layout invariant).
                     let node = unsafe { *tree.add(idx) };
                     if node.feature_idx == LEAF_SENTINEL {
                         return node.value as $ty;
@@ -172,14 +251,14 @@ macro_rules! impl_gbdt {
                     idx = if go_left {
                         node.left as usize
                     } else {
-                        node.right as usize
+                        idx + 1
                     };
                 }
             }
 
             #[allow(dead_code)]
             pub(crate) fn from_parts(
-                trees: Vec<Vec<Node>>,
+                trees: Vec<Vec<RawNode>>,
                 n_features: usize,
                 base_score: $ty,
             ) -> Self {
@@ -188,7 +267,7 @@ macro_rules! impl_gbdt {
                 let mut tree_offsets = Vec::with_capacity(trees.len());
                 for tree in trees {
                     tree_offsets.push(nodes.len() as u32);
-                    nodes.extend_from_slice(&tree);
+                    nodes.extend_from_slice(&reorder_and_compact(&tree));
                 }
                 Self {
                     nodes: nodes.into_boxed_slice(),
@@ -214,31 +293,31 @@ mod tests {
     use alloc::vec;
 
     #[cfg(feature = "alloc")]
+    fn leaf(value: f64) -> RawNode {
+        RawNode {
+            feature_idx: LEAF_SENTINEL,
+            left: 0,
+            right: 0,
+            default_left: false,
+            value,
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    fn split(feat: u16, left: u16, right: u16, threshold: f64) -> RawNode {
+        RawNode {
+            feature_idx: feat,
+            left,
+            right,
+            default_left: false,
+            value: threshold,
+        }
+    }
+
+    #[cfg(feature = "alloc")]
     fn single_stump(base_score: f64) -> GbdtF64 {
         // feature[0] <= 0.5 → leaf -1.0, else → leaf 1.0
-        let nodes = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 0.5,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
-        ];
+        let nodes = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         GbdtF64::from_parts(vec![nodes], 1, base_score)
     }
 
@@ -275,30 +354,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn multi_tree_sums() {
-        // 3 identical stumps: each contributes ±1.0
-        let stump = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 0.5,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
-        ];
+        let stump = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = GbdtF64::from_parts(vec![stump.clone(), stump.clone(), stump], 1, 0.0);
         assert_eq!(model.predict(&[0.3]), -3.0);
         assert_eq!(model.predict(&[0.8]), 3.0);
@@ -307,60 +363,15 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn predict_n_partial() {
-        let stump = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 0.5,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
-        ];
+        let stump = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = GbdtF64::from_parts(vec![stump.clone(), stump.clone(), stump], 1, 5.0);
-        // 2 of 3 trees, feature goes left
         assert_eq!(model.predict_n(&[0.3], 2), 5.0 + -2.0);
     }
 
     #[test]
     #[cfg(feature = "alloc")]
     fn predict_n_exceeds_count() {
-        let stump = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 0.5,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
-        ];
+        let stump = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = GbdtF64::from_parts(vec![stump.clone(), stump.clone(), stump], 1, 0.0);
         assert_eq!(model.predict_n(&[0.3], 100), model.predict(&[0.3]));
     }
@@ -368,29 +379,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn predict_n_unchecked_partial() {
-        let stump = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 0.5,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
-        ];
+        let stump = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = GbdtF64::from_parts(vec![stump.clone(), stump.clone(), stump], 1, 5.0);
         assert_eq!(model.predict_n_unchecked(&[0.3], 2), 5.0 + -2.0);
         assert_eq!(
@@ -410,55 +399,13 @@ mod tests {
         // leaf0   leaf1       leaf2    leaf3
         // -4.0    -2.0         2.0      4.0
         let nodes = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 5.0,
-            },
-            Node {
-                feature_idx: 1,
-                left: 3,
-                right: 4,
-                flags: 0,
-                value: 2.0,
-            },
-            Node {
-                feature_idx: 1,
-                left: 5,
-                right: 6,
-                flags: 0,
-                value: 8.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -4.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -2.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 2.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 4.0,
-            },
+            split(0, 1, 2, 5.0),
+            split(1, 3, 4, 2.0),
+            split(1, 5, 6, 8.0),
+            leaf(-4.0),
+            leaf(-2.0),
+            leaf(2.0),
+            leaf(4.0),
         ];
         let model = GbdtF64::from_parts(vec![nodes], 2, 0.0);
         // f[0]=3 <= 5 → left, f[1]=1 <= 2 → left → leaf0 = -4.0
@@ -474,29 +421,16 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn nan_routing_default_left() {
-        // flags bit 0 = 1 → NaN goes left
         let nodes = vec![
-            Node {
+            RawNode {
                 feature_idx: 0,
                 left: 1,
                 right: 2,
-                flags: 1,
+                default_left: true,
                 value: 0.5,
             },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
+            leaf(-1.0),
+            leaf(1.0),
         ];
         let model = GbdtF64::from_parts(vec![nodes], 1, 0.0);
         assert_eq!(model.predict(&[f64::NAN]), -1.0);
@@ -505,30 +439,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn nan_routing_default_right() {
-        // flags bit 0 = 0 → NaN goes right
-        let nodes = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 0.5,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
-        ];
+        let nodes = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = GbdtF64::from_parts(vec![nodes], 1, 0.0);
         assert_eq!(model.predict(&[f64::NAN]), 1.0);
     }
@@ -538,27 +449,15 @@ mod tests {
     fn nan_unchecked_goes_right() {
         // predict_unchecked: NaN <= threshold is false → always right
         let nodes = vec![
-            Node {
+            RawNode {
                 feature_idx: 0,
                 left: 1,
                 right: 2,
-                flags: 1, // default_left set, but ignored by unchecked
+                default_left: true, // ignored by unchecked
                 value: 0.5,
             },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
+            leaf(-1.0),
+            leaf(1.0),
         ];
         let model = GbdtF64::from_parts(vec![nodes], 1, 0.0);
         assert_eq!(model.predict_unchecked(&[f64::NAN]), 1.0);
@@ -575,29 +474,7 @@ mod tests {
     #[test]
     #[cfg(feature = "alloc")]
     fn f32_variant() {
-        let nodes = vec![
-            Node {
-                feature_idx: 0,
-                left: 1,
-                right: 2,
-                flags: 0,
-                value: 0.5,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: -1.0,
-            },
-            Node {
-                feature_idx: LEAF_SENTINEL,
-                left: 0,
-                right: 0,
-                flags: 0,
-                value: 1.0,
-            },
-        ];
+        let nodes = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = GbdtF32::from_parts(vec![nodes], 1, 0.0_f32);
         assert_eq!(model.predict(&[0.3_f32]), -1.0_f32);
         assert_eq!(model.predict(&[0.8_f32]), 1.0_f32);
