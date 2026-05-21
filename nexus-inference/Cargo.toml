@@ -1,0 +1,30 @@
+[package]
+name = "nexus-inference"
+version = "0.1.0"
+description = "ML inference engine for pre-trained models"
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["inference", "machine-learning", "gbdt", "lightgbm", "trading"]
+categories = ["algorithms", "science"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+loader-lightgbm = ["alloc"]
+
+[dependencies]
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "predict_bench"
+harness = false
+required-features = ["loader-lightgbm"]
+
+[lints]
+workspace = true

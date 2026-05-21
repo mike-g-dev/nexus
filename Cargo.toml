@@ -30,6 +30,7 @@ members = [
 	"nexus-async-net",
 	"nexus-collections",
 	"nexus-async-rt",
+	"nexus-inference",
 ]
 
 [workspace.package]
