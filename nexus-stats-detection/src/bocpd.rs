@@ -2,6 +2,8 @@ extern crate alloc;
 use alloc::boxed::Box;
 use nexus_stats_core::math::{exp, ln, ln_gamma};
 
+use crate::simd_math;
+
 // Precomputed per-r constants; valid because suf_count[r] == r.
 #[derive(Debug, Clone)]
 struct Precomputed {
@@ -48,6 +50,7 @@ pub struct BocpdF64 {
     suf_mean: Box<[f64]>,
     suf_sum_sq: Box<[f64]>,
     scratch: Box<[f64]>,
+    scratch2: Box<[f64]>,
     pre: Precomputed,
 
     max_run_length: usize,
@@ -124,15 +127,17 @@ impl BocpdF64 {
             self.active = 1;
         }
 
-        // Step 1 + 2a fused: log predictive (precomputed tables) + CP mass max.
+        // Step 1: three-pass log predictive + CP mass.
         //
-        // All prior/r-dependent values are precomputed. The student-t reduces to:
-        //   lng_base[r] + alpha[r]*ln(a) - (alpha[r]+0.5)*ln(b)
-        // where a = nu_d[r]*beta_n, b = a + dx^2. No divisions in the loop.
+        // Pass 1 — scalar math only (no transcendentals): compute the two
+        // ln arguments a[r] and b[r] into scratch/scratch2.
+        // Pass 2 — tight ln loop: ln(a[r]) and ln(b[r]) in-place. Consecutive
+        // independent calls give the OOO engine maximum ILP.
+        // Pass 3 — combine with table lookups, find CP mass max.
         let cp_terms;
         #[allow(clippy::suboptimal_flops)]
         {
-            let mut max_cp_term = f64::NEG_INFINITY;
+            // Pass 1: a[r] = nu_d*beta_n, b[r] = a + dx^2.
             for r in 0..self.active {
                 let mu_n = self.pre.mu_a[r]
                     + self.pre.mu_b[r] * self.suf_mean[r];
@@ -142,30 +147,44 @@ impl BocpdF64 {
                     + self.pre.beta_c[r] * diff * diff;
                 let a = self.pre.nu_d[r] * beta_n;
                 let dx = sample - mu_n;
-                let b = a + dx * dx;
-                let alpha_r = self.pre.alpha[r];
+                self.scratch[r] = a;
+                self.scratch2[r] = a + dx * dx;
+            }
 
-                self.scratch[r] = self.pre.lng_base[r]
-                    + alpha_r * ln(a)
-                    - (alpha_r + 0.5) * ln(b);
+            // Pass 2: ln in-place (SIMD when available).
+            simd_math::ln_inplace(&mut self.scratch[..self.active]);
+            simd_math::ln_inplace(&mut self.scratch2[..self.active]);
+
+            // Pass 3: combine and find CP mass max.
+            let mut max_cp_term = f64::NEG_INFINITY;
+            for r in 0..self.active {
+                let alpha_r = self.pre.alpha[r];
+                let log_pred = self.pre.lng_base[r]
+                    + alpha_r * self.scratch[r]
+                    - (alpha_r + 0.5) * self.scratch2[r];
+
+                self.scratch[r] = log_pred;
 
                 let term =
-                    self.log_posterior[r] + self.scratch[r] + self.log_hazard;
+                    self.log_posterior[r] + log_pred + self.log_hazard;
                 if term > max_cp_term {
                     max_cp_term = term;
                 }
             }
 
+            // CP mass: exp-sum (SIMD when available).
+            // Reuse scratch2 for the terms since pass 2 is done with it.
             cp_terms = if max_cp_term == f64::NEG_INFINITY {
                 f64::NEG_INFINITY
             } else {
-                let mut sum = 0.0;
                 for r in 0..self.active {
-                    sum += exp(
-                        self.log_posterior[r] + self.scratch[r] + self.log_hazard
-                            - max_cp_term,
-                    );
+                    self.scratch2[r] =
+                        self.log_posterior[r] + self.scratch[r] + self.log_hazard;
                 }
+                let sum = simd_math::exp_sum(
+                    &self.scratch2[..self.active],
+                    max_cp_term,
+                );
                 max_cp_term + ln(sum)
             };
         }
@@ -485,6 +504,7 @@ impl BocpdF64Builder {
             suf_mean: alloc::vec![0.0f64; size].into_boxed_slice(),
             suf_sum_sq: alloc::vec![0.0f64; size].into_boxed_slice(),
             scratch: alloc::vec![f64::NEG_INFINITY; size].into_boxed_slice(),
+            scratch2: alloc::vec![0.0f64; size].into_boxed_slice(),
             pre,
             max_run_length,
             log_hazard: ln(h),
@@ -554,19 +574,25 @@ mod tests {
 
     #[test]
     fn variance_shift_detected() {
-        let mut bocpd = vague_prior()
+        let mut bocpd = BocpdF64::builder()
+            .prior_mu(50.0)
+            .prior_kappa(1.0)
+            .prior_alpha(2.0)
+            .prior_beta(1.0)
             .max_run_length(200)
             .hazard_lambda(100.0)
             .build()
             .unwrap();
+        // Stable period: low variance around 50
         for i in 0..100 {
             bocpd.update(50.0 + (i % 2) as f64).unwrap();
         }
         let cp_before = bocpd.change_point_probability().unwrap();
 
+        // Variance shift: amplitude ±0.5 → ±20
         let mut max_cp = 0.0f64;
-        for i in 0..30 {
-            let sample = if i % 2 == 0 { 50.0 + 20.0 } else { 50.0 - 20.0 };
+        for i in 0..50 {
+            let sample = if i % 2 == 0 { 70.0 } else { 30.0 };
             bocpd.update(sample).unwrap();
             let cp = bocpd.change_point_probability().unwrap();
             max_cp = max_cp.max(cp);

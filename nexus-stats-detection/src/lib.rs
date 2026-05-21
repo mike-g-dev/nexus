@@ -28,6 +28,8 @@ macro_rules! check_finite {
 }
 
 // Internal modules
+#[cfg(all(feature = "alloc", any(feature = "std", feature = "libm")))]
+mod simd_math;
 mod multi_gate;
 mod page_hinkley;
 mod robust_z;
