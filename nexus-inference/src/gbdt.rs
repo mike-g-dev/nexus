@@ -222,6 +222,33 @@ macro_rules! impl_gbdt {
                 self.base_score
             }
 
+            /// Number of outputs. Always 1 for GBDT.
+            pub fn n_outputs(&self) -> usize {
+                1
+            }
+
+            /// Write prediction to output buffer with NaN routing.
+            ///
+            /// # Panics
+            ///
+            /// Panics if `features.len() != self.n_features()` or
+            /// `output.len() != 1`.
+            pub fn predict_into(&self, features: &[$ty], output: &mut [$ty]) {
+                assert_eq!(output.len(), 1);
+                output[0] = self.predict(features);
+            }
+
+            /// Write prediction to output buffer without NaN checks.
+            ///
+            /// # Panics
+            ///
+            /// Panics if `features.len() != self.n_features()` or
+            /// `output.len() != 1`.
+            pub fn predict_into_unchecked(&self, features: &[$ty], output: &mut [$ty]) {
+                assert_eq!(output.len(), 1);
+                output[0] = self.predict_unchecked(features);
+            }
+
             /// # Safety
             ///
             /// `tree` must point to the root of a valid tree within `self.nodes`.
@@ -248,11 +275,7 @@ macro_rules! impl_gbdt {
                     } else {
                         feat <= node.value as $ty
                     };
-                    idx = if go_left {
-                        node.left as usize
-                    } else {
-                        idx + 1
-                    };
+                    idx = if go_left { node.left as usize } else { idx + 1 };
                 }
             }
 
@@ -265,6 +288,17 @@ macro_rules! impl_gbdt {
                 let total: usize = trees.iter().map(|t| t.len()).sum();
                 let mut nodes = Vec::with_capacity(total);
                 let mut tree_offsets = Vec::with_capacity(trees.len());
+                for tree in &trees {
+                    for node in tree {
+                        assert!(
+                            node.feature_idx == LEAF_SENTINEL
+                                || (node.feature_idx as usize) < n_features,
+                            "feature_idx {} out of range for n_features {}",
+                            node.feature_idx,
+                            n_features,
+                        );
+                    }
+                }
                 for tree in trees {
                     tree_offsets.push(nodes.len() as u32);
                     nodes.extend_from_slice(&reorder_and_compact(&tree));
@@ -486,6 +520,27 @@ mod tests {
         let model = single_stump(2.5);
         assert_eq!(model.n_trees(), 1);
         assert_eq!(model.n_features(), 1);
+        assert_eq!(model.n_outputs(), 1);
         assert_eq!(model.base_score(), 2.5);
+    }
+
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn predict_into_matches() {
+        let model = single_stump(0.0);
+        let mut out = [0.0_f64];
+        model.predict_into(&[0.3], &mut out);
+        assert_eq!(out[0], model.predict(&[0.3]));
+        model.predict_into(&[0.8], &mut out);
+        assert_eq!(out[0], model.predict(&[0.8]));
+    }
+
+    #[test]
+    #[cfg(feature = "alloc")]
+    #[should_panic]
+    fn predict_into_wrong_output_len() {
+        let model = single_stump(0.0);
+        let mut out = [0.0_f64; 2];
+        model.predict_into(&[0.3], &mut out);
     }
 }

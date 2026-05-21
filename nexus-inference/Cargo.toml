@@ -14,9 +14,11 @@ categories = ["algorithms", "science"]
 default = ["std"]
 std = ["alloc"]
 alloc = []
+libm = ["alloc", "dep:libm"]
 loader-lightgbm = ["alloc"]
 
 [dependencies]
+libm = { version = "0.2", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

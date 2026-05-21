@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`MlpF64` / `MlpF32`** — Feedforward neural network inference.
+  Runtime-configured layer sizes, row-major weight layout (PyTorch-compatible).
+  Activation functions: `Relu`, `LeakyRelu`, `Tanh`, `Sigmoid` (hidden layers only,
+  output layer is raw linear). `predict()` for single-output, `predict_into()`
+  for multi-output. Requires `alloc`. `Tanh`/`Sigmoid` require `std` or `libm`.
+- **`LutF64` / `LutF32`** — Lookup table predictor. Uniform bin spacing,
+  Horner indexing, clamped out-of-range features. O(1) prediction.
+  Requires `alloc`.
+- **`Activation`** enum — `Relu`, `LeakyRelu(f64)`, `Tanh`, `Sigmoid`.
+- **GBDT API additions** — `predict_into()`, `predict_into_unchecked()`,
+  `n_outputs()` for API consistency with MLP and LUT.
+- **`libm` feature** — enables `Tanh`/`Sigmoid` activations in `no_std`
+  environments via the `libm` crate.
+
 ## [0.1.0] — 2026-05-21
 
 ### Added

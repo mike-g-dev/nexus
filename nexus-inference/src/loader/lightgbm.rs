@@ -102,8 +102,7 @@ fn parse_tree_block(lines: &[&str]) -> Result<TreeBlock, LoadError> {
         return Err(LoadError::Validation("num_leaves must be >= 2"));
     }
 
-    let decision_type =
-        decision_type.ok_or(LoadError::Parse("missing decision_type"))?;
+    let decision_type = decision_type.ok_or(LoadError::Parse("missing decision_type"))?;
 
     for &dt in &decision_type {
         if dt & 1 != 0 {

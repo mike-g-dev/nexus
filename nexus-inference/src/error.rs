@@ -20,3 +20,20 @@ impl fmt::Display for LoadError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for LoadError {}
+
+/// Input contains NaN.
+///
+/// Returned by checked `predict` / `predict_into` methods on MLP and LUT
+/// when any input value is NaN. Use `predict_unchecked` to skip the scan
+/// and let NaN propagate through the computation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NanInput;
+
+impl fmt::Display for NanInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("input contains NaN")
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for NanInput {}
