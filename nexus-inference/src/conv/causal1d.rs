@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::{boxed::Box, vec};
 
 use crate::LoadError;
-use crate::dot::{dot_f32, matvec_bias_f32};
+use crate::dot::{dot_f32, dot4_f32, matvec_bias_f32};
 use crate::mlp::Activation;
 
 /// Streaming causal 1D convolution.
@@ -44,6 +44,7 @@ pub struct Causal1dConvF32 {
     w_out: Box<[f32]>,
     b_out: Box<[f32]>,
     buffer: Box<[f32]>,
+    lin_buf: Box<[f32]>,
     filter_scratch: Box<[f32]>,
     write_idx: u16,
     step_count: u32,
@@ -130,6 +131,7 @@ impl Causal1dConvF32 {
             w_out: w_out.into(),
             b_out: b_out.into(),
             buffer: vec![0.0_f32; kernel_size * input_ch].into_boxed_slice(),
+            lin_buf: vec![0.0_f32; kernel_size * input_ch].into_boxed_slice(),
             filter_scratch: vec![0.0_f32; filters].into_boxed_slice(),
             write_idx: 0,
             step_count: 0,
@@ -164,22 +166,38 @@ impl Causal1dConvF32 {
         let ch = self.input_ch as usize;
         let k_size = self.kernel_size as usize;
         let n_filters = self.filters as usize;
+        let conv_len = k_size * ch;
         assert_eq!(input.len(), ch);
         assert_eq!(output.len(), self.output_size as usize);
 
         let wi = self.write_idx as usize;
         self.buffer[wi * ch..(wi + 1) * ch].copy_from_slice(input);
 
-        for f in 0..n_filters {
-            let mut sum = self.b_conv[f];
-            let w_base = f * k_size * ch;
-            for kk in 0..k_size {
-                let buf_pos = (wi + k_size - kk) % k_size;
-                let w_row = &self.w_conv[w_base + kk * ch..w_base + (kk + 1) * ch];
-                let b_row = &self.buffer[buf_pos * ch..(buf_pos + 1) * ch];
-                sum += dot_f32(w_row, b_row);
-            }
-            self.filter_scratch[f] = activate(sum, self.activation);
+        // Linearize circular buffer: position kk=0 is current (wi),
+        // kk=1 is previous, etc. Matches w_conv layout per filter.
+        for kk in 0..k_size {
+            let buf_pos = (wi + k_size - kk) % k_size;
+            self.lin_buf[kk * ch..(kk + 1) * ch]
+                .copy_from_slice(&self.buffer[buf_pos * ch..(buf_pos + 1) * ch]);
+        }
+
+        // Tiled convolution: 4 filters at a time via dot4_f32.
+        let lin = &self.lin_buf[..conv_len];
+        let filters_4 = n_filters & !3;
+        let mut f = 0;
+        while f < filters_4 {
+            let rows = &self.w_conv[f * conv_len..(f + 4) * conv_len];
+            let dots = dot4_f32(rows, lin);
+            self.filter_scratch[f] = activate(self.b_conv[f] + dots[0], self.activation);
+            self.filter_scratch[f + 1] = activate(self.b_conv[f + 1] + dots[1], self.activation);
+            self.filter_scratch[f + 2] = activate(self.b_conv[f + 2] + dots[2], self.activation);
+            self.filter_scratch[f + 3] = activate(self.b_conv[f + 3] + dots[3], self.activation);
+            f += 4;
+        }
+        while f < n_filters {
+            let row = &self.w_conv[f * conv_len..(f + 1) * conv_len];
+            self.filter_scratch[f] = activate(self.b_conv[f] + dot_f32(row, lin), self.activation);
+            f += 1;
         }
 
         matvec_bias_f32(

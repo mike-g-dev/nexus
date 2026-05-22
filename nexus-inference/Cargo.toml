@@ -30,3 +30,7 @@ required-features = ["loader-lightgbm"]
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "temporal_bench"
+harness = false

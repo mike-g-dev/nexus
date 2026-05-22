@@ -5,6 +5,7 @@ use alloc::{boxed::Box, vec};
 use crate::LoadError;
 use crate::dot::matvec_bias_f32;
 
+#[allow(unused_imports)]
 use super::{sigmoid_f32, tanh_f32};
 
 /// Single-layer LSTM for streaming temporal inference.
@@ -210,14 +211,30 @@ impl TinyLstmF32 {
             concat_size,
         );
 
-        for k in 0..h {
-            let ig = sigmoid_f32(self.gates[k]);
-            let fg = sigmoid_f32(self.gates[h + k]);
-            let cg = tanh_f32(self.gates[2 * h + k]);
-            let og = sigmoid_f32(self.gates[3 * h + k]);
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            target_feature = "fma"
+        ))]
+        {
+            super::avx2_gates::lstm_gates_avx2(&self.gates, &mut self.c, &mut self.h, h);
+        }
 
-            self.c[k] = fg.mul_add(self.c[k], ig * cg);
-            self.h[k] = og * tanh_f32(self.c[k]);
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            target_feature = "fma"
+        )))]
+        {
+            for k in 0..h {
+                let ig = sigmoid_f32(self.gates[k]);
+                let fg = sigmoid_f32(self.gates[h + k]);
+                let cg = tanh_f32(self.gates[2 * h + k]);
+                let og = sigmoid_f32(self.gates[3 * h + k]);
+
+                self.c[k] = fg.mul_add(self.c[k], ig * cg);
+                self.h[k] = og * tanh_f32(self.c[k]);
+            }
         }
 
         matvec_bias_f32(
