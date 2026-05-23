@@ -33,3 +33,20 @@ jobs:
       run: cargo test -p nexus-async-net --no-default-features --features nexus,tls --lib --verbose
     - name: Test nexus-async-net (nexus, no tls)
       run: cargo test -p nexus-async-net --no-default-features --features nexus --lib --verbose
+
+  verify-pytorch:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@1.94.0
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install Python dependencies
+      run: |
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install safetensors packaging numpy
+    - name: Generate fixtures from PyTorch
+      run: python nexus-inference/tests/fixtures/generate_all.py
+    - name: Verify Rust matches PyTorch
+      run: cargo test -p nexus-inference --features safetensors --test safetensors_integration --verbose
