@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Generate safetensors fixtures and expected outputs for nexus-inference integration tests.
 
+Uses explicit deterministic weights (torch.linspace) instead of random
+initialization so that outputs are identical across torch versions and
+platforms.
+
 Install dependencies:
     pip install torch --index-url https://download.pytorch.org/whl/cpu
-    pip install safetensors
+    pip install safetensors packaging numpy
 """
 
 import json
@@ -15,15 +19,26 @@ from pathlib import Path
 from safetensors.torch import save_file
 
 FIXTURES_DIR = Path(__file__).parent
-SEED = 42
+
+
+def init_linspace(param, lo=-0.2, hi=0.2):
+    with torch.no_grad():
+        param.copy_(torch.linspace(lo, hi, param.numel(), dtype=param.dtype).reshape(param.shape))
 
 
 def generate_lstm():
-    torch.manual_seed(SEED)
     input_size, hidden_size, output_size = 3, 4, 2
 
     lstm = nn.LSTM(input_size, hidden_size, num_layers=1, batch_first=True)
     fc = nn.Linear(hidden_size, output_size)
+
+    with torch.no_grad():
+        init_linspace(lstm.weight_ih_l0, -0.2, 0.2)
+        init_linspace(lstm.weight_hh_l0, -0.1, 0.1)
+        lstm.bias_ih_l0.fill_(0.01)
+        lstm.bias_hh_l0.fill_(-0.01)
+        init_linspace(fc.weight, -0.3, 0.3)
+        fc.bias.fill_(0.0)
 
     inputs = [
         [0.5, -0.3, 0.8],
@@ -68,11 +83,18 @@ def generate_lstm():
 
 
 def generate_gru():
-    torch.manual_seed(SEED)
     input_size, hidden_size, output_size = 3, 4, 1
 
     gru = nn.GRU(input_size, hidden_size, num_layers=1, batch_first=True)
     fc = nn.Linear(hidden_size, output_size)
+
+    with torch.no_grad():
+        init_linspace(gru.weight_ih_l0, -0.2, 0.2)
+        init_linspace(gru.weight_hh_l0, -0.1, 0.1)
+        gru.bias_ih_l0.fill_(0.01)
+        gru.bias_hh_l0.fill_(-0.01)
+        init_linspace(fc.weight, -0.3, 0.3)
+        fc.bias.fill_(0.0)
 
     inputs = [
         [0.5, -0.3, 0.8],
@@ -116,8 +138,6 @@ def generate_gru():
 
 
 def generate_mlp_f32():
-    torch.manual_seed(SEED)
-
     mlp = nn.Sequential(
         nn.Linear(3, 8),
         nn.ReLU(),
@@ -125,6 +145,12 @@ def generate_mlp_f32():
         nn.ReLU(),
         nn.Linear(4, 2),
     )
+
+    with torch.no_grad():
+        for module in mlp:
+            if isinstance(module, nn.Linear):
+                init_linspace(module.weight, -0.2, 0.2)
+                module.bias.fill_(0.01)
 
     inputs = [
         [0.5, -0.3, 0.8],
@@ -161,13 +187,17 @@ def generate_mlp_f32():
 
 
 def generate_mlp_f64():
-    torch.manual_seed(SEED)
-
     mlp = nn.Sequential(
         nn.Linear(2, 4),
         nn.ReLU(),
         nn.Linear(4, 1),
     ).double()
+
+    with torch.no_grad():
+        for module in mlp:
+            if isinstance(module, nn.Linear):
+                init_linspace(module.weight, -0.2, 0.2)
+                module.bias.fill_(0.01)
 
     inputs = [
         [3.0, 4.0],
@@ -204,11 +234,16 @@ def generate_mlp_f64():
 
 
 def generate_conv1d():
-    torch.manual_seed(SEED)
     input_ch, kernel_size, filters, output_size = 2, 3, 4, 1
 
     conv = nn.Conv1d(input_ch, filters, kernel_size)
     proj = nn.Linear(filters, output_size)
+
+    with torch.no_grad():
+        init_linspace(conv.weight, -0.2, 0.2)
+        conv.bias.fill_(0.01)
+        init_linspace(proj.weight, -0.3, 0.3)
+        proj.bias.fill_(0.0)
 
     inputs = [
         [0.5, -0.3],
