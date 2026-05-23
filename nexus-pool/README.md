@@ -185,7 +185,7 @@ loop {
 
 ## Minimum Supported Rust Version
 
-Rust 1.85 or later.
+Rust 1.90 or later.
 
 ## License
 
