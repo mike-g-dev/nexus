@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `round_to_tick` with `tick=1` falsely triggered banker's rounding on
+  already-aligned values, moving odd raw values to the adjacent even
+  number. Root cause: `half_tick = 1/2 = 0` in integer division made
+  `remainder == half_tick` always true. Fixed with early return when
+  remainder is zero.
+
 ## [1.2.0] — 2026-05-16
 
 ### Added
