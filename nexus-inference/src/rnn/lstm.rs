@@ -211,10 +211,16 @@ impl TinyLstmF32 {
             concat_size,
         );
 
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+        {
+            super::avx512_gates::lstm_gates_avx512(&self.gates, &mut self.c, &mut self.h, h);
+        }
+
         #[cfg(all(
             target_arch = "x86_64",
             target_feature = "avx2",
-            target_feature = "fma"
+            target_feature = "fma",
+            not(target_feature = "avx512f"),
         ))]
         {
             super::avx2_gates::lstm_gates_avx2(&self.gates, &mut self.c, &mut self.h, h);
@@ -222,8 +228,10 @@ impl TinyLstmF32 {
 
         #[cfg(not(all(
             target_arch = "x86_64",
-            target_feature = "avx2",
-            target_feature = "fma"
+            any(
+                target_feature = "avx512f",
+                all(target_feature = "avx2", target_feature = "fma"),
+            )
         )))]
         {
             for k in 0..h {

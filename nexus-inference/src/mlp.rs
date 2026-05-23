@@ -6,35 +6,12 @@ use alloc::{boxed::Box, vec::Vec};
 
 #[cfg(feature = "alloc")]
 use crate::LoadError;
-
-/// Hidden-layer activation function.
-///
-/// Applied to all hidden layers. The output layer always produces raw
-/// linear scores (caller applies sigmoid/softmax if needed).
 #[cfg(feature = "alloc")]
-#[derive(Debug, Clone, Copy)]
-pub enum Activation {
-    /// max(0, x)
-    Relu,
-    /// x if x >= 0, alpha * x otherwise.
-    LeakyRelu(f64),
-    /// Hyperbolic tangent. Requires `std` or `libm`.
-    Tanh,
-    /// 1 / (1 + exp(-x)). Requires `std` or `libm`.
-    Sigmoid,
-    /// Pass-through (no transformation).
-    Identity,
-    /// x if x >= 0, alpha * (exp(x) - 1) otherwise. Requires `std` or `libm`.
-    Elu(f64),
-    /// Gaussian error linear unit (tanh approximation). Requires `std` or `libm`.
-    Gelu,
-    /// x * sigmoid(x), also known as SiLU in PyTorch. Requires `std` or `libm`.
-    Swish,
-}
+use crate::activation::Activation;
 
 #[cfg(feature = "alloc")]
 macro_rules! impl_mlp {
-    ($name:ident, $ty:ty, $dot_fn:path, $dot4_fn:path) => {
+    ($name:ident, $ty:ty, $dot_fn:path, $dot4_fn:path, $activate_fn:path) => {
         /// Feedforward neural network (multi-layer perceptron).
         ///
         /// Immutable after construction. All prediction methods take `&self`.
@@ -196,7 +173,7 @@ macro_rules! impl_mlp {
                         for k in 0..4 {
                             let mut sum = self.biases[b_offset + j + k] + dots[k];
                             if !is_last {
-                                sum = Self::activate(sum, self.activation);
+                                sum = $activate_fn(sum, self.activation);
                             }
                             if is_last {
                                 output[j + k] = sum;
@@ -213,7 +190,7 @@ macro_rules! impl_mlp {
                         let src = if src_is_a { &self.scratch_a[..in_size] } else { &self.scratch_b[..in_size] };
                         let mut sum = self.biases[b_offset + j] + $dot_fn(row, src);
                         if !is_last {
-                            sum = Self::activate(sum, self.activation);
+                            sum = $activate_fn(sum, self.activation);
                         }
                         if is_last {
                             output[j] = sum;
@@ -250,77 +227,26 @@ macro_rules! impl_mlp {
             pub fn activation(&self) -> Activation {
                 self.activation
             }
-
-            #[inline(always)]
-            fn activate(x: $ty, activation: Activation) -> $ty {
-                match activation {
-                    Activation::Relu => {
-                        if x > 0.0 as $ty { x } else if x <= 0.0 as $ty { 0.0 as $ty } else { x }
-                    }
-                    Activation::LeakyRelu(alpha) => {
-                        if x >= 0.0 as $ty { x } else { x * alpha as $ty }
-                    }
-                    Activation::Tanh => {
-                        #[cfg(feature = "std")]
-                        { (x as f64).tanh() as $ty }
-                        #[cfg(all(not(feature = "std"), feature = "libm"))]
-                        { libm::tanh(x as f64) as $ty }
-                        #[cfg(not(any(feature = "std", feature = "libm")))]
-                        { let _ = x; unreachable!() }
-                    }
-                    Activation::Sigmoid => {
-                        #[cfg(feature = "std")]
-                        { (1.0 / (1.0 + (-(x as f64)).exp())) as $ty }
-                        #[cfg(all(not(feature = "std"), feature = "libm"))]
-                        { (1.0 / (1.0 + libm::exp(-(x as f64)))) as $ty }
-                        #[cfg(not(any(feature = "std", feature = "libm")))]
-                        { let _ = x; unreachable!() }
-                    }
-                    Activation::Identity => x,
-                    Activation::Elu(alpha) => {
-                        if x >= 0.0 as $ty {
-                            x
-                        } else {
-                            #[cfg(feature = "std")]
-                            { (alpha * (x as f64).exp_m1()) as $ty }
-                            #[cfg(all(not(feature = "std"), feature = "libm"))]
-                            { (alpha * libm::expm1(x as f64)) as $ty }
-                            #[cfg(not(any(feature = "std", feature = "libm")))]
-                            { let _ = (x, alpha); unreachable!() }
-                        }
-                    }
-                    Activation::Gelu => {
-                        #[cfg(feature = "std")]
-                        {
-                            let xf = x as f64;
-                            (0.5 * xf * (1.0 + (0.7978845608028654 * (0.044715 * xf * xf).mul_add(xf, xf)).tanh())) as $ty
-                        }
-                        #[cfg(all(not(feature = "std"), feature = "libm"))]
-                        {
-                            let xf = x as f64;
-                            (0.5 * xf * (1.0 + libm::tanh(0.7978845608028654 * (xf + 0.044715 * xf * xf * xf)))) as $ty
-                        }
-                        #[cfg(not(any(feature = "std", feature = "libm")))]
-                        { let _ = x; unreachable!() }
-                    }
-                    Activation::Swish => {
-                        #[cfg(feature = "std")]
-                        { let xf = x as f64; (xf / (1.0 + (-xf).exp())) as $ty }
-                        #[cfg(all(not(feature = "std"), feature = "libm"))]
-                        { let xf = x as f64; (xf / (1.0 + libm::exp(-xf))) as $ty }
-                        #[cfg(not(any(feature = "std", feature = "libm")))]
-                        { let _ = x; unreachable!() }
-                    }
-                }
-            }
         }
     };
 }
 
 #[cfg(feature = "alloc")]
-impl_mlp!(MlpF64, f64, crate::dot::dot_f64, crate::dot::dot4_f64);
+impl_mlp!(
+    MlpF64,
+    f64,
+    crate::dot::dot_f64,
+    crate::dot::dot4_f64,
+    crate::activation::activate_f64
+);
 #[cfg(feature = "alloc")]
-impl_mlp!(MlpF32, f32, crate::dot::dot_f32, crate::dot::dot4_f32);
+impl_mlp!(
+    MlpF32,
+    f32,
+    crate::dot::dot_f32,
+    crate::dot::dot4_f32,
+    crate::activation::activate_f32
+);
 
 #[cfg(test)]
 mod tests {

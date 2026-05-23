@@ -163,17 +163,13 @@ pub(super) fn gru_gates_avx2(
 
     // Scalar tail
     while k < hidden {
-        let r = super::sigmoid_f32(
-            ih[k] + bias_ih[k] + hh[k] + bias_hh[k],
-        );
+        let r = super::sigmoid_f32(ih[k] + bias_ih[k] + hh[k] + bias_hh[k]);
         let z = super::sigmoid_f32(
             ih[hidden + k] + bias_ih[hidden + k] + hh[hidden + k] + bias_hh[hidden + k],
         );
         let hh_candidate = hh[2 * hidden + k] + bias_hh[2 * hidden + k];
-        let n = super::tanh_f32(r.mul_add(
-            hh_candidate,
-            ih[2 * hidden + k] + bias_ih[2 * hidden + k],
-        ));
+        let n =
+            super::tanh_f32(r.mul_add(hh_candidate, ih[2 * hidden + k] + bias_ih[2 * hidden + k]));
         h[k] = (1.0 - z).mul_add(n, z * h[k]);
         k += 1;
     }

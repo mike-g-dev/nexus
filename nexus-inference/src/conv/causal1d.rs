@@ -3,8 +3,8 @@ extern crate alloc;
 use alloc::{boxed::Box, vec};
 
 use crate::LoadError;
+use crate::activation::{Activation, activate_f32};
 use crate::dot::{dot_f32, dot4_f32, matvec_bias_f32};
-use crate::mlp::Activation;
 
 /// Streaming causal 1D convolution.
 ///
@@ -188,15 +188,19 @@ impl Causal1dConvF32 {
         while f < filters_4 {
             let rows = &self.w_conv[f * conv_len..(f + 4) * conv_len];
             let dots = dot4_f32(rows, lin);
-            self.filter_scratch[f] = activate(self.b_conv[f] + dots[0], self.activation);
-            self.filter_scratch[f + 1] = activate(self.b_conv[f + 1] + dots[1], self.activation);
-            self.filter_scratch[f + 2] = activate(self.b_conv[f + 2] + dots[2], self.activation);
-            self.filter_scratch[f + 3] = activate(self.b_conv[f + 3] + dots[3], self.activation);
+            self.filter_scratch[f] = activate_f32(self.b_conv[f] + dots[0], self.activation);
+            self.filter_scratch[f + 1] =
+                activate_f32(self.b_conv[f + 1] + dots[1], self.activation);
+            self.filter_scratch[f + 2] =
+                activate_f32(self.b_conv[f + 2] + dots[2], self.activation);
+            self.filter_scratch[f + 3] =
+                activate_f32(self.b_conv[f + 3] + dots[3], self.activation);
             f += 4;
         }
         while f < n_filters {
             let row = &self.w_conv[f * conv_len..(f + 1) * conv_len];
-            self.filter_scratch[f] = activate(self.b_conv[f] + dot_f32(row, lin), self.activation);
+            self.filter_scratch[f] =
+                activate_f32(self.b_conv[f] + dot_f32(row, lin), self.activation);
             f += 1;
         }
 
@@ -251,118 +255,6 @@ impl Causal1dConvF32 {
     /// Activation function applied to convolution outputs.
     pub fn activation(&self) -> Activation {
         self.activation
-    }
-}
-
-#[inline(always)]
-fn activate(x: f32, activation: Activation) -> f32 {
-    match activation {
-        Activation::Relu => {
-            if x > 0.0 {
-                x
-            } else if x <= 0.0 {
-                0.0
-            } else {
-                x // NaN
-            }
-        }
-        Activation::LeakyRelu(alpha) => {
-            if x >= 0.0 {
-                x
-            } else {
-                x * alpha as f32
-            }
-        }
-        Activation::Identity => x,
-        Activation::Tanh => {
-            #[cfg(feature = "std")]
-            {
-                (x as f64).tanh() as f32
-            }
-            #[cfg(all(not(feature = "std"), feature = "libm"))]
-            {
-                libm::tanh(x as f64) as f32
-            }
-            #[cfg(not(any(feature = "std", feature = "libm")))]
-            {
-                let _ = x;
-                unreachable!()
-            }
-        }
-        Activation::Sigmoid => {
-            #[cfg(feature = "std")]
-            {
-                (1.0_f64 / (1.0_f64 + (-(x as f64)).exp())) as f32
-            }
-            #[cfg(all(not(feature = "std"), feature = "libm"))]
-            {
-                (1.0_f64 / (1.0_f64 + libm::exp(-(x as f64)))) as f32
-            }
-            #[cfg(not(any(feature = "std", feature = "libm")))]
-            {
-                let _ = x;
-                unreachable!()
-            }
-        }
-        Activation::Elu(alpha) => {
-            if x >= 0.0 {
-                x
-            } else {
-                #[cfg(feature = "std")]
-                {
-                    alpha as f32 * (x as f64).exp_m1() as f32
-                }
-                #[cfg(all(not(feature = "std"), feature = "libm"))]
-                {
-                    alpha as f32 * libm::expm1(x as f64) as f32
-                }
-                #[cfg(not(any(feature = "std", feature = "libm")))]
-                {
-                    let _ = (x, alpha);
-                    unreachable!()
-                }
-            }
-        }
-        Activation::Gelu => {
-            #[cfg(feature = "std")]
-            {
-                let xf = x as f64;
-                let inner = (0.044_715 * xf * xf).mul_add(xf, xf)
-                    * core::f64::consts::FRAC_2_SQRT_PI
-                    * std::f64::consts::FRAC_1_SQRT_2;
-                (0.5 * xf * (1.0 + inner.tanh())) as f32
-            }
-            #[cfg(all(not(feature = "std"), feature = "libm"))]
-            {
-                let xf = x as f64;
-                let inner = ((0.044_715 * xf * xf) * xf + xf)
-                    * core::f64::consts::FRAC_2_SQRT_PI
-                    * 0.7071067811865476; // 1/sqrt(2)
-                (0.5 * xf * (1.0 + libm::tanh(inner))) as f32
-            }
-            #[cfg(not(any(feature = "std", feature = "libm")))]
-            {
-                let _ = x;
-                unreachable!()
-            }
-        }
-        Activation::Swish => {
-            #[cfg(feature = "std")]
-            {
-                let sig = 1.0_f64 / (1.0_f64 + (-(x as f64)).exp());
-                (x as f64 * sig) as f32
-            }
-            #[cfg(all(not(feature = "std"), feature = "libm"))]
-            {
-                let sig = 1.0_f64 / (1.0_f64 + libm::exp(-(x as f64)));
-                (x as f64 * sig) as f32
-            }
-            #[cfg(not(any(feature = "std", feature = "libm")))]
-            {
-                let _ = x;
-                unreachable!()
-            }
-        }
     }
 }
 

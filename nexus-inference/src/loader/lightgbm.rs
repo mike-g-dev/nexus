@@ -84,16 +84,16 @@ fn parse_tree_block(lines: &[&str]) -> Result<TreeBlock, LoadError> {
         }
     }
 
-    if let Some(nc) = num_cat {
-        if nc > 0 {
-            return Err(LoadError::Validation("categorical splits not supported"));
-        }
+    if let Some(nc) = num_cat
+        && nc > 0
+    {
+        return Err(LoadError::Validation("categorical splits not supported"));
     }
 
-    if let Some(il) = is_linear {
-        if il > 0 {
-            return Err(LoadError::Validation("linear trees not supported"));
-        }
+    if let Some(il) = is_linear
+        && il > 0
+    {
+        return Err(LoadError::Validation("linear trees not supported"));
     }
 
     let num_leaves = num_leaves.ok_or(LoadError::Parse("missing num_leaves in tree block"))?;

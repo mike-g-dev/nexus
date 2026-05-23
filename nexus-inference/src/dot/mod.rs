@@ -1,10 +1,14 @@
 #[allow(dead_code)]
 mod scalar;
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+mod avx512;
+
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "avx2",
-    target_feature = "fma"
+    target_feature = "fma",
+    not(target_feature = "avx512f"),
 ))]
 mod avx2;
 
@@ -12,10 +16,16 @@ mod avx2;
 pub(crate) fn dot_f64(a: &[f64], b: &[f64]) -> f64 {
     debug_assert_eq!(a.len(), b.len());
 
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        avx512::dot_f64(a, b)
+    }
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
-        target_feature = "fma"
+        target_feature = "fma",
+        not(target_feature = "avx512f"),
     ))]
     {
         avx2::dot_f64(a, b)
@@ -23,8 +33,10 @@ pub(crate) fn dot_f64(a: &[f64], b: &[f64]) -> f64 {
 
     #[cfg(not(all(
         target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
+        any(
+            target_feature = "avx512f",
+            all(target_feature = "avx2", target_feature = "fma"),
+        )
     )))]
     {
         scalar::dot_f64(a, b)
@@ -35,10 +47,16 @@ pub(crate) fn dot_f64(a: &[f64], b: &[f64]) -> f64 {
 pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
 
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        avx512::dot_f32(a, b)
+    }
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
-        target_feature = "fma"
+        target_feature = "fma",
+        not(target_feature = "avx512f"),
     ))]
     {
         avx2::dot_f32(a, b)
@@ -46,8 +64,10 @@ pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(not(all(
         target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
+        any(
+            target_feature = "avx512f",
+            all(target_feature = "avx2", target_feature = "fma"),
+        )
     )))]
     {
         scalar::dot_f32(a, b)
@@ -60,10 +80,16 @@ pub(crate) fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
 pub(crate) fn dot4_f64(rows: &[f64], input: &[f64]) -> [f64; 4] {
     debug_assert_eq!(rows.len(), 4 * input.len());
 
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        avx512::dot4_f64(rows, input)
+    }
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
-        target_feature = "fma"
+        target_feature = "fma",
+        not(target_feature = "avx512f"),
     ))]
     {
         avx2::dot4_f64(rows, input)
@@ -71,8 +97,10 @@ pub(crate) fn dot4_f64(rows: &[f64], input: &[f64]) -> [f64; 4] {
 
     #[cfg(not(all(
         target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
+        any(
+            target_feature = "avx512f",
+            all(target_feature = "avx2", target_feature = "fma"),
+        )
     )))]
     {
         scalar::dot4_f64(rows, input)
@@ -146,10 +174,16 @@ pub(crate) fn matvec_f32(
 pub(crate) fn dot4_f32(rows: &[f32], input: &[f32]) -> [f32; 4] {
     debug_assert_eq!(rows.len(), 4 * input.len());
 
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        avx512::dot4_f32(rows, input)
+    }
+
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
-        target_feature = "fma"
+        target_feature = "fma",
+        not(target_feature = "avx512f"),
     ))]
     {
         avx2::dot4_f32(rows, input)
@@ -157,8 +191,10 @@ pub(crate) fn dot4_f32(rows: &[f32], input: &[f32]) -> [f32; 4] {
 
     #[cfg(not(all(
         target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
+        any(
+            target_feature = "avx512f",
+            all(target_feature = "avx2", target_feature = "fma"),
+        )
     )))]
     {
         scalar::dot4_f32(rows, input)

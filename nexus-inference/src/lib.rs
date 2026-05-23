@@ -25,6 +25,8 @@
 extern crate alloc;
 
 #[cfg(feature = "alloc")]
+mod activation;
+#[cfg(feature = "alloc")]
 mod dot;
 mod error;
 mod gbdt;
@@ -41,6 +43,8 @@ mod conv;
 mod loader;
 
 #[cfg(feature = "alloc")]
+pub use activation::Activation;
+#[cfg(feature = "alloc")]
 pub use conv::Causal1dConvF32;
 pub use error::LoadError;
 #[cfg(feature = "alloc")]
@@ -48,6 +52,6 @@ pub use gbdt::{GbdtF32, GbdtF64};
 #[cfg(feature = "alloc")]
 pub use lut::{LutF32, LutF64};
 #[cfg(feature = "alloc")]
-pub use mlp::{Activation, MlpF32, MlpF64};
+pub use mlp::{MlpF32, MlpF64};
 #[cfg(any(feature = "std", feature = "libm"))]
 pub use rnn::{TinyGruF32, TinyLstmF32};

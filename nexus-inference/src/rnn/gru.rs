@@ -200,10 +200,23 @@ impl TinyGruF32 {
             hi,
         );
 
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+        {
+            super::avx512_gates::gru_gates_avx512(
+                &self.ih_scratch,
+                &self.hh_scratch,
+                &self.bias_ih,
+                &self.bias_hh,
+                &mut self.h,
+                hi,
+            );
+        }
+
         #[cfg(all(
             target_arch = "x86_64",
             target_feature = "avx2",
-            target_feature = "fma"
+            target_feature = "fma",
+            not(target_feature = "avx512f"),
         ))]
         {
             super::avx2_gates::gru_gates_avx2(
@@ -218,8 +231,10 @@ impl TinyGruF32 {
 
         #[cfg(not(all(
             target_arch = "x86_64",
-            target_feature = "avx2",
-            target_feature = "fma"
+            any(
+                target_feature = "avx512f",
+                all(target_feature = "avx2", target_feature = "fma"),
+            )
         )))]
         {
             for k in 0..hi {

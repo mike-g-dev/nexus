@@ -7,7 +7,7 @@ Criterion benchmarks provide detailed statistical analysis of performance.
 
 - CPU: AMD (hybrid, P-cores + E-cores)
 - OS: Arch Linux 6.18.2
-- Rust: stable 1.85+
+- Rust: stable 1.90+
 - Profile: `--release`
 
 ## Event Queue (non-blocking)

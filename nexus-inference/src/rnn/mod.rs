@@ -1,10 +1,14 @@
 mod gru;
 mod lstm;
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+mod avx512_gates;
+
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "avx2",
-    target_feature = "fma"
+    target_feature = "fma",
+    not(target_feature = "avx512f"),
 ))]
 mod avx2_gates;
 
