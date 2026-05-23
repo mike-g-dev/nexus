@@ -397,8 +397,11 @@ impl crate::Causal1dConvF32 {
     /// `proj_prefix` resolves the output projection `nn.Linear`:
     /// `weight`, `bias`.
     ///
-    /// PyTorch stores Conv1d weights as `(out_ch, in_ch, kernel)`.
-    /// This loader transposes to our `(filters, kernel, in_ch)` layout.
+    /// PyTorch stores Conv1d weights as `(out_ch, in_ch, kernel)` where
+    /// kernel position 0 corresponds to the oldest input. Our layout is
+    /// `(filters, kernel, in_ch)` where position 0 is the newest
+    /// (current) input. This loader transposes and reverses the kernel
+    /// dimension.
     ///
     /// # Errors
     ///
@@ -437,13 +440,16 @@ impl crate::Causal1dConvF32 {
         let kernel_size = wc_shape[2];
         let output_size = wo_shape[0];
 
-        // Transpose PyTorch (F, C, K) → our (F, K, C)
+        // Transpose + reverse: PyTorch (F, C, K) → our (F, K, C)
+        // PyTorch k=0 is oldest, k=K-1 is newest.
+        // Our k=0 is newest (current), k=K-1 is oldest.
         let mut w_conv = vec![0.0_f32; filters * kernel_size * input_ch];
         for f in 0..filters {
             for k in 0..kernel_size {
+                let pt_k = kernel_size - 1 - k;
                 for c in 0..input_ch {
                     w_conv[f * kernel_size * input_ch + k * input_ch + c] =
-                        wc_pt[f * input_ch * kernel_size + c * kernel_size + k];
+                        wc_pt[f * input_ch * kernel_size + c * kernel_size + pt_k];
                 }
             }
         }
@@ -786,18 +792,23 @@ mod tests {
     }
 
     #[test]
-    fn conv_transpose_multi_channel() {
-        // Verify PyTorch (F, C, K) → our (F, K, C) transpose is correct
+    fn conv_transpose_and_reverse() {
+        // Verify PyTorch (F, C, K) → our (F, K, C) transpose+reverse
         // 2 channels, kernel 2, 1 filter
         //
-        // PyTorch layout (1, 2, 2): [w(f0,c0,k0), w(f0,c0,k1), w(f0,c1,k0), w(f0,c1,k1)]
-        //                         = [0.1,          0.2,          0.3,          0.4]
+        // PyTorch layout (1, 2, 2): [w(f0,c0,k_pt=0), w(f0,c0,k_pt=1), w(f0,c1,k_pt=0), w(f0,c1,k_pt=1)]
+        //                         = [0.1,              0.2,              0.3,              0.4]
+        // PyTorch: k_pt=0 multiplies oldest input, k_pt=1 multiplies newest.
         //
-        // Our layout (1, 2, 2):     [w(f0,k0,c0), w(f0,k0,c1), w(f0,k1,c0), w(f0,k1,c1)]
-        //                         = [0.1,          0.3,          0.2,          0.4]
-        let w_conv_pt = [0.1_f32, 0.2, 0.3, 0.4]; // PyTorch order
+        // Our layout (1, 2, 2): k=0 is newest (current), k=1 is oldest.
+        //   our[k=0,c=0] = pt[c=0,k_pt=1] = 0.2
+        //   our[k=0,c=1] = pt[c=1,k_pt=1] = 0.4
+        //   our[k=1,c=0] = pt[c=0,k_pt=0] = 0.1
+        //   our[k=1,c=1] = pt[c=1,k_pt=0] = 0.3
+        // Our layout = [0.2, 0.4, 0.1, 0.3]
+        let w_conv_pt = [0.1_f32, 0.2, 0.3, 0.4];
         let b_conv = [0.0_f32];
-        let w_out = [1.0_f32]; // pass-through
+        let w_out = [1.0_f32];
         let b_out = [0.0_f32];
 
         let wc_b = f32_bytes(&w_conv_pt);
@@ -820,8 +831,7 @@ mod tests {
         )
         .unwrap();
 
-        // Build reference with our layout: [0.1, 0.3, 0.2, 0.4]
-        let w_conv_ours = [0.1_f32, 0.3, 0.2, 0.4];
+        let w_conv_ours = [0.2_f32, 0.4, 0.1, 0.3];
         let mut reference = crate::Causal1dConvF32::from_parts(
             2,
             2,

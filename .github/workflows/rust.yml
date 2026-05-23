@@ -33,3 +33,17 @@ jobs:
       run: cargo test -p nexus-async-net --no-default-features --features nexus,tls --lib --verbose
     - name: Test nexus-async-net (nexus, no tls)
       run: cargo test -p nexus-async-net --no-default-features --features nexus --lib --verbose
+
+  verify-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install Python dependencies
+      run: pip install torch --index-url https://download.pytorch.org/whl/cpu safetensors
+    - name: Regenerate fixtures
+      run: python nexus-inference/tests/fixtures/generate_all.py
+    - name: Verify fixtures are current
+      run: git diff --exit-code nexus-inference/tests/fixtures/
