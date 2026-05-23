@@ -128,6 +128,18 @@ fn extract_f64_2d(st: &SafeTensors<'_>, name: &str) -> Result<(Vec<f64>, [usize;
     Ok((data, dims))
 }
 
+// ---- sqrt helper for BatchNorm fusion ----
+
+#[cfg(feature = "std")]
+fn sqrt_f64(x: f64) -> f64 {
+    x.sqrt()
+}
+
+#[cfg(all(not(feature = "std"), feature = "libm"))]
+fn sqrt_f64(x: f64) -> f64 {
+    libm::sqrt(x)
+}
+
 // ---- RNN loaders (require tanh/sigmoid from std or libm) ----
 
 #[cfg(any(feature = "std", feature = "libm"))]
@@ -294,12 +306,19 @@ macro_rules! impl_mlp_safetensors {
             /// `activation` applies to all hidden layers. The final layer has
             /// no activation (same as [`from_parts`](Self::from_parts)).
             ///
+            /// Layers trained with `bias=False` are handled automatically —
+            /// missing bias tensors are treated as zero bias.
+            ///
+            /// `BatchNorm1d` layers between linear layers are detected by
+            /// `running_mean` presence and fused into the preceding linear
+            /// layer at load time (requires `std` or `libm` for `sqrt`).
+            /// Both `affine=True` (default) and `affine=False` are supported.
+            ///
             /// # Errors
             ///
-            /// Returns [`LoadError::TensorNotFound`] if a discovered weight
-            /// has no matching bias, [`LoadError::Validation`] if layer
-            /// dimensions are inconsistent, or [`LoadError::Parse`] if no
-            /// linear layers are found.
+            /// Returns [`LoadError::Validation`] if layer dimensions are
+            /// inconsistent, or [`LoadError::Parse`] if no linear layers
+            /// are found.
             ///
             /// # Examples
             ///
@@ -320,6 +339,7 @@ macro_rules! impl_mlp_safetensors {
                 };
 
                 let mut layer_indices: Vec<usize> = Vec::new();
+                let mut batchnorm_indices: Vec<usize> = Vec::new();
                 for name in st.names() {
                     let suffix = if prefix.is_empty() {
                         name.as_ref()
@@ -331,11 +351,21 @@ macro_rules! impl_mlp_safetensors {
                     };
                     if let Some(idx_str) = suffix.strip_suffix(".weight") {
                         if let Ok(idx) = idx_str.parse::<usize>() {
-                            layer_indices.push(idx);
+                            if let Ok(tv) = st.tensor(name) {
+                                if tv.shape().len() == 2 {
+                                    layer_indices.push(idx);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(idx_str) = suffix.strip_suffix(".running_mean") {
+                        if let Ok(idx) = idx_str.parse::<usize>() {
+                            batchnorm_indices.push(idx);
                         }
                     }
                 }
                 layer_indices.sort_unstable();
+                batchnorm_indices.sort_unstable();
 
                 if layer_indices.is_empty() {
                     return Err(LoadError::Parse("no linear layers found in safetensors"));
@@ -349,12 +379,17 @@ macro_rules! impl_mlp_safetensors {
                     let w_name = format!("{prefix_dot}{idx}.weight");
                     let b_name = format!("{prefix_dot}{idx}.bias");
 
-                    let (w_data, w_shape) = $extract_2d(&st, &w_name)?;
-                    let b_data = $extract_1d(&st, &b_name)?;
-
-                    if w_shape[0] != b_data.len() {
-                        return Err(LoadError::Validation("weight rows != bias length"));
-                    }
+                    let (mut w_data, w_shape) = $extract_2d(&st, &w_name)?;
+                    let mut b_data = match $extract_1d(&st, &b_name) {
+                        Ok(b) => {
+                            if w_shape[0] != b.len() {
+                                return Err(LoadError::Validation("weight rows != bias length"));
+                            }
+                            b
+                        }
+                        Err(LoadError::TensorNotFound(_)) => vec![0.0 as $ty; w_shape[0]],
+                        Err(e) => return Err(e),
+                    };
                     if i == 0 {
                         layer_sizes.push(w_shape[1]);
                     } else if *layer_sizes.last().unwrap() != w_shape[1] {
@@ -363,6 +398,77 @@ macro_rules! impl_mlp_safetensors {
                         ));
                     }
                     layer_sizes.push(w_shape[0]);
+
+                    // Fuse BatchNorm if one exists between this linear and the next
+                    let next_linear = layer_indices.get(i + 1).copied().unwrap_or(usize::MAX);
+                    if let Some(&bn_idx) = batchnorm_indices
+                        .iter()
+                        .find(|&&bi| bi > idx && bi < next_linear)
+                    {
+                        #[cfg(not(any(feature = "std", feature = "libm")))]
+                        {
+                            return Err(LoadError::Validation(
+                                "BatchNorm fusion requires 'std' or 'libm' feature",
+                            ));
+                        }
+                        #[cfg(any(feature = "std", feature = "libm"))]
+                        {
+                            let bn_mean =
+                                $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_mean"))?;
+                            let bn_var =
+                                $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_var"))?;
+                            let out_features = w_shape[0];
+                            let in_features = w_shape[1];
+                            if bn_mean.len() != out_features || bn_var.len() != out_features {
+                                return Err(LoadError::Validation(
+                                    "BatchNorm size mismatch with linear output",
+                                ));
+                            }
+                            let bn_gamma: Vec<$ty> =
+                                match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.weight")) {
+                                    Ok(g) => {
+                                        if g.len() != out_features {
+                                            return Err(LoadError::Validation(
+                                                "BatchNorm gamma size mismatch",
+                                            ));
+                                        }
+                                        g
+                                    }
+                                    Err(LoadError::TensorNotFound(_)) => {
+                                        vec![1.0 as $ty; out_features]
+                                    }
+                                    Err(e) => return Err(e),
+                                };
+                            let bn_beta: Vec<$ty> =
+                                match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.bias")) {
+                                    Ok(b) => {
+                                        if b.len() != out_features {
+                                            return Err(LoadError::Validation(
+                                                "BatchNorm beta size mismatch",
+                                            ));
+                                        }
+                                        b
+                                    }
+                                    Err(LoadError::TensorNotFound(_)) => {
+                                        vec![0.0 as $ty; out_features]
+                                    }
+                                    Err(e) => return Err(e),
+                                };
+                            let eps = 1e-5_f64;
+                            for row in 0..out_features {
+                                let scale =
+                                    bn_gamma[row] as f64 / sqrt_f64(bn_var[row] as f64 + eps);
+                                for col in 0..in_features {
+                                    let wi = row * in_features + col;
+                                    w_data[wi] = (w_data[wi] as f64 * scale) as $ty;
+                                }
+                                b_data[row] = scale.mul_add(
+                                    b_data[row] as f64 - bn_mean[row] as f64,
+                                    bn_beta[row] as f64,
+                                ) as $ty;
+                            }
+                        }
+                    }
 
                     all_weights.extend_from_slice(&w_data);
                     all_biases.extend_from_slice(&b_data);
@@ -745,6 +851,115 @@ mod tests {
             crate::MlpF64::from_safetensors(&data, "net", crate::Activation::Relu).unwrap();
         let out = mlp.predict(&[3.0, 4.0]);
         assert!((out - 7.0).abs() < 1e-12);
+    }
+
+    // ---- BatchNorm fusion ----
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn mlp_f32_batchnorm_fusion() {
+        // 2 → 4 (Linear+BN) → ReLU → 1 (Linear)
+        // Sequential: 0=Linear, 1=BatchNorm, 2=ReLU, 3=Linear
+        let w0: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0, 0.5, 0.5, -0.5, 0.5]; // (4, 2)
+        let b0: Vec<f32> = vec![0.0; 4];
+        let bn_gamma: Vec<f32> = vec![2.0; 4];
+        let bn_beta: Vec<f32> = vec![0.1; 4];
+        let bn_mean: Vec<f32> = vec![1.0; 4];
+        let bn_var: Vec<f32> = vec![4.0; 4];
+        let w1: Vec<f32> = vec![1.0; 4]; // (1, 4)
+        let b1: Vec<f32> = vec![0.0];
+
+        let w0_b = f32_bytes(&w0);
+        let b0_b = f32_bytes(&b0);
+        let g_b = f32_bytes(&bn_gamma);
+        let beta_b = f32_bytes(&bn_beta);
+        let mean_b = f32_bytes(&bn_mean);
+        let var_b = f32_bytes(&bn_var);
+        let w1_b = f32_bytes(&w1);
+        let b1_b = f32_bytes(&b1);
+
+        let data = serialize_tensors(vec![
+            ("fc.0.weight", make_view(Dtype::F32, &[4, 2], &w0_b)),
+            ("fc.0.bias", make_view(Dtype::F32, &[4], &b0_b)),
+            ("fc.1.weight", make_view(Dtype::F32, &[4], &g_b)),
+            ("fc.1.bias", make_view(Dtype::F32, &[4], &beta_b)),
+            ("fc.1.running_mean", make_view(Dtype::F32, &[4], &mean_b)),
+            ("fc.1.running_var", make_view(Dtype::F32, &[4], &var_b)),
+            ("fc.3.weight", make_view(Dtype::F32, &[1, 4], &w1_b)),
+            ("fc.3.bias", make_view(Dtype::F32, &[1], &b1_b)),
+        ]);
+
+        let mut mlp = crate::MlpF32::from_safetensors(&data, "fc", crate::Activation::Relu)
+            .expect("should load with BN fusion");
+
+        // Verify: input [3, 5]
+        // W0 rows: [1,0], [0,1], [0.5,0.5], [-0.5,0.5]
+        // Linear: W0 @ [3,5] + b0 = [3, 5, 4, 1]
+        // BN: scale = gamma/sqrt(var+eps) = 2/sqrt(4+1e-5) ≈ 1.0
+        //     y = scale*(x - mean) + beta ≈ [2.1, 4.1, 3.1, 0.1]
+        // ReLU: [2.1, 4.1, 3.1, 0.1]
+        // Linear: sum ≈ 9.4
+        let input = [3.0_f32, 5.0];
+        let out = mlp.predict(&input);
+
+        let eps = 1e-5_f64;
+        let scale = 2.0_f64 / (4.0_f64 + eps).sqrt();
+        let linear_out = [3.0_f64, 5.0, 4.0, 1.0];
+        let bn_out: Vec<f64> = linear_out
+            .iter()
+            .map(|&x| scale * (x - 1.0) + 0.1)
+            .collect();
+        let relu_out: Vec<f64> = bn_out.iter().map(|&x| x.max(0.0)).collect();
+        let expected: f64 = relu_out.iter().sum();
+
+        assert!(
+            (out as f64 - expected).abs() < 1e-4,
+            "got {out}, expected {expected}"
+        );
+    }
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn mlp_f32_batchnorm_affine_false() {
+        // BatchNorm with affine=False — no gamma/beta tensors
+        let w0: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0]; // (2, 2) identity
+        let b0: Vec<f32> = vec![0.0; 2];
+        let bn_mean: Vec<f32> = vec![1.0, 2.0];
+        let bn_var: Vec<f32> = vec![1.0, 1.0];
+        let w1: Vec<f32> = vec![1.0, 1.0]; // (1, 2) sum
+        let b1: Vec<f32> = vec![0.0];
+
+        let w0_b = f32_bytes(&w0);
+        let b0_b = f32_bytes(&b0);
+        let mean_b = f32_bytes(&bn_mean);
+        let var_b = f32_bytes(&bn_var);
+        let w1_b = f32_bytes(&w1);
+        let b1_b = f32_bytes(&b1);
+
+        let data = serialize_tensors(vec![
+            ("0.weight", make_view(Dtype::F32, &[2, 2], &w0_b)),
+            ("0.bias", make_view(Dtype::F32, &[2], &b0_b)),
+            ("1.running_mean", make_view(Dtype::F32, &[2], &mean_b)),
+            ("1.running_var", make_view(Dtype::F32, &[2], &var_b)),
+            ("2.weight", make_view(Dtype::F32, &[1, 2], &w1_b)),
+            ("2.bias", make_view(Dtype::F32, &[1], &b1_b)),
+        ]);
+
+        let mut mlp = crate::MlpF32::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
+
+        // Input [3, 4]: Linear=[3,4], BN with gamma=1,beta=0:
+        //   scale = 1/sqrt(1+1e-5) ≈ 1.0
+        //   y = [3-1, 4-2] = [2, 2]
+        // ReLU: [2, 2], sum=4
+        let out = mlp.predict(&[3.0, 4.0]);
+
+        let eps = 1e-5_f64;
+        let s = 1.0 / (1.0_f64 + eps).sqrt();
+        let expected = s * (3.0 - 1.0) + s * (4.0 - 2.0);
+        assert!(
+            (out as f64 - expected).abs() < 1e-4,
+            "got {out}, expected {expected}"
+        );
     }
 
     // ---- Conv1d ----

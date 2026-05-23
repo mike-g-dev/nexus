@@ -296,6 +296,21 @@ fn mlp_f32_leaky_relu() {
     run_mlp_f32_test("mlp_f32_leaky_relu");
 }
 
+#[test]
+fn mlp_f32_no_bias() {
+    run_mlp_f32_test("mlp_f32_no_bias");
+}
+
+#[test]
+fn mlp_f32_batchnorm() {
+    run_mlp_f32_test("mlp_f32_batchnorm");
+}
+
+#[test]
+fn mlp_f32_batchnorm_no_bias() {
+    run_mlp_f32_test("mlp_f32_batchnorm_no_bias");
+}
+
 // ---- MLP f64 tests ----
 
 #[test]

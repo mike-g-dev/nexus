@@ -162,11 +162,14 @@ def generate_gru_multi_output():
 
 
 def generate_mlp(name, layer_sizes, activation_cls, activation_name, dtype,
-                 inputs, prefix, init_fn, tolerance, activation_param=None):
+                 inputs, prefix, init_fn, tolerance, activation_param=None,
+                 bias=True, batchnorm=False):
     layers = []
     for i in range(len(layer_sizes) - 1):
-        layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+        layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1], bias=bias))
         if i < len(layer_sizes) - 2:
+            if batchnorm:
+                layers.append(nn.BatchNorm1d(layer_sizes[i + 1]))
             layers.append(activation_cls())
     mlp = nn.Sequential(*layers)
     if dtype == torch.float64:
@@ -176,7 +179,20 @@ def generate_mlp(name, layer_sizes, activation_cls, activation_name, dtype,
         for module in mlp:
             if isinstance(module, nn.Linear):
                 init_fn(module.weight)
-                module.bias.fill_(0.01)
+                if module.bias is not None:
+                    module.bias.fill_(0.01)
+            elif isinstance(module, nn.BatchNorm1d):
+                n = module.num_features
+                module.running_mean.copy_(
+                    torch.linspace(-0.5, 0.5, n, dtype=module.running_mean.dtype))
+                module.running_var.copy_(
+                    torch.linspace(0.5, 2.0, n, dtype=module.running_var.dtype))
+                if module.affine:
+                    init_sinusoidal(module.weight, 0.8, 1.2)
+                    module.bias.fill_(0.05)
+
+    if batchnorm:
+        mlp.eval()
 
     state = {}
     for k, v in mlp.state_dict().items():
@@ -188,7 +204,11 @@ def generate_mlp(name, layer_sizes, activation_cls, activation_name, dtype,
     with torch.no_grad():
         for inp in inputs:
             t = torch.tensor(inp, dtype=dtype)
+            if batchnorm:
+                t = t.unsqueeze(0)
             y = mlp(t)
+            if batchnorm:
+                y = y.squeeze(0)
             outputs.append(y.tolist())
 
     with open(FIXTURES_DIR / f"{name}_expected.json", "w") as f:
@@ -204,8 +224,14 @@ def generate_mlp(name, layer_sizes, activation_cls, activation_name, dtype,
         json.dump(meta, f, indent=2)
         f.write("\n")
 
+    tags = []
+    if not bias:
+        tags.append("bias=False")
+    if batchnorm:
+        tags.append("BN")
+    tag_str = f" [{', '.join(tags)}]" if tags else ""
     sizes_str = "->".join(str(s) for s in layer_sizes)
-    print(f"  {name}: {sizes_str}, {activation_name}, {len(inputs)} inputs")
+    print(f"  {name}: {sizes_str}, {activation_name}{tag_str}, {len(inputs)} inputs")
 
 
 def generate_mlp_f32():
@@ -280,6 +306,27 @@ def generate_mlp_f32_leaky_relu():
                  inputs=make_inputs(5, 3, seed=32),
                  prefix="lrelu", init_fn=init_sinusoidal, tolerance=1e-5,
                  activation_param=0.01)
+
+
+def generate_mlp_f32_no_bias():
+    generate_mlp("mlp_f32_no_bias", [3, 6, 4, 2], nn.ReLU, "relu", torch.float32,
+                 inputs=make_inputs(4, 3, seed=40),
+                 prefix="nb", init_fn=init_linspace, tolerance=1e-5,
+                 bias=False)
+
+
+def generate_mlp_f32_batchnorm():
+    generate_mlp("mlp_f32_batchnorm", [3, 8, 4, 2], nn.ReLU, "relu", torch.float32,
+                 inputs=make_inputs(4, 3, seed=41),
+                 prefix="bn", init_fn=init_linspace, tolerance=1e-5,
+                 batchnorm=True)
+
+
+def generate_mlp_f32_batchnorm_no_bias():
+    generate_mlp("mlp_f32_batchnorm_no_bias", [4, 8, 4, 1], nn.ReLU, "relu", torch.float32,
+                 inputs=make_inputs(5, 4, seed=42),
+                 prefix="bnb", init_fn=init_sinusoidal, tolerance=1e-5,
+                 bias=False, batchnorm=True)
 
 
 # ---- Conv1d generators ----
@@ -527,6 +574,9 @@ if __name__ == "__main__":
     generate_mlp_f32_swish()
     generate_mlp_f32_elu()
     generate_mlp_f32_leaky_relu()
+    generate_mlp_f32_no_bias()
+    generate_mlp_f32_batchnorm()
+    generate_mlp_f32_batchnorm_no_bias()
     # MLP f64
     generate_mlp_f64()
     generate_mlp_f64_no_prefix()
