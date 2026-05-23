@@ -5,6 +5,13 @@ use alloc::{boxed::Box, vec};
 use crate::LoadError;
 use crate::dot::matvec_bias_f32;
 
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma"),
+    )
+)))]
 #[allow(unused_imports)]
 use super::{sigmoid_f32, tanh_f32};
 
@@ -211,39 +218,7 @@ impl TinyLstmF32 {
             concat_size,
         );
 
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-        {
-            super::avx512_gates::lstm_gates_avx512(&self.gates, &mut self.c, &mut self.h, h);
-        }
-
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "avx2",
-            target_feature = "fma",
-            not(target_feature = "avx512f"),
-        ))]
-        {
-            super::avx2_gates::lstm_gates_avx2(&self.gates, &mut self.c, &mut self.h, h);
-        }
-
-        #[cfg(not(all(
-            target_arch = "x86_64",
-            any(
-                target_feature = "avx512f",
-                all(target_feature = "avx2", target_feature = "fma"),
-            )
-        )))]
-        {
-            for k in 0..h {
-                let ig = sigmoid_f32(self.gates[k]);
-                let fg = sigmoid_f32(self.gates[h + k]);
-                let cg = tanh_f32(self.gates[2 * h + k]);
-                let og = sigmoid_f32(self.gates[3 * h + k]);
-
-                self.c[k] = fg.mul_add(self.c[k], ig * cg);
-                self.h[k] = og * tanh_f32(self.c[k]);
-            }
-        }
+        super::apply_lstm_gates(&self.gates, &mut self.c, &mut self.h, h);
 
         matvec_bias_f32(
             &self.w_out,

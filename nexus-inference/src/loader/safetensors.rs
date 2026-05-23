@@ -291,6 +291,273 @@ impl crate::TinyGruF32 {
     }
 }
 
+// ---- Stacked RNN loaders (require tanh/sigmoid from std or libm) ----
+
+#[cfg(any(feature = "std", feature = "libm"))]
+impl crate::StackedLstmF32 {
+    /// Load from safetensors data.
+    ///
+    /// Auto-detects `num_layers` by scanning for `weight_ih_l0`,
+    /// `weight_ih_l1`, ... tensors under `rnn_prefix`. All layers must
+    /// share the same `hidden_size`.
+    ///
+    /// `proj_prefix` resolves the output projection `nn.Linear`:
+    /// `weight`, `bias`.
+    ///
+    /// **Divergence from PyTorch:** PyTorch's `nn.LSTM` requires
+    /// `num_layers` as an explicit constructor argument. We infer it
+    /// from the safetensors file by counting consecutive layer weights.
+    /// This prevents split-brain errors where the declared layer count
+    /// doesn't match the actual weights in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::TensorNotFound`] if required tensors are
+    /// missing, or [`LoadError::Validation`] if shapes are inconsistent
+    /// or layers have non-consecutive indices.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let bytes = std::fs::read("model.safetensors")?;
+    /// let lstm = StackedLstmF32::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
+    /// ```
+    pub fn from_safetensors(
+        data: &[u8],
+        rnn_prefix: &str,
+        proj_prefix: &str,
+    ) -> Result<Self, LoadError> {
+        let st = parse(data)?;
+
+        let num_layers = count_rnn_layers(&st, rnn_prefix, 4)?;
+
+        let mut layers_wih = Vec::with_capacity(num_layers);
+        let mut layers_whh = Vec::with_capacity(num_layers);
+        let mut layers_bih = Vec::with_capacity(num_layers);
+        let mut layers_bhh = Vec::with_capacity(num_layers);
+
+        let mut hidden_size = 0;
+        let mut input_size = 0;
+
+        for k in 0..num_layers {
+            let wih_name = prefixed(rnn_prefix, &format!("weight_ih_l{k}"));
+            let whh_name = prefixed(rnn_prefix, &format!("weight_hh_l{k}"));
+            let bih_name = prefixed(rnn_prefix, &format!("bias_ih_l{k}"));
+            let bhh_name = prefixed(rnn_prefix, &format!("bias_hh_l{k}"));
+
+            let (wih, wih_shape) = extract_f32_2d(&st, &wih_name)?;
+            if wih_shape[0] % 4 != 0 {
+                return Err(LoadError::Validation(
+                    "weight_ih rows not divisible by 4 (expected 4*hidden_size)",
+                ));
+            }
+            let h = wih_shape[0] / 4;
+
+            if k == 0 {
+                hidden_size = h;
+                input_size = wih_shape[1];
+            } else {
+                if h != hidden_size {
+                    return Err(LoadError::Validation(
+                        "all layers must have the same hidden_size",
+                    ));
+                }
+                if wih_shape[1] != hidden_size {
+                    return Err(LoadError::Validation(
+                        "layer 1+ weight_ih columns must equal hidden_size",
+                    ));
+                }
+            }
+
+            let (whh, whh_shape) = extract_f32_2d(&st, &whh_name)?;
+            if whh_shape != [4 * hidden_size, hidden_size] {
+                return Err(LoadError::Validation(
+                    "weight_hh shape mismatch (expected [4*hidden, hidden])",
+                ));
+            }
+
+            let bih = extract_f32_1d(&st, &bih_name)?;
+            let bhh = extract_f32_1d(&st, &bhh_name)?;
+
+            layers_wih.push(wih);
+            layers_whh.push(whh);
+            layers_bih.push(bih);
+            layers_bhh.push(bhh);
+        }
+
+        let wo_name = prefixed(proj_prefix, "weight");
+        let bo_name = prefixed(proj_prefix, "bias");
+        let (w_out, wo_shape) = extract_f32_2d(&st, &wo_name)?;
+        let b_out = extract_f32_1d(&st, &bo_name)?;
+        let output_size = wo_shape[0];
+
+        let wih_refs: Vec<&[f32]> = layers_wih.iter().map(Vec::as_slice).collect();
+        let whh_refs: Vec<&[f32]> = layers_whh.iter().map(Vec::as_slice).collect();
+        let bih_refs: Vec<&[f32]> = layers_bih.iter().map(Vec::as_slice).collect();
+        let bhh_refs: Vec<&[f32]> = layers_bhh.iter().map(Vec::as_slice).collect();
+
+        Self::from_parts(
+            input_size,
+            hidden_size,
+            output_size,
+            &wih_refs,
+            &whh_refs,
+            &bih_refs,
+            &bhh_refs,
+            &w_out,
+            &b_out,
+        )
+    }
+}
+
+#[cfg(any(feature = "std", feature = "libm"))]
+impl crate::StackedGruF32 {
+    /// Load from safetensors data.
+    ///
+    /// Auto-detects `num_layers` by scanning for `weight_ih_l0`,
+    /// `weight_ih_l1`, ... tensors under `rnn_prefix`. All layers must
+    /// share the same `hidden_size`.
+    ///
+    /// `proj_prefix` resolves the output projection `nn.Linear`:
+    /// `weight`, `bias`.
+    ///
+    /// **Divergence from PyTorch:** PyTorch's `nn.GRU` requires
+    /// `num_layers` as an explicit constructor argument. We infer it
+    /// from the safetensors file by counting consecutive layer weights.
+    /// This prevents split-brain errors where the declared layer count
+    /// doesn't match the actual weights in the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::TensorNotFound`] if required tensors are
+    /// missing, or [`LoadError::Validation`] if shapes are inconsistent
+    /// or layers have non-consecutive indices.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let bytes = std::fs::read("model.safetensors")?;
+    /// let gru = StackedGruF32::from_safetensors(&bytes, "encoder.gru", "encoder.fc")?;
+    /// ```
+    pub fn from_safetensors(
+        data: &[u8],
+        rnn_prefix: &str,
+        proj_prefix: &str,
+    ) -> Result<Self, LoadError> {
+        let st = parse(data)?;
+
+        let num_layers = count_rnn_layers(&st, rnn_prefix, 3)?;
+
+        let mut layers_wih = Vec::with_capacity(num_layers);
+        let mut layers_whh = Vec::with_capacity(num_layers);
+        let mut layers_bih = Vec::with_capacity(num_layers);
+        let mut layers_bhh = Vec::with_capacity(num_layers);
+
+        let mut hidden_size = 0;
+        let mut input_size = 0;
+
+        for k in 0..num_layers {
+            let wih_name = prefixed(rnn_prefix, &format!("weight_ih_l{k}"));
+            let whh_name = prefixed(rnn_prefix, &format!("weight_hh_l{k}"));
+            let bih_name = prefixed(rnn_prefix, &format!("bias_ih_l{k}"));
+            let bhh_name = prefixed(rnn_prefix, &format!("bias_hh_l{k}"));
+
+            let (wih, wih_shape) = extract_f32_2d(&st, &wih_name)?;
+            if wih_shape[0] % 3 != 0 {
+                return Err(LoadError::Validation(
+                    "weight_ih rows not divisible by 3 (expected 3*hidden_size)",
+                ));
+            }
+            let h = wih_shape[0] / 3;
+
+            if k == 0 {
+                hidden_size = h;
+                input_size = wih_shape[1];
+            } else {
+                if h != hidden_size {
+                    return Err(LoadError::Validation(
+                        "all layers must have the same hidden_size",
+                    ));
+                }
+                if wih_shape[1] != hidden_size {
+                    return Err(LoadError::Validation(
+                        "layer 1+ weight_ih columns must equal hidden_size",
+                    ));
+                }
+            }
+
+            let (whh, whh_shape) = extract_f32_2d(&st, &whh_name)?;
+            if whh_shape != [3 * hidden_size, hidden_size] {
+                return Err(LoadError::Validation(
+                    "weight_hh shape mismatch (expected [3*hidden, hidden])",
+                ));
+            }
+
+            let bih = extract_f32_1d(&st, &bih_name)?;
+            let bhh = extract_f32_1d(&st, &bhh_name)?;
+
+            layers_wih.push(wih);
+            layers_whh.push(whh);
+            layers_bih.push(bih);
+            layers_bhh.push(bhh);
+        }
+
+        let wo_name = prefixed(proj_prefix, "weight");
+        let bo_name = prefixed(proj_prefix, "bias");
+        let (w_out, wo_shape) = extract_f32_2d(&st, &wo_name)?;
+        let b_out = extract_f32_1d(&st, &bo_name)?;
+        let output_size = wo_shape[0];
+
+        let wih_refs: Vec<&[f32]> = layers_wih.iter().map(Vec::as_slice).collect();
+        let whh_refs: Vec<&[f32]> = layers_whh.iter().map(Vec::as_slice).collect();
+        let bih_refs: Vec<&[f32]> = layers_bih.iter().map(Vec::as_slice).collect();
+        let bhh_refs: Vec<&[f32]> = layers_bhh.iter().map(Vec::as_slice).collect();
+
+        Self::from_parts(
+            input_size,
+            hidden_size,
+            output_size,
+            &wih_refs,
+            &whh_refs,
+            &bih_refs,
+            &bhh_refs,
+            &w_out,
+            &b_out,
+        )
+    }
+}
+
+/// Count consecutive `weight_ih_l{k}` tensors to detect num_layers.
+/// `gate_mult` is 4 for LSTM, 3 for GRU.
+fn count_rnn_layers(
+    st: &SafeTensors<'_>,
+    rnn_prefix: &str,
+    gate_mult: usize,
+) -> Result<usize, LoadError> {
+    let mut num_layers = 0;
+    loop {
+        let name = prefixed(rnn_prefix, &format!("weight_ih_l{num_layers}"));
+        match st.tensor(&name) {
+            Ok(tv) => {
+                let shape = tv.shape();
+                if shape.len() != 2 || shape[0] % gate_mult != 0 {
+                    return Err(LoadError::Validation(
+                        "unexpected weight_ih shape for RNN layer",
+                    ));
+                }
+                num_layers += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    if num_layers == 0 {
+        return Err(LoadError::TensorNotFound(
+            prefixed(rnn_prefix, "weight_ih_l0"),
+        ));
+    }
+    Ok(num_layers)
+}
+
 // ---- MLP loaders ----
 
 macro_rules! impl_mlp_safetensors {
@@ -1182,5 +1449,270 @@ mod tests {
             crate::Activation::Relu,
         );
         assert!(matches!(err, Err(LoadError::Parse(_))));
+    }
+
+    // ---- Stacked LSTM ----
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn stacked_lstm_from_safetensors() {
+        let i = 4_usize;
+        let h = 8_usize;
+        let o = 2_usize;
+        let gc = 4 * h;
+
+        let wih_l0 = vec![0.1_f32; gc * i];
+        let whh_l0 = vec![0.1_f32; gc * h];
+        let wih_l1 = vec![0.1_f32; gc * h];
+        let whh_l1 = vec![0.1_f32; gc * h];
+        let bih = vec![0.0_f32; gc];
+        let bhh = vec![0.0_f32; gc];
+        let wo = vec![0.1_f32; o * h];
+        let bo = vec![0.0_f32; o];
+
+        let wih_l0_b = f32_bytes(&wih_l0);
+        let whh_l0_b = f32_bytes(&whh_l0);
+        let wih_l1_b = f32_bytes(&wih_l1);
+        let whh_l1_b = f32_bytes(&whh_l1);
+        let bih_b = f32_bytes(&bih);
+        let bhh_b = f32_bytes(&bhh);
+        let wo_b = f32_bytes(&wo);
+        let bo_b = f32_bytes(&bo);
+
+        let data = serialize_tensors(vec![
+            ("lstm.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
+            ("lstm.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            ("lstm.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_b)),
+            ("lstm.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_b)),
+            ("lstm.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
+            ("lstm.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            ("lstm.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_b)),
+            ("lstm.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_b)),
+            ("fc.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
+            ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
+        ]);
+
+        let lstm = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
+        assert_eq!(lstm.input_size(), i);
+        assert_eq!(lstm.hidden_size(), h);
+        assert_eq!(lstm.output_size(), o);
+        assert_eq!(lstm.num_layers(), 2);
+    }
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn stacked_lstm_matches_from_parts() {
+        let i = 2_usize;
+        let h = 4_usize;
+        let o = 1_usize;
+        let gc = 4 * h;
+
+        let wih_l0 = vec![0.1_f32; gc * i];
+        let whh_l0 = vec![0.05_f32; gc * h];
+        let wih_l1 = vec![0.08_f32; gc * h];
+        let whh_l1 = vec![0.03_f32; gc * h];
+        let bih_l0 = vec![0.01_f32; gc];
+        let bhh_l0 = vec![-0.01_f32; gc];
+        let bih_l1 = vec![0.02_f32; gc];
+        let bhh_l1 = vec![-0.02_f32; gc];
+        let wo = vec![0.2_f32; o * h];
+        let bo = vec![0.1_f32; o];
+
+        let mut reference = crate::StackedLstmF32::from_parts(
+            i, h, o,
+            &[&wih_l0, &wih_l1],
+            &[&whh_l0, &whh_l1],
+            &[&bih_l0, &bih_l1],
+            &[&bhh_l0, &bhh_l1],
+            &wo, &bo,
+        ).unwrap();
+
+        let wih_l0_b = f32_bytes(&wih_l0);
+        let whh_l0_b = f32_bytes(&whh_l0);
+        let wih_l1_b = f32_bytes(&wih_l1);
+        let whh_l1_b = f32_bytes(&whh_l1);
+        let bih_l0_b = f32_bytes(&bih_l0);
+        let bhh_l0_b = f32_bytes(&bhh_l0);
+        let bih_l1_b = f32_bytes(&bih_l1);
+        let bhh_l1_b = f32_bytes(&bhh_l1);
+        let wo_b = f32_bytes(&wo);
+        let bo_b = f32_bytes(&bo);
+
+        let data = serialize_tensors(vec![
+            ("rnn.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
+            ("rnn.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            ("rnn.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_l0_b)),
+            ("rnn.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_l0_b)),
+            ("rnn.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
+            ("rnn.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            ("rnn.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_l1_b)),
+            ("rnn.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_l1_b)),
+            ("out.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
+            ("out.bias", make_view(Dtype::F32, &[o], &bo_b)),
+        ]);
+
+        let mut loaded = crate::StackedLstmF32::from_safetensors(&data, "rnn", "out").unwrap();
+
+        let input = [0.5_f32, -0.3];
+        let ref_out = reference.step(&input);
+        let load_out = loaded.step(&input);
+        assert!(
+            (ref_out - load_out).abs() < 1e-7,
+            "ref={ref_out}, loaded={load_out}"
+        );
+    }
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn stacked_lstm_single_layer_auto_detect() {
+        let i = 4_usize;
+        let h = 8_usize;
+        let o = 1_usize;
+        let gc = 4 * h;
+
+        let wih = vec![0.1_f32; gc * i];
+        let whh = vec![0.1_f32; gc * h];
+        let bih = vec![0.0_f32; gc];
+        let bhh = vec![0.0_f32; gc];
+        let wo = vec![0.1_f32; o * h];
+        let bo = vec![0.0_f32; o];
+
+        let wih_b = f32_bytes(&wih);
+        let whh_b = f32_bytes(&whh);
+        let bih_b = f32_bytes(&bih);
+        let bhh_b = f32_bytes(&bhh);
+        let wo_b = f32_bytes(&wo);
+        let bo_b = f32_bytes(&bo);
+
+        let data = serialize_tensors(vec![
+            ("lstm.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_b)),
+            ("lstm.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_b)),
+            ("lstm.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_b)),
+            ("lstm.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_b)),
+            ("fc.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
+            ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
+        ]);
+
+        let lstm = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
+        assert_eq!(lstm.num_layers(), 1);
+    }
+
+    // ---- Stacked GRU ----
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn stacked_gru_from_safetensors() {
+        let i = 4_usize;
+        let h = 8_usize;
+        let o = 1_usize;
+        let gc = 3 * h;
+
+        let wih_l0 = vec![0.1_f32; gc * i];
+        let whh_l0 = vec![0.1_f32; gc * h];
+        let wih_l1 = vec![0.1_f32; gc * h];
+        let whh_l1 = vec![0.1_f32; gc * h];
+        let bih = vec![0.0_f32; gc];
+        let bhh = vec![0.0_f32; gc];
+        let wo = vec![0.1_f32; o * h];
+        let bo = vec![0.0_f32; o];
+
+        let wih_l0_b = f32_bytes(&wih_l0);
+        let whh_l0_b = f32_bytes(&whh_l0);
+        let wih_l1_b = f32_bytes(&wih_l1);
+        let whh_l1_b = f32_bytes(&whh_l1);
+        let bih_b = f32_bytes(&bih);
+        let bhh_b = f32_bytes(&bhh);
+        let wo_b = f32_bytes(&wo);
+        let bo_b = f32_bytes(&bo);
+
+        let data = serialize_tensors(vec![
+            ("gru.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
+            ("gru.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            ("gru.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_b)),
+            ("gru.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_b)),
+            ("gru.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
+            ("gru.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            ("gru.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_b)),
+            ("gru.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_b)),
+            ("fc.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
+            ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
+        ]);
+
+        let gru = crate::StackedGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+        assert_eq!(gru.input_size(), i);
+        assert_eq!(gru.hidden_size(), h);
+        assert_eq!(gru.output_size(), o);
+        assert_eq!(gru.num_layers(), 2);
+    }
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn stacked_gru_matches_from_parts() {
+        let i = 2_usize;
+        let h = 4_usize;
+        let o = 1_usize;
+        let gc = 3 * h;
+
+        let wih_l0 = vec![0.1_f32; gc * i];
+        let whh_l0 = vec![0.05_f32; gc * h];
+        let wih_l1 = vec![0.08_f32; gc * h];
+        let whh_l1 = vec![0.03_f32; gc * h];
+        let bih_l0 = vec![0.01_f32; gc];
+        let bhh_l0 = vec![-0.01_f32; gc];
+        let bih_l1 = vec![0.02_f32; gc];
+        let bhh_l1 = vec![-0.02_f32; gc];
+        let wo = vec![0.2_f32; o * h];
+        let bo = vec![0.1_f32; o];
+
+        let mut reference = crate::StackedGruF32::from_parts(
+            i, h, o,
+            &[&wih_l0, &wih_l1],
+            &[&whh_l0, &whh_l1],
+            &[&bih_l0, &bih_l1],
+            &[&bhh_l0, &bhh_l1],
+            &wo, &bo,
+        ).unwrap();
+
+        let wih_l0_b = f32_bytes(&wih_l0);
+        let whh_l0_b = f32_bytes(&whh_l0);
+        let wih_l1_b = f32_bytes(&wih_l1);
+        let whh_l1_b = f32_bytes(&whh_l1);
+        let bih_l0_b = f32_bytes(&bih_l0);
+        let bhh_l0_b = f32_bytes(&bhh_l0);
+        let bih_l1_b = f32_bytes(&bih_l1);
+        let bhh_l1_b = f32_bytes(&bhh_l1);
+        let wo_b = f32_bytes(&wo);
+        let bo_b = f32_bytes(&bo);
+
+        let data = serialize_tensors(vec![
+            ("gru.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
+            ("gru.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            ("gru.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_l0_b)),
+            ("gru.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_l0_b)),
+            ("gru.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
+            ("gru.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            ("gru.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_l1_b)),
+            ("gru.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_l1_b)),
+            ("fc.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
+            ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
+        ]);
+
+        let mut loaded = crate::StackedGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+
+        let input = [0.5_f32, -0.3];
+        let ref_out = reference.step(&input);
+        let load_out = loaded.step(&input);
+        assert!(
+            (ref_out - load_out).abs() < 1e-7,
+            "ref={ref_out}, loaded={load_out}"
+        );
+    }
+
+    #[test]
+    #[cfg(any(feature = "std", feature = "libm"))]
+    fn stacked_lstm_missing_l0() {
+        let data = serialize_tensors(vec![]);
+        let err = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc");
+        assert!(matches!(err, Err(LoadError::TensorNotFound(_))));
     }
 }

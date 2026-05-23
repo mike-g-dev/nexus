@@ -158,6 +158,125 @@ def generate_gru_multi_output():
                  rnn_prefix="seq.gru", proj_prefix="seq.fc")
 
 
+# ---- Stacked RNN generators ----
+
+
+def generate_stacked_rnn(name, rnn_cls, gate_mult, input_size, hidden_size,
+                         output_size, num_layers, inputs, init_fn,
+                         rnn_prefix, proj_prefix):
+    rnn = rnn_cls(input_size, hidden_size, num_layers=num_layers, batch_first=True)
+    fc = nn.Linear(hidden_size, output_size)
+
+    with torch.no_grad():
+        for k in range(num_layers):
+            wih = getattr(rnn, f"weight_ih_l{k}")
+            whh = getattr(rnn, f"weight_hh_l{k}")
+            bih = getattr(rnn, f"bias_ih_l{k}")
+            bhh = getattr(rnn, f"bias_hh_l{k}")
+            init_fn(wih)
+            init_fn(whh, -0.15, 0.15)
+            bih.fill_(0.01)
+            bhh.fill_(-0.01)
+        init_fn(fc.weight)
+        fc.bias.fill_(0.0)
+
+    state = {}
+    for k, v in rnn.state_dict().items():
+        state[f"{rnn_prefix}.{k}"] = v
+    for k, v in fc.state_dict().items():
+        state[f"{proj_prefix}.{k}"] = v
+    save_file(state, FIXTURES_DIR / f"{name}.safetensors")
+
+    outputs = []
+    with torch.no_grad():
+        if isinstance(rnn, nn.LSTM):
+            h = torch.zeros(num_layers, 1, hidden_size)
+            c = torch.zeros(num_layers, 1, hidden_size)
+            for inp in inputs:
+                x = torch.tensor([[inp]])
+                out, (h, c) = rnn(x, (h, c))
+                y = fc(out.squeeze(0)).squeeze(0)
+                outputs.append(y.tolist())
+        else:
+            h = torch.zeros(num_layers, 1, hidden_size)
+            for inp in inputs:
+                x = torch.tensor([[inp]])
+                out, h = rnn(x, h)
+                y = fc(out.squeeze(0)).squeeze(0)
+                outputs.append(y.tolist())
+
+    with open(FIXTURES_DIR / f"{name}_expected.json", "w") as f:
+        json.dump(
+            {
+                "rnn_prefix": rnn_prefix,
+                "proj_prefix": proj_prefix,
+                "num_layers": num_layers,
+                "inputs": inputs,
+                "outputs": outputs,
+                "tolerance": 1e-5,
+            },
+            f,
+            indent=2,
+        )
+        f.write("\n")
+
+    print(f"  {name}: {len(inputs)} steps, L={num_layers} I={input_size} H={hidden_size} O={output_size}")
+
+
+def generate_stacked_lstm_2layer():
+    generate_stacked_rnn("stacked_lstm_2layer", nn.LSTM, 4,
+                         input_size=3, hidden_size=4, output_size=2,
+                         num_layers=2,
+                         inputs=make_inputs(8, 3, seed=10),
+                         init_fn=init_linspace,
+                         rnn_prefix="lstm", proj_prefix="fc")
+
+
+def generate_stacked_lstm_3layer():
+    generate_stacked_rnn("stacked_lstm_3layer", nn.LSTM, 4,
+                         input_size=4, hidden_size=8, output_size=1,
+                         num_layers=3,
+                         inputs=make_inputs(12, 4, seed=11),
+                         init_fn=init_sinusoidal,
+                         rnn_prefix="encoder.lstm", proj_prefix="encoder.fc")
+
+
+def generate_stacked_lstm_large():
+    generate_stacked_rnn("stacked_lstm_large", nn.LSTM, 4,
+                         input_size=6, hidden_size=16, output_size=3,
+                         num_layers=2,
+                         inputs=make_inputs(15, 6, seed=12),
+                         init_fn=init_sinusoidal,
+                         rnn_prefix="rnn", proj_prefix="head")
+
+
+def generate_stacked_gru_2layer():
+    generate_stacked_rnn("stacked_gru_2layer", nn.GRU, 3,
+                         input_size=3, hidden_size=4, output_size=1,
+                         num_layers=2,
+                         inputs=make_inputs(8, 3, seed=13),
+                         init_fn=init_linspace,
+                         rnn_prefix="gru", proj_prefix="fc")
+
+
+def generate_stacked_gru_3layer():
+    generate_stacked_rnn("stacked_gru_3layer", nn.GRU, 3,
+                         input_size=4, hidden_size=6, output_size=2,
+                         num_layers=3,
+                         inputs=make_inputs(10, 4, seed=14),
+                         init_fn=init_sinusoidal,
+                         rnn_prefix="model.gru", proj_prefix="model.fc")
+
+
+def generate_stacked_gru_large():
+    generate_stacked_rnn("stacked_gru_large", nn.GRU, 3,
+                         input_size=5, hidden_size=12, output_size=2,
+                         num_layers=2,
+                         inputs=make_inputs(12, 5, seed=15),
+                         init_fn=init_sinusoidal,
+                         rnn_prefix="gru", proj_prefix="proj")
+
+
 # ---- MLP generators ----
 
 
@@ -574,6 +693,34 @@ def generate_fuzz():
                       conv_prefix=f"fuzz{i}.conv", proj_prefix=f"fuzz{i}.proj",
                       init_fn=rng.choice(init_fns), activation_param=act_param)
 
+    # Fuzz Stacked LSTM
+    for i in range(4):
+        input_size = rng.randint(1, 8)
+        hidden_size = rng.randint(2, 16)
+        output_size = rng.randint(1, 4)
+        num_layers = rng.randint(2, 4)
+        n_steps = rng.randint(5, 20)
+        generate_stacked_rnn(f"fuzz_stacked_lstm_{i}", nn.LSTM, 4,
+                             input_size=input_size, hidden_size=hidden_size,
+                             output_size=output_size, num_layers=num_layers,
+                             inputs=make_inputs(n_steps, input_size, seed=600+i),
+                             init_fn=rng.choice(init_fns),
+                             rnn_prefix=f"fuzz{i}.lstm", proj_prefix=f"fuzz{i}.fc")
+
+    # Fuzz Stacked GRU
+    for i in range(4):
+        input_size = rng.randint(1, 8)
+        hidden_size = rng.randint(2, 16)
+        output_size = rng.randint(1, 4)
+        num_layers = rng.randint(2, 4)
+        n_steps = rng.randint(5, 20)
+        generate_stacked_rnn(f"fuzz_stacked_gru_{i}", nn.GRU, 3,
+                             input_size=input_size, hidden_size=hidden_size,
+                             output_size=output_size, num_layers=num_layers,
+                             inputs=make_inputs(n_steps, input_size, seed=700+i),
+                             init_fn=rng.choice(init_fns),
+                             rnn_prefix=f"fuzz{i}.gru", proj_prefix=f"fuzz{i}.proj")
+
 
 if __name__ == "__main__":
     print("Generating fixtures...")
@@ -613,6 +760,14 @@ if __name__ == "__main__":
     generate_conv1d_swish()
     generate_conv1d_elu()
     generate_conv1d_leaky_relu()
+    # Stacked LSTM
+    generate_stacked_lstm_2layer()
+    generate_stacked_lstm_3layer()
+    generate_stacked_lstm_large()
+    # Stacked GRU
+    generate_stacked_gru_2layer()
+    generate_stacked_gru_3layer()
+    generate_stacked_gru_large()
     # Fuzz (seeded random configs)
     generate_fuzz()
     print("Done.")

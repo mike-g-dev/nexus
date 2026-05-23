@@ -5,6 +5,13 @@ use alloc::{boxed::Box, vec};
 use crate::LoadError;
 use crate::dot::{matvec_bias_f32, matvec_f32};
 
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma"),
+    )
+)))]
 #[allow(unused_imports)]
 use super::{sigmoid_f32, tanh_f32};
 
@@ -200,61 +207,14 @@ impl TinyGruF32 {
             hi,
         );
 
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-        {
-            super::avx512_gates::gru_gates_avx512(
-                &self.ih_scratch,
-                &self.hh_scratch,
-                &self.bias_ih,
-                &self.bias_hh,
-                &mut self.h,
-                hi,
-            );
-        }
-
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "avx2",
-            target_feature = "fma",
-            not(target_feature = "avx512f"),
-        ))]
-        {
-            super::avx2_gates::gru_gates_avx2(
-                &self.ih_scratch,
-                &self.hh_scratch,
-                &self.bias_ih,
-                &self.bias_hh,
-                &mut self.h,
-                hi,
-            );
-        }
-
-        #[cfg(not(all(
-            target_arch = "x86_64",
-            any(
-                target_feature = "avx512f",
-                all(target_feature = "avx2", target_feature = "fma"),
-            )
-        )))]
-        {
-            for k in 0..hi {
-                let r = sigmoid_f32(
-                    self.ih_scratch[k] + self.bias_ih[k] + self.hh_scratch[k] + self.bias_hh[k],
-                );
-                let z = sigmoid_f32(
-                    self.ih_scratch[hi + k]
-                        + self.bias_ih[hi + k]
-                        + self.hh_scratch[hi + k]
-                        + self.bias_hh[hi + k],
-                );
-                let hh_candidate = self.hh_scratch[2 * hi + k] + self.bias_hh[2 * hi + k];
-                let n = tanh_f32(r.mul_add(
-                    hh_candidate,
-                    self.ih_scratch[2 * hi + k] + self.bias_ih[2 * hi + k],
-                ));
-                self.h[k] = (1.0 - z).mul_add(n, z * self.h[k]);
-            }
-        }
+        super::apply_gru_gates(
+            &self.ih_scratch,
+            &self.hh_scratch,
+            &self.bias_ih,
+            &self.bias_hh,
+            &mut self.h,
+            hi,
+        );
 
         matvec_bias_f32(
             &self.w_out,
