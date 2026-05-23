@@ -77,6 +77,9 @@ macro_rules! impl_decimal_financial {
             pub const fn round_to_tick(self, tick: Self) -> Option<Self> {
                 assert!(tick.value > 0, "tick must be positive");
                 let remainder = self.value % tick.value;
+                if remainder == 0 {
+                    return Some(self);
+                }
                 let half_tick = tick.value / 2;
                 let base = self.value - remainder;
 

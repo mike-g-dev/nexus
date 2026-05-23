@@ -1,0 +1,12 @@
+# Seeds for failure cases propance has encountered during testing.
+# It is automatically read and these particular cases re-tested before
+# any novel cases are tried.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+
+# round_to_tick with tick=1: half_tick=0 via integer division, so
+# remainder==half_tick is always true, falsely triggering banker's
+# rounding on aligned values. Every odd raw value gets rounded to
+# the adjacent even number.
+cc 0093cdf5eff1e5ddec241beaf539498838988ccc9d1eea5ca6ccd882e5b8cd9a # shrinks to raw = -1479888286438943261, tick_raw = 1
