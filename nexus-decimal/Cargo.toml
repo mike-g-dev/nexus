@@ -1,6 +1,6 @@
 [package]
 name = "nexus-decimal"
-version = "1.2.1"
+version = "1.2.2"
 description = "Fixed-point decimal arithmetic with compile-time precision"
 readme = "README.md"
 edition.workspace = true

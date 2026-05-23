@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-05-23
+
 ### Fixed
 
 - `round_to_tick` with `tick=1` falsely triggered banker's rounding on
