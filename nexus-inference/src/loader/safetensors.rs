@@ -374,10 +374,11 @@ macro_rules! impl_mlp_safetensors {
                 }
                 layer_indices.sort_unstable();
                 batchnorm_indices.sort_unstable();
-                let layernorm_indices: Vec<usize> = onedim_weight_indices
+                let mut layernorm_indices: Vec<usize> = onedim_weight_indices
                     .into_iter()
                     .filter(|i| !batchnorm_indices.contains(i))
                     .collect();
+                layernorm_indices.sort_unstable();
 
                 if layer_indices.is_empty() {
                     return Err(LoadError::Parse("no linear layers found in safetensors"));
@@ -511,11 +512,6 @@ macro_rules! impl_mlp_safetensors {
                             }
                             ln_gamma_data.extend_from_slice(&ln_g);
                             ln_beta_data.extend_from_slice(&ln_b);
-                        } else {
-                            ln_gamma_data
-                                .extend(core::iter::repeat(1.0 as $ty).take(w_shape[0]));
-                            ln_beta_data
-                                .extend(core::iter::repeat(0.0 as $ty).take(w_shape[0]));
                         }
                     }
 
@@ -524,6 +520,15 @@ macro_rules! impl_mlp_safetensors {
                 }
 
                 if has_layernorm {
+                    let n_hidden = n_linear - 1;
+                    let expected_ln: usize = (0..n_hidden)
+                        .map(|l| layer_sizes[l + 1])
+                        .sum();
+                    if ln_gamma_data.len() != expected_ln {
+                        return Err(LoadError::Validation(
+                            "LayerNorm must be present on all hidden layers or none",
+                        ));
+                    }
                     #[cfg(not(any(feature = "std", feature = "libm")))]
                     {
                         return Err(LoadError::Validation(
