@@ -81,10 +81,11 @@ fn assert_close(model: &str, step: usize, idx: usize, actual: f64, expected: f64
     );
 }
 
-#[test]
-fn lstm_matches_pytorch() {
-    let data = load_model("lstm");
-    let exp = load_expected("lstm");
+// ---- test runners ----
+
+fn run_lstm_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
     let mut lstm = TinyLstmF32::from_safetensors(
@@ -102,15 +103,14 @@ fn lstm_matches_pytorch() {
         let mut out = vec![0.0_f32; exp_out.len()];
         lstm.step_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
-            assert_close("lstm", i, j, actual as f64, expected, tol);
+            assert_close(name, i, j, actual as f64, expected, tol);
         }
     }
 }
 
-#[test]
-fn gru_matches_pytorch() {
-    let data = load_model("gru");
-    let exp = load_expected("gru");
+fn run_gru_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
     let mut gru = TinyGruF32::from_safetensors(
@@ -128,20 +128,22 @@ fn gru_matches_pytorch() {
         let mut out = vec![0.0_f32; exp_out.len()];
         gru.step_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
-            assert_close("gru", i, j, actual as f64, expected, tol);
+            assert_close(name, i, j, actual as f64, expected, tol);
         }
     }
 }
 
-#[test]
-fn mlp_f32_matches_pytorch() {
-    let data = load_model("mlp_f32");
-    let exp = load_expected("mlp_f32");
+fn run_mlp_f32_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut mlp =
-        MlpF32::from_safetensors(&data, exp["prefix"].as_str().unwrap(), parse_activation(&exp))
-            .unwrap();
+    let mut mlp = MlpF32::from_safetensors(
+        &data,
+        exp["prefix"].as_str().unwrap(),
+        parse_activation(&exp),
+    )
+    .unwrap();
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -151,20 +153,22 @@ fn mlp_f32_matches_pytorch() {
         let mut out = vec![0.0_f32; exp_out.len()];
         mlp.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
-            assert_close("mlp_f32", i, j, actual as f64, expected, tol);
+            assert_close(name, i, j, actual as f64, expected, tol);
         }
     }
 }
 
-#[test]
-fn mlp_f64_matches_pytorch() {
-    let data = load_model("mlp_f64");
-    let exp = load_expected("mlp_f64");
+fn run_mlp_f64_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut mlp =
-        MlpF64::from_safetensors(&data, exp["prefix"].as_str().unwrap(), parse_activation(&exp))
-            .unwrap();
+    let mut mlp = MlpF64::from_safetensors(
+        &data,
+        exp["prefix"].as_str().unwrap(),
+        parse_activation(&exp),
+    )
+    .unwrap();
 
     for (i, (inp, exp_out)) in inputs_f64(&exp)
         .iter()
@@ -174,15 +178,14 @@ fn mlp_f64_matches_pytorch() {
         let mut out = vec![0.0_f64; exp_out.len()];
         mlp.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
-            assert_close("mlp_f64", i, j, actual, expected, tol);
+            assert_close(name, i, j, actual, expected, tol);
         }
     }
 }
 
-#[test]
-fn conv1d_matches_pytorch() {
-    let data = load_model("conv1d");
-    let exp = load_expected("conv1d");
+fn run_conv1d_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
     let mut conv = Causal1dConvF32::from_safetensors(
@@ -201,7 +204,117 @@ fn conv1d_matches_pytorch() {
         let mut out = vec![0.0_f32; exp_out.len()];
         conv.step_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
-            assert_close("conv1d", i, j, actual as f64, expected, tol);
+            assert_close(name, i, j, actual as f64, expected, tol);
         }
     }
+}
+
+// ---- LSTM tests ----
+
+#[test]
+fn lstm() {
+    run_lstm_test("lstm");
+}
+
+#[test]
+fn lstm_large() {
+    run_lstm_test("lstm_large");
+}
+
+#[test]
+fn lstm_single_output() {
+    run_lstm_test("lstm_single_output");
+}
+
+// ---- GRU tests ----
+
+#[test]
+fn gru() {
+    run_gru_test("gru");
+}
+
+#[test]
+fn gru_large() {
+    run_gru_test("gru_large");
+}
+
+#[test]
+fn gru_multi_output() {
+    run_gru_test("gru_multi_output");
+}
+
+// ---- MLP f32 tests ----
+
+#[test]
+fn mlp_f32() {
+    run_mlp_f32_test("mlp_f32");
+}
+
+#[test]
+fn mlp_f32_tanh() {
+    run_mlp_f32_test("mlp_f32_tanh");
+}
+
+#[test]
+fn mlp_f32_sigmoid() {
+    run_mlp_f32_test("mlp_f32_sigmoid");
+}
+
+#[test]
+fn mlp_f32_gelu() {
+    run_mlp_f32_test("mlp_f32_gelu");
+}
+
+#[test]
+fn mlp_f32_single_layer() {
+    run_mlp_f32_test("mlp_f32_single_layer");
+}
+
+#[test]
+fn mlp_f32_deep() {
+    run_mlp_f32_test("mlp_f32_deep");
+}
+
+// ---- MLP f64 tests ----
+
+#[test]
+fn mlp_f64() {
+    run_mlp_f64_test("mlp_f64");
+}
+
+#[test]
+fn mlp_f64_no_prefix() {
+    run_mlp_f64_test("mlp_f64_no_prefix");
+}
+
+#[test]
+fn mlp_f64_tanh() {
+    run_mlp_f64_test("mlp_f64_tanh");
+}
+
+// ---- Conv1d tests ----
+
+#[test]
+fn conv1d() {
+    run_conv1d_test("conv1d");
+}
+
+#[test]
+fn conv1d_tanh() {
+    run_conv1d_test("conv1d_tanh");
+}
+
+#[test]
+fn conv1d_identity() {
+    run_conv1d_test("conv1d_identity");
+}
+
+#[test]
+fn conv1d_large() {
+    run_conv1d_test("conv1d_large");
+}
+
+#[test]
+fn conv1d_sigmoid() {
+    run_conv1d_test("conv1d_sigmoid");
 }
