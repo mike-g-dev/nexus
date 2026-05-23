@@ -510,9 +510,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_layers() {
-        let r = StackedGruF32::from_parts(
-            2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1],
-        );
+        let r = StackedGruF32::from_parts(2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1]);
         assert!(r.is_err());
     }
 
@@ -539,9 +537,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = StackedGruF32::from_parts(
-            0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[],
-        );
+        let r = StackedGruF32::from_parts(0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[]);
         assert!(r.is_err());
     }
 

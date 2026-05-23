@@ -58,6 +58,8 @@ def make_inputs(n_steps, n_features, seed=1):
 def generate_rnn(name, rnn_cls, gate_mult, input_size, hidden_size, output_size,
                  inputs, init_fn, rnn_prefix, proj_prefix):
     rnn = rnn_cls(input_size, hidden_size, num_layers=1, batch_first=True)
+    assert rnn.weight_ih_l0.shape[0] == gate_mult * hidden_size, \
+        f"{name}: gate_mult={gate_mult} disagrees with {type(rnn).__name__} gate layout"
     fc = nn.Linear(hidden_size, output_size)
 
     with torch.no_grad():
@@ -165,6 +167,8 @@ def generate_stacked_rnn(name, rnn_cls, gate_mult, input_size, hidden_size,
                          output_size, num_layers, inputs, init_fn,
                          rnn_prefix, proj_prefix):
     rnn = rnn_cls(input_size, hidden_size, num_layers=num_layers, batch_first=True)
+    assert rnn.weight_ih_l0.shape[0] == gate_mult * hidden_size, \
+        f"{name}: gate_mult={gate_mult} disagrees with {type(rnn).__name__} gate layout"
     fc = nn.Linear(hidden_size, output_size)
 
     with torch.no_grad():

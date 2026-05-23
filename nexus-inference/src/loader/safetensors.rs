@@ -556,9 +556,10 @@ fn count_rnn_layers(
         }
     }
     if num_layers == 0 {
-        return Err(LoadError::TensorNotFound(
-            prefixed(rnn_prefix, "weight_ih_l0"),
-        ));
+        return Err(LoadError::TensorNotFound(prefixed(
+            rnn_prefix,
+            "weight_ih_l0",
+        )));
     }
 
     // Reject orphaned higher-index layers past the consecutive run.
@@ -781,16 +782,15 @@ macro_rules! impl_mlp_safetensors {
                             .find(|&&li| li > idx && li < next_linear)
                         {
                             has_layernorm = true;
-                            let ln_g =
-                                $extract_1d(&st, &format!("{prefix_dot}{ln_idx}.weight"))?;
-                            let ln_b =
-                                match $extract_1d(&st, &format!("{prefix_dot}{ln_idx}.bias")) {
-                                    Ok(b) => b,
-                                    Err(LoadError::TensorNotFound(_)) => {
-                                        vec![0.0 as $ty; w_shape[0]]
-                                    }
-                                    Err(e) => return Err(e),
-                                };
+                            let ln_g = $extract_1d(&st, &format!("{prefix_dot}{ln_idx}.weight"))?;
+                            let ln_b = match $extract_1d(&st, &format!("{prefix_dot}{ln_idx}.bias"))
+                            {
+                                Ok(b) => b,
+                                Err(LoadError::TensorNotFound(_)) => {
+                                    vec![0.0 as $ty; w_shape[0]]
+                                }
+                                Err(e) => return Err(e),
+                            };
                             if ln_g.len() != w_shape[0] || ln_b.len() != w_shape[0] {
                                 return Err(LoadError::Validation(
                                     "LayerNorm size mismatch with linear output",
@@ -807,9 +807,7 @@ macro_rules! impl_mlp_safetensors {
 
                 if has_layernorm {
                     let n_hidden = n_linear - 1;
-                    let expected_ln: usize = (0..n_hidden)
-                        .map(|l| layer_sizes[l + 1])
-                        .sum();
+                    let expected_ln: usize = (0..n_hidden).map(|l| layer_sizes[l + 1]).sum();
                     if ln_gamma_data.len() != expected_ln {
                         return Err(LoadError::Validation(
                             "LayerNorm must be present on all hidden layers or none",
@@ -1499,12 +1497,24 @@ mod tests {
         let bo_b = f32_bytes(&bo);
 
         let data = serialize_tensors(vec![
-            ("lstm.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
-            ("lstm.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            (
+                "lstm.weight_ih_l0",
+                make_view(Dtype::F32, &[gc, i], &wih_l0_b),
+            ),
+            (
+                "lstm.weight_hh_l0",
+                make_view(Dtype::F32, &[gc, h], &whh_l0_b),
+            ),
             ("lstm.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_b)),
             ("lstm.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_b)),
-            ("lstm.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
-            ("lstm.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            (
+                "lstm.weight_ih_l1",
+                make_view(Dtype::F32, &[gc, h], &wih_l1_b),
+            ),
+            (
+                "lstm.weight_hh_l1",
+                make_view(Dtype::F32, &[gc, h], &whh_l1_b),
+            ),
             ("lstm.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_b)),
             ("lstm.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_b)),
             ("fc.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
@@ -1538,13 +1548,17 @@ mod tests {
         let bo = vec![0.1_f32; o];
 
         let mut reference = crate::StackedLstmF32::from_parts(
-            i, h, o,
+            i,
+            h,
+            o,
             &[&wih_l0, &wih_l1],
             &[&whh_l0, &whh_l1],
             &[&bih_l0, &bih_l1],
             &[&bhh_l0, &bhh_l1],
-            &wo, &bo,
-        ).unwrap();
+            &wo,
+            &bo,
+        )
+        .unwrap();
 
         let wih_l0_b = f32_bytes(&wih_l0);
         let whh_l0_b = f32_bytes(&whh_l0);
@@ -1558,12 +1572,24 @@ mod tests {
         let bo_b = f32_bytes(&bo);
 
         let data = serialize_tensors(vec![
-            ("rnn.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
-            ("rnn.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            (
+                "rnn.weight_ih_l0",
+                make_view(Dtype::F32, &[gc, i], &wih_l0_b),
+            ),
+            (
+                "rnn.weight_hh_l0",
+                make_view(Dtype::F32, &[gc, h], &whh_l0_b),
+            ),
             ("rnn.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_l0_b)),
             ("rnn.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_l0_b)),
-            ("rnn.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
-            ("rnn.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            (
+                "rnn.weight_ih_l1",
+                make_view(Dtype::F32, &[gc, h], &wih_l1_b),
+            ),
+            (
+                "rnn.weight_hh_l1",
+                make_view(Dtype::F32, &[gc, h], &whh_l1_b),
+            ),
             ("rnn.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_l1_b)),
             ("rnn.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_l1_b)),
             ("out.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
@@ -1641,7 +1667,10 @@ mod tests {
         let bo_b = f32_bytes(&bo);
 
         let data = serialize_tensors(vec![
-            ("lstm.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
+            (
+                "lstm.weight_ih_l0",
+                make_view(Dtype::F32, &[gc, i], &wih_l0_b),
+            ),
             ("lstm.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_b)),
             ("lstm.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_b)),
             ("lstm.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_b)),
@@ -1686,12 +1715,24 @@ mod tests {
         let bo_b = f32_bytes(&bo);
 
         let data = serialize_tensors(vec![
-            ("gru.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
-            ("gru.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            (
+                "gru.weight_ih_l0",
+                make_view(Dtype::F32, &[gc, i], &wih_l0_b),
+            ),
+            (
+                "gru.weight_hh_l0",
+                make_view(Dtype::F32, &[gc, h], &whh_l0_b),
+            ),
             ("gru.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_b)),
             ("gru.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_b)),
-            ("gru.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
-            ("gru.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            (
+                "gru.weight_ih_l1",
+                make_view(Dtype::F32, &[gc, h], &wih_l1_b),
+            ),
+            (
+                "gru.weight_hh_l1",
+                make_view(Dtype::F32, &[gc, h], &whh_l1_b),
+            ),
             ("gru.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_b)),
             ("gru.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_b)),
             ("fc.weight", make_view(Dtype::F32, &[o, h], &wo_b)),
@@ -1725,13 +1766,17 @@ mod tests {
         let bo = vec![0.1_f32; o];
 
         let mut reference = crate::StackedGruF32::from_parts(
-            i, h, o,
+            i,
+            h,
+            o,
             &[&wih_l0, &wih_l1],
             &[&whh_l0, &whh_l1],
             &[&bih_l0, &bih_l1],
             &[&bhh_l0, &bhh_l1],
-            &wo, &bo,
-        ).unwrap();
+            &wo,
+            &bo,
+        )
+        .unwrap();
 
         let wih_l0_b = f32_bytes(&wih_l0);
         let whh_l0_b = f32_bytes(&whh_l0);
@@ -1745,12 +1790,24 @@ mod tests {
         let bo_b = f32_bytes(&bo);
 
         let data = serialize_tensors(vec![
-            ("gru.weight_ih_l0", make_view(Dtype::F32, &[gc, i], &wih_l0_b)),
-            ("gru.weight_hh_l0", make_view(Dtype::F32, &[gc, h], &whh_l0_b)),
+            (
+                "gru.weight_ih_l0",
+                make_view(Dtype::F32, &[gc, i], &wih_l0_b),
+            ),
+            (
+                "gru.weight_hh_l0",
+                make_view(Dtype::F32, &[gc, h], &whh_l0_b),
+            ),
             ("gru.bias_ih_l0", make_view(Dtype::F32, &[gc], &bih_l0_b)),
             ("gru.bias_hh_l0", make_view(Dtype::F32, &[gc], &bhh_l0_b)),
-            ("gru.weight_ih_l1", make_view(Dtype::F32, &[gc, h], &wih_l1_b)),
-            ("gru.weight_hh_l1", make_view(Dtype::F32, &[gc, h], &whh_l1_b)),
+            (
+                "gru.weight_ih_l1",
+                make_view(Dtype::F32, &[gc, h], &wih_l1_b),
+            ),
+            (
+                "gru.weight_hh_l1",
+                make_view(Dtype::F32, &[gc, h], &whh_l1_b),
+            ),
             ("gru.bias_ih_l1", make_view(Dtype::F32, &[gc], &bih_l1_b)),
             ("gru.bias_hh_l1", make_view(Dtype::F32, &[gc], &bhh_l1_b)),
             ("fc.weight", make_view(Dtype::F32, &[o, h], &wo_b)),

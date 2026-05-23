@@ -124,20 +124,12 @@ pub(crate) fn apply_gru_gates(
     {
         let hi = hidden_size;
         for k in 0..hi {
-            let r = sigmoid_f32(
-                ih_scratch[k] + bias_ih[k] + hh_scratch[k] + bias_hh[k],
-            );
+            let r = sigmoid_f32(ih_scratch[k] + bias_ih[k] + hh_scratch[k] + bias_hh[k]);
             let z = sigmoid_f32(
-                ih_scratch[hi + k]
-                    + bias_ih[hi + k]
-                    + hh_scratch[hi + k]
-                    + bias_hh[hi + k],
+                ih_scratch[hi + k] + bias_ih[hi + k] + hh_scratch[hi + k] + bias_hh[hi + k],
             );
             let hh_candidate = hh_scratch[2 * hi + k] + bias_hh[2 * hi + k];
-            let n = tanh_f32(r.mul_add(
-                hh_candidate,
-                ih_scratch[2 * hi + k] + bias_ih[2 * hi + k],
-            ));
+            let n = tanh_f32(r.mul_add(hh_candidate, ih_scratch[2 * hi + k] + bias_ih[2 * hi + k]));
             h[k] = (1.0 - z).mul_add(n, z * h[k]);
         }
     }

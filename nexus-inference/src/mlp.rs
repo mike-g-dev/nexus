@@ -710,7 +710,11 @@ mod tests {
 
         let linear_out = [3.0_f64, 5.0, 8.0, -2.0];
         let mean = linear_out.iter().sum::<f64>() / 4.0;
-        let var: f64 = linear_out.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / 4.0;
+        let var: f64 = linear_out
+            .iter()
+            .map(|x| (x - mean) * (x - mean))
+            .sum::<f64>()
+            / 4.0;
         let inv_std = 1.0 / (var + 1e-5_f64).sqrt();
         let expected: f64 = linear_out
             .iter()
