@@ -601,6 +601,81 @@ def generate_conv1d_leaky_relu():
                   activation_param=0.1)
 
 
+# ---- SSM generators ----
+
+
+def generate_ssm(name, input_size, hidden_size, output_size, inputs,
+                 prefix, init_fn, has_d=True):
+    a_diag = torch.empty(hidden_size)
+    b = torch.empty(hidden_size, input_size)
+    c = torch.empty(output_size, hidden_size)
+
+    init_fn(a_diag, 0.5, 0.99)
+    init_fn(b)
+    init_fn(c)
+
+    state = {
+        f"{prefix}.a_diag": a_diag,
+        f"{prefix}.b": b,
+        f"{prefix}.c": c,
+    }
+
+    if has_d:
+        d = torch.empty(output_size, input_size)
+        init_fn(d, -0.05, 0.05)
+        state[f"{prefix}.d"] = d
+    else:
+        d = torch.zeros(output_size, input_size)
+
+    save_file(state, FIXTURES_DIR / f"{name}.safetensors")
+
+    outputs = []
+    h = torch.zeros(hidden_size)
+    with torch.no_grad():
+        for inp in inputs:
+            u = torch.tensor(inp, dtype=torch.float32)
+            h = a_diag * h + b @ u
+            y = c @ h + d @ u
+            outputs.append(y.tolist())
+
+    with open(FIXTURES_DIR / f"{name}_expected.json", "w") as f:
+        json.dump({
+            "prefix": prefix,
+            "has_d": has_d,
+            "inputs": inputs,
+            "outputs": outputs,
+            "tolerance": 1e-5,
+        }, f, indent=2)
+        f.write("\n")
+
+    d_tag = "" if has_d else " [no D]"
+    print(f"  {name}: I={input_size} H={hidden_size} O={output_size}{d_tag}, {len(inputs)} steps")
+
+
+def generate_ssm_basic():
+    generate_ssm("ssm", input_size=2, hidden_size=4, output_size=1,
+                 inputs=make_inputs(5, 2, seed=50),
+                 prefix="ssm", init_fn=init_linspace)
+
+
+def generate_ssm_no_skip():
+    generate_ssm("ssm_no_skip", input_size=3, hidden_size=4, output_size=1,
+                 inputs=make_inputs(8, 3, seed=51),
+                 prefix="model.ssm", init_fn=init_sinusoidal, has_d=False)
+
+
+def generate_ssm_multi_output():
+    generate_ssm("ssm_multi_output", input_size=2, hidden_size=6, output_size=3,
+                 inputs=make_inputs(8, 2, seed=52),
+                 prefix="enc.ssm", init_fn=init_linspace)
+
+
+def generate_ssm_large():
+    generate_ssm("ssm_large", input_size=4, hidden_size=16, output_size=2,
+                 inputs=make_inputs(15, 4, seed=53),
+                 prefix="ssm", init_fn=init_sinusoidal)
+
+
 # ---- Fuzz generators (seeded random configs) ----
 
 
@@ -725,6 +800,20 @@ def generate_fuzz():
                              init_fn=rng.choice(init_fns),
                              rnn_prefix=f"fuzz{i}.gru", proj_prefix=f"fuzz{i}.proj")
 
+    # Fuzz SSM
+    for i in range(4):
+        input_size = rng.randint(1, 6)
+        hidden_size = rng.randint(2, 16)
+        output_size = rng.randint(1, 4)
+        n_steps = rng.randint(5, 20)
+        has_d = rng.choice([True, False])
+        generate_ssm(f"fuzz_ssm_{i}",
+                      input_size=input_size, hidden_size=hidden_size,
+                      output_size=output_size,
+                      inputs=make_inputs(n_steps, input_size, seed=800+i),
+                      prefix=f"fuzz{i}.ssm", init_fn=rng.choice(init_fns),
+                      has_d=has_d)
+
 
 if __name__ == "__main__":
     print("Generating fixtures...")
@@ -772,6 +861,11 @@ if __name__ == "__main__":
     generate_stacked_gru_2layer()
     generate_stacked_gru_3layer()
     generate_stacked_gru_large()
+    # SSM
+    generate_ssm_basic()
+    generate_ssm_no_skip()
+    generate_ssm_multi_output()
+    generate_ssm_large()
     # Fuzz (seeded random configs)
     generate_fuzz()
     print("Done.")
