@@ -17,8 +17,10 @@
 //!
 //! # Stateful (streaming temporal)
 //!
-//! - [`TinyLstmF32`] — LSTM with hidden and cell state carried between steps
-//! - [`TinyGruF32`] — GRU, ~75% of LSTM cost, simpler memory model
+//! - [`TinyLstmF32`] — Single-layer LSTM
+//! - [`TinyGruF32`] — Single-layer GRU, ~75% of LSTM cost
+//! - [`StackedLstmF32`] — Multi-layer LSTM (PyTorch `nn.LSTM(num_layers=N)`)
+//! - [`StackedGruF32`] — Multi-layer GRU (PyTorch `nn.GRU(num_layers=N)`)
 //! - [`Causal1dConvF32`] — Causal 1D convolution over a sliding window
 
 #[cfg(feature = "alloc")]
@@ -54,4 +56,4 @@ pub use lut::{LutF32, LutF64};
 #[cfg(feature = "alloc")]
 pub use mlp::{MlpF32, MlpF64};
 #[cfg(any(feature = "std", feature = "libm"))]
-pub use rnn::{TinyGruF32, TinyLstmF32};
+pub use rnn::{StackedGruF32, StackedLstmF32, TinyGruF32, TinyLstmF32};

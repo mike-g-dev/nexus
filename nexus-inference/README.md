@@ -9,8 +9,8 @@ Sub-microsecond prediction on the hot path, zero allocation after
 construction.
 
 **Design point:** Models are trained in external frameworks (LightGBM,
-PyTorch), exported as flat weight arrays, loaded once via `from_parts`,
-and then called millions of times. Every type pre-allocates all scratch
+PyTorch), exported as safetensors files, loaded once at startup, and
+then called millions of times. Every type pre-allocates all scratch
 buffers at construction. The inference methods (`predict`, `step`) touch
 only stack and pre-allocated memory.
 
@@ -97,6 +97,25 @@ Both are detected and handled automatically by `from_safetensors`.
 Models without normalization layers have zero overhead — the code
 path is skipped entirely. Requires `std` or `libm` for `sqrt`.
 
+#### Multi-layer RNN auto-detection
+
+PyTorch's `nn.LSTM(num_layers=N)` and `nn.GRU(num_layers=N)` require
+`num_layers` as an explicit constructor argument. Our
+`from_safetensors` loaders infer the layer count by scanning for
+consecutive `weight_ih_l0`, `weight_ih_l1`, ... tensors in the file.
+
+This is a deliberate divergence from PyTorch. The safetensors file
+already encodes the full model structure — requiring the user to
+redundantly specify `num_layers` creates a split-brain failure mode
+where the declared count doesn't match the actual weights. By
+auto-detecting, we guarantee the loaded model matches what was
+exported.
+
+For single-layer models, `StackedLstmF32` / `StackedGruF32` detect
+one layer and produce identical output to `TinyLstmF32` /
+`TinyGruF32`. Use the `Tiny` variants directly when you know the
+model is single-layer — they have slightly less indirection.
+
 ### Lookup Table — `LutF64` / `LutF32`
 
 Pre-computed prediction table indexed by discretized features. Each
@@ -113,16 +132,23 @@ resolution. Pre-compute the table offline from any model.
 (`n_bins ^ n_features`). Practical for 1-3 features at moderate bin
 counts. Out-of-range features are clamped; NaN maps to bin 0.
 
-### LSTM — `TinyLstmF32`
+### LSTM — `TinyLstmF32` / `StackedLstmF32`
 
-Single-layer Long Short-Term Memory network. Four gates (input, forget,
-cell candidate, output) with hidden and cell state carried between
-`step` calls. Weight parameters map directly to PyTorch's `nn.LSTM`
-tensors — gate order is input, forget, cell candidate, output.
+Single-layer or multi-layer Long Short-Term Memory network. Four gates
+(input, forget, cell candidate, output) with hidden and cell state
+carried between `step` calls. Weight parameters map directly to
+PyTorch's `nn.LSTM` tensors — gate order is input, forget, cell
+candidate, output.
+
+`TinyLstmF32` is a single-layer LSTM. `StackedLstmF32` stacks N
+layers where each layer's hidden state feeds as input to the next,
+matching PyTorch's `nn.LSTM(num_layers=N)`. Output projection applies
+only to the final layer's hidden state.
 
 Internally fuses `weight_ih` and `weight_hh` into a single
-`(4H, I+H)` matrix at construction for one matmul per step instead
-of two. Biases pre-summed. Same SIMD dot product path as MLP.
+`(4H, I+H)` matrix per layer at construction for one matmul per layer
+per step instead of two. Biases pre-summed. Same SIMD dot product
+path as MLP.
 
 **Best for:** Streaming sequence modeling where the model needs to
 remember and selectively forget over time. The cell state acts as
@@ -130,23 +156,29 @@ long-term memory gated by learned sigmoid gates — good for patterns
 like accumulating flow toxicity over a session, tracking regime
 persistence, or detecting gradual shifts that unfold over many
 timesteps. The forget gate lets the model decide when past state is
-no longer relevant.
+no longer relevant. Multi-layer stacking increases model capacity
+by letting each layer learn progressively more abstract temporal
+features.
 
 **Guidance:** Hidden sizes of 8-64 are the target range for real-time
 use. Larger models should run on GPU. LSTM is more expressive than GRU
 (separate cell state + 4 gates) but costs ~33% more compute. If your
 temporal patterns are simple and you need every nanosecond, consider
 GRU. Gate activations are hardcoded (sigmoid/tanh) — this is the
-standard formulation, not configurable.
+standard formulation, not configurable. For stacked models, 2-3 layers
+is typical — diminishing returns beyond that for small hidden sizes.
 
-### GRU — `TinyGruF32`
+### GRU — `TinyGruF32` / `StackedGruF32`
 
-Single-layer Gated Recurrent Unit. Three gates (reset, update,
-candidate) with hidden state carried between `step` calls. ~75% of
-LSTM compute — three gates instead of four, no separate cell state.
-Weight parameters map directly to PyTorch's `nn.GRU` tensors. Uses
-PyTorch's default formulation where reset is applied after the
+Single-layer or multi-layer Gated Recurrent Unit. Three gates (reset,
+update, candidate) with hidden state carried between `step` calls.
+~75% of LSTM compute — three gates instead of four, no separate cell
+state. Weight parameters map directly to PyTorch's `nn.GRU` tensors.
+Uses PyTorch's default formulation where reset is applied after the
 hidden-to-hidden matmul.
+
+`TinyGruF32` is a single-layer GRU. `StackedGruF32` stacks N layers,
+matching PyTorch's `nn.GRU(num_layers=N)`.
 
 **Best for:** Same temporal modeling as LSTM but with a simpler memory
 model. On many tasks GRU matches LSTM quality with less compute. Good
@@ -190,6 +222,7 @@ not a gating mechanism. Small kernels (3-8) and moderate filter counts
 | Ultra-low-latency, few features | LUT | O(1), pre-computed, no arithmetic |
 | Temporal patterns, long memory | LSTM | Cell state retains information over many steps |
 | Temporal patterns, fast & simple | GRU | Simpler than LSTM, often comparable quality |
+| Complex temporal, more capacity | Stacked LSTM/GRU | Multiple layers learn hierarchical features |
 | Short-range temporal, fixed window | Conv | Fixed receptive field, cheaper than recurrent |
 | Two-stage pipeline | GBDT → MLP | Signals from trees, combined by network |
 | Streaming regime detection | LSTM or GRU | Hidden state accumulates evidence over time |
@@ -197,36 +230,45 @@ not a gating mechanism. Small kernels (3-8) and moderate filter counts
 ## Features
 
 - `std` (default) — standard library support
+- `safetensors` (default) — PyTorch safetensors loader for MLP, LSTM, GRU, Stacked LSTM/GRU, Conv (implies `alloc`)
 - `alloc` — enables MLP, LUT, GBDT, Conv types (heap allocation for weight storage)
 - `libm` — no_std math fallback (enables LSTM/GRU without std)
-- `loader-lightgbm` — LightGBM text format parser (implies `std`)
-- `safetensors` — PyTorch safetensors loader for MLP, LSTM, GRU, Conv (implies `alloc`)
+- `loader-lightgbm` — LightGBM text format parser (implies `alloc`)
 
 ## Usage
 
 ```rust
-use nexus_inference::{GbdtF64, MlpF32, TinyLstmF32, Activation};
+use nexus_inference::{MlpF32, TinyLstmF32, StackedLstmF32, Activation};
 
-// GBDT: load and predict
-let model = GbdtF64::from_lightgbm(model_bytes).unwrap();
-let score = model.predict(&features);
-
-// MLP: dense signal combination
-let mut mlp = MlpF32::from_parts(
-    &[4, 16, 1], &weights, &biases, Activation::Relu,
+// MLP: load PyTorch model from safetensors
+let bytes = std::fs::read("mlp.safetensors").unwrap();
+let mut mlp = MlpF32::from_safetensors(
+    &bytes, "net", Activation::Relu,
 ).unwrap();
 let signal = mlp.predict(&feature_vector);
 
-// LSTM: streaming temporal inference
-let mut lstm = TinyLstmF32::from_parts(
-    4, 8, 1,
-    &weight_ih, &weight_hh, &bias_ih, &bias_hh,
-    &w_out, &b_out,
+// Single-layer LSTM: streaming temporal inference
+let bytes = std::fs::read("lstm.safetensors").unwrap();
+let mut lstm = TinyLstmF32::from_safetensors(
+    &bytes, "rnn", "fc",
 ).unwrap();
 let score = lstm.step(&input_frame);     // first timestep
 let score = lstm.step(&next_frame);      // carries hidden state forward
 lstm.reset_state();                      // clear for new sequence
+
+// Stacked LSTM: multi-layer model
+// Auto-detects num_layers from weight_ih_l0, weight_ih_l1, ...
+let bytes = std::fs::read("stacked.safetensors").unwrap();
+let mut stacked = StackedLstmF32::from_safetensors(
+    &bytes, "encoder.lstm", "encoder.fc",
+).unwrap();
+let score = stacked.step(&input_frame);  // flows through all layers
+stacked.reset_state();                   // clears all layers
 ```
+
+All model types also provide `from_parts` constructors for manual weight
+loading. GBDT models use `from_lightgbm` for LightGBM text format
+(requires `loader-lightgbm` feature). See the API docs for details.
 
 ## Performance
 
@@ -238,5 +280,9 @@ Target latency for typical configurations (single-threaded, AVX2+FMA):
 | GBDT | 100 trees × depth 6, 8 features | < 1 µs |
 | MLP  | 8 → 16 → 1, ReLU | < 100 ns |
 | LSTM | hidden=16, input=8 | ~250 ns |
+| LSTM | hidden=32, input=8, 2 layers | ~700 ns |
+| LSTM | hidden=32, input=8, 3 layers | ~1 µs |
 | GRU  | hidden=16, input=8 | ~200 ns |
+| GRU  | hidden=32, input=8, 2 layers | ~600 ns |
+| GRU  | hidden=32, input=8, 3 layers | ~900 ns |
 | Conv | 8 filters, kernel=4, 4 channels | ~50 ns |

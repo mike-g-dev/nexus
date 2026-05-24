@@ -1,5 +1,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use nexus_inference::{Activation, Causal1dConvF32, TinyGruF32, TinyLstmF32};
+use nexus_inference::{
+    Activation, Causal1dConvF32, StackedGruF32, StackedLstmF32, TinyGruF32, TinyLstmF32,
+};
 
 fn make_lstm(input: usize, hidden: usize, output: usize) -> TinyLstmF32 {
     let gc = 4 * hidden;
@@ -86,6 +88,110 @@ fn bench_lstm(c: &mut Criterion) {
     });
 }
 
+fn make_stacked_lstm(
+    input: usize,
+    hidden: usize,
+    output: usize,
+    num_layers: usize,
+) -> StackedLstmF32 {
+    let gc = 4 * hidden;
+    let wih_l0 = vec![0.1_f32; gc * input];
+    let whh = vec![0.1_f32; gc * hidden];
+    let bih = vec![0.0_f32; gc];
+    let bhh = vec![0.0_f32; gc];
+    let wih_rest = vec![0.1_f32; gc * hidden];
+
+    let mut layers_wih: Vec<&[f32]> = vec![&wih_l0];
+    let mut layers_whh: Vec<&[f32]> = vec![&whh];
+    let mut layers_bih: Vec<&[f32]> = vec![&bih];
+    let mut layers_bhh: Vec<&[f32]> = vec![&bhh];
+    for _ in 1..num_layers {
+        layers_wih.push(&wih_rest);
+        layers_whh.push(&whh);
+        layers_bih.push(&bih);
+        layers_bhh.push(&bhh);
+    }
+
+    let w_out = vec![0.1_f32; output * hidden];
+    let b_out = vec![0.0_f32; output];
+    StackedLstmF32::from_parts(
+        input, hidden, output, &layers_wih, &layers_whh, &layers_bih, &layers_bhh, &w_out, &b_out,
+    )
+    .unwrap()
+}
+
+fn make_stacked_gru(
+    input: usize,
+    hidden: usize,
+    output: usize,
+    num_layers: usize,
+) -> StackedGruF32 {
+    let gc = 3 * hidden;
+    let wih_l0 = vec![0.1_f32; gc * input];
+    let whh = vec![0.1_f32; gc * hidden];
+    let bih = vec![0.0_f32; gc];
+    let bhh = vec![0.0_f32; gc];
+    let wih_rest = vec![0.1_f32; gc * hidden];
+
+    let mut layers_wih: Vec<&[f32]> = vec![&wih_l0];
+    let mut layers_whh: Vec<&[f32]> = vec![&whh];
+    let mut layers_bih: Vec<&[f32]> = vec![&bih];
+    let mut layers_bhh: Vec<&[f32]> = vec![&bhh];
+    for _ in 1..num_layers {
+        layers_wih.push(&wih_rest);
+        layers_whh.push(&whh);
+        layers_bih.push(&bih);
+        layers_bhh.push(&bhh);
+    }
+
+    let w_out = vec![0.1_f32; output * hidden];
+    let b_out = vec![0.0_f32; output];
+    StackedGruF32::from_parts(
+        input, hidden, output, &layers_wih, &layers_whh, &layers_bih, &layers_bhh, &w_out, &b_out,
+    )
+    .unwrap()
+}
+
+fn bench_stacked_lstm(c: &mut Criterion) {
+    let input_8 = vec![0.5_f32; 8];
+
+    let mut m = make_stacked_lstm(8, 32, 1, 2);
+    for _ in 0..100 {
+        m.step(&input_8);
+    }
+    c.bench_function("LSTM 8→32→1 ×2L", |b| {
+        b.iter(|| m.step(black_box(&input_8)));
+    });
+
+    let mut m = make_stacked_lstm(8, 32, 1, 3);
+    for _ in 0..100 {
+        m.step(&input_8);
+    }
+    c.bench_function("LSTM 8→32→1 ×3L", |b| {
+        b.iter(|| m.step(black_box(&input_8)));
+    });
+}
+
+fn bench_stacked_gru(c: &mut Criterion) {
+    let input_8 = vec![0.5_f32; 8];
+
+    let mut m = make_stacked_gru(8, 32, 1, 2);
+    for _ in 0..100 {
+        m.step(&input_8);
+    }
+    c.bench_function("GRU 8→32→1 ×2L", |b| {
+        b.iter(|| m.step(black_box(&input_8)));
+    });
+
+    let mut m = make_stacked_gru(8, 32, 1, 3);
+    for _ in 0..100 {
+        m.step(&input_8);
+    }
+    c.bench_function("GRU 8→32→1 ×3L", |b| {
+        b.iter(|| m.step(black_box(&input_8)));
+    });
+}
+
 fn bench_gru(c: &mut Criterion) {
     let input_8 = vec![0.5_f32; 8];
     let input_16 = vec![0.5_f32; 16];
@@ -144,5 +250,12 @@ fn bench_conv(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_lstm, bench_gru, bench_conv);
+criterion_group!(
+    benches,
+    bench_lstm,
+    bench_stacked_lstm,
+    bench_gru,
+    bench_stacked_gru,
+    bench_conv,
+);
 criterion_main!(benches);

@@ -89,6 +89,62 @@ fn assert_close(model: &str, step: usize, idx: usize, actual: f64, expected: f64
 
 // ---- test runners ----
 
+fn run_stacked_lstm_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
+    let tol = exp["tolerance"].as_f64().unwrap();
+
+    let mut lstm = StackedLstmF32::from_safetensors(
+        &data,
+        exp["rnn_prefix"].as_str().unwrap(),
+        exp["proj_prefix"].as_str().unwrap(),
+    )
+    .unwrap();
+
+    let expected_layers = exp["num_layers"].as_u64().unwrap() as usize;
+    assert_eq!(lstm.num_layers(), expected_layers);
+
+    for (i, (inp, exp_out)) in inputs_f32(&exp)
+        .iter()
+        .zip(expected_outputs(&exp).iter())
+        .enumerate()
+    {
+        let mut out = vec![0.0_f32; exp_out.len()];
+        lstm.step_into(inp, &mut out);
+        for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
+            assert_close(name, i, j, actual as f64, expected, tol);
+        }
+    }
+}
+
+fn run_stacked_gru_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
+    let tol = exp["tolerance"].as_f64().unwrap();
+
+    let mut gru = StackedGruF32::from_safetensors(
+        &data,
+        exp["rnn_prefix"].as_str().unwrap(),
+        exp["proj_prefix"].as_str().unwrap(),
+    )
+    .unwrap();
+
+    let expected_layers = exp["num_layers"].as_u64().unwrap() as usize;
+    assert_eq!(gru.num_layers(), expected_layers);
+
+    for (i, (inp, exp_out)) in inputs_f32(&exp)
+        .iter()
+        .zip(expected_outputs(&exp).iter())
+        .enumerate()
+    {
+        let mut out = vec![0.0_f32; exp_out.len()];
+        gru.step_into(inp, &mut out);
+        for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
+            assert_close(name, i, j, actual as f64, expected, tol);
+        }
+    }
+}
+
 fn run_lstm_test(name: &str) {
     let data = load_model(name);
     let exp = load_expected(name);
@@ -380,6 +436,40 @@ fn conv1d_leaky_relu() {
     run_conv1d_test("conv1d_leaky_relu");
 }
 
+// ---- Stacked LSTM tests ----
+
+#[test]
+fn stacked_lstm_2layer() {
+    run_stacked_lstm_test("stacked_lstm_2layer");
+}
+
+#[test]
+fn stacked_lstm_3layer() {
+    run_stacked_lstm_test("stacked_lstm_3layer");
+}
+
+#[test]
+fn stacked_lstm_large() {
+    run_stacked_lstm_test("stacked_lstm_large");
+}
+
+// ---- Stacked GRU tests ----
+
+#[test]
+fn stacked_gru_2layer() {
+    run_stacked_gru_test("stacked_gru_2layer");
+}
+
+#[test]
+fn stacked_gru_3layer() {
+    run_stacked_gru_test("stacked_gru_3layer");
+}
+
+#[test]
+fn stacked_gru_large() {
+    run_stacked_gru_test("stacked_gru_large");
+}
+
 // ---- Fuzz tests (seeded random configs) ----
 
 macro_rules! fuzz_tests {
@@ -415,4 +505,18 @@ fuzz_tests!(
     fuzz_conv1d_1,
     fuzz_conv1d_2,
     fuzz_conv1d_3,
+);
+fuzz_tests!(
+    run_stacked_lstm_test,
+    fuzz_stacked_lstm_0,
+    fuzz_stacked_lstm_1,
+    fuzz_stacked_lstm_2,
+    fuzz_stacked_lstm_3,
+);
+fuzz_tests!(
+    run_stacked_gru_test,
+    fuzz_stacked_gru_0,
+    fuzz_stacked_gru_1,
+    fuzz_stacked_gru_2,
+    fuzz_stacked_gru_3,
 );

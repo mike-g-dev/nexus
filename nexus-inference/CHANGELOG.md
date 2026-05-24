@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Cannot be fused because statistics depend on each input. New
   `from_parts_with_layer_norm` constructor for manual construction.
   Uses eps=1e-5 (PyTorch default). Requires `std` or `libm`.
+- **`StackedLstmF32`** — Multi-layer LSTM matching PyTorch's
+  `nn.LSTM(num_layers=N)`. Each layer's hidden state feeds as input to
+  the next; output projection applied only to the final layer.
+  `from_safetensors` auto-detects `num_layers` from consecutive
+  `weight_ih_l{k}` tensors. `from_parts` accepts per-layer weight
+  slices. Same SIMD gate processing as `TinyLstmF32`.
+- **`StackedGruF32`** — Multi-layer GRU matching PyTorch's
+  `nn.GRU(num_layers=N)`. Same stacking model as `StackedLstmF32`,
+  ~75% compute per layer. Auto-detects `num_layers` from safetensors.
 - **`TinyLstmF32`** — Single-layer LSTM for streaming temporal inference.
   Four gates (input, forget, cell candidate, output) with hidden and cell
   state carried between `step` calls. Fused `(4H, I+H)` gate matrix for
@@ -65,4 +74,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `predict_n()` for partial ensemble evaluation. Requires `alloc`.
 - **LightGBM text format loader** — `GbdtF64::from_lightgbm(&[u8])` /
   `GbdtF32::from_lightgbm(&[u8])`. Parses LightGBM model text files.
-  Requires `loader-lightgbm` feature (implies `std`).
+  Requires `loader-lightgbm` feature (implies `alloc`).

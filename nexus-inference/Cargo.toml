@@ -11,7 +11,7 @@ keywords = ["inference", "machine-learning", "gbdt", "lightgbm", "trading"]
 categories = ["algorithms", "science"]
 
 [features]
-default = ["std"]
+default = ["std", "safetensors"]
 std = ["alloc"]
 alloc = []
 libm = ["alloc", "dep:libm"]

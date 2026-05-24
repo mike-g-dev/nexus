@@ -19,9 +19,245 @@ fn sqrt_f64(x: f64) -> f64 {
     libm::sqrt(x)
 }
 
+#[cfg(all(
+    feature = "alloc",
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma"),
+    )
+))]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn mlp_tiled_simd_f32(
+    weights: &[f32],
+    biases: &[f32],
+    src: &[f32],
+    dst: &mut [f32],
+    in_size: usize,
+    out_size_4: usize,
+    activation: Activation,
+    apply_activation: bool,
+) -> usize {
+    use crate::dot::{dot4_f32_m128, dot8_f32_m256};
+    use core::arch::x86_64::*;
+    let out_size_8 = out_size_4 & !7;
+    let mut j = 0;
+    unsafe {
+        if apply_activation && matches!(activation, Activation::Relu) {
+            if in_size >= 32 {
+                let zero256 = _mm256_setzero_ps();
+                while j < out_size_8 {
+                    let rows = &weights[j * in_size..(j + 8) * in_size];
+                    let dots = dot8_f32_m256(rows, src);
+                    let bias_v = _mm256_loadu_ps(biases.as_ptr().add(j));
+                    _mm256_storeu_ps(
+                        dst.as_mut_ptr().add(j),
+                        _mm256_max_ps(_mm256_add_ps(dots, bias_v), zero256),
+                    );
+                    j += 8;
+                }
+            }
+            let zero128 = _mm_setzero_ps();
+            while j < out_size_4 {
+                let rows = &weights[j * in_size..(j + 4) * in_size];
+                let dots = dot4_f32_m128(rows, src);
+                let bias_v = _mm_loadu_ps(biases.as_ptr().add(j));
+                _mm_storeu_ps(
+                    dst.as_mut_ptr().add(j),
+                    _mm_max_ps(_mm_add_ps(dots, bias_v), zero128),
+                );
+                j += 4;
+            }
+        } else if !apply_activation || matches!(activation, Activation::Identity) {
+            if in_size >= 32 {
+                while j < out_size_8 {
+                    let rows = &weights[j * in_size..(j + 8) * in_size];
+                    let dots = dot8_f32_m256(rows, src);
+                    let bias_v = _mm256_loadu_ps(biases.as_ptr().add(j));
+                    _mm256_storeu_ps(dst.as_mut_ptr().add(j), _mm256_add_ps(dots, bias_v));
+                    j += 8;
+                }
+            }
+            while j < out_size_4 {
+                let rows = &weights[j * in_size..(j + 4) * in_size];
+                let dots = dot4_f32_m128(rows, src);
+                let bias_v = _mm_loadu_ps(biases.as_ptr().add(j));
+                _mm_storeu_ps(dst.as_mut_ptr().add(j), _mm_add_ps(dots, bias_v));
+                j += 4;
+            }
+        }
+    }
+    j
+}
+
+#[cfg(all(
+    feature = "alloc",
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma"),
+    )
+))]
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn mlp_tiled_noop<T>(
+    _: &[T],
+    _: &[T],
+    _: &[T],
+    _: &mut [T],
+    _: usize,
+    _: usize,
+    _: Activation,
+    _: bool,
+) -> usize {
+    0
+}
+
+#[cfg(all(
+    feature = "alloc",
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma"),
+    )
+))]
+#[inline(never)]
+#[allow(clippy::many_single_char_names)]
+fn layer_norm_simd_f32(
+    data: &mut [f32],
+    gamma: &[f32],
+    beta: &[f32],
+    activation: Activation,
+) -> bool {
+    use core::arch::x86_64::*;
+
+    let n = data.len();
+    if n < 8 {
+        return false;
+    }
+
+    let is_relu = matches!(activation, Activation::Relu);
+    if !is_relu && !matches!(activation, Activation::Identity) {
+        return false;
+    }
+
+    // SAFETY: cfg guarantees AVX2+FMA. All pointer arithmetic stays within
+    // slice bounds: i < n_8 <= n, loads/stores of 8 f32 (32 bytes) at
+    // offset i are valid because i + 8 <= n_8 + 8 <= n (n_8 = n & !7).
+    unsafe {
+        let n_8 = n & !7;
+
+        // Pass 1: mean (f32 accumulation, 8-wide)
+        let mut sum_v = _mm256_setzero_ps();
+        let mut i = 0;
+        while i < n_8 {
+            sum_v = _mm256_add_ps(sum_v, _mm256_loadu_ps(data.as_ptr().add(i)));
+            i += 8;
+        }
+        let mut sum = hsum256_f32(sum_v);
+        while i < n {
+            sum += data[i];
+            i += 1;
+        }
+        let mean = sum / n as f32;
+
+        // Pass 2: variance (f32 accumulation, 8-wide FMA)
+        let mean_v = _mm256_set1_ps(mean);
+        let mut var_v = _mm256_setzero_ps();
+        i = 0;
+        while i < n_8 {
+            let x = _mm256_loadu_ps(data.as_ptr().add(i));
+            let d = _mm256_sub_ps(x, mean_v);
+            var_v = _mm256_fmadd_ps(d, d, var_v);
+            i += 8;
+        }
+        let mut var = hsum256_f32(var_v);
+        while i < n {
+            let d = data[i] - mean;
+            var = d.mul_add(d, var);
+            i += 1;
+        }
+        let inv_std = {
+            let v = _mm_sqrt_ss(_mm_set_ss(var / n as f32 + 1e-5));
+            1.0_f32 / _mm_cvtss_f32(v)
+        };
+
+        // Pass 3: normalize + affine + activation (8-wide FMA)
+        let inv_std_v = _mm256_set1_ps(inv_std);
+        i = 0;
+        if is_relu {
+            let zero = _mm256_setzero_ps();
+            while i < n_8 {
+                let x = _mm256_loadu_ps(data.as_ptr().add(i));
+                let norm = _mm256_mul_ps(_mm256_sub_ps(x, mean_v), inv_std_v);
+                let g = _mm256_loadu_ps(gamma.as_ptr().add(i));
+                let b = _mm256_loadu_ps(beta.as_ptr().add(i));
+                _mm256_storeu_ps(
+                    data.as_mut_ptr().add(i),
+                    _mm256_max_ps(_mm256_fmadd_ps(g, norm, b), zero),
+                );
+                i += 8;
+            }
+        } else {
+            while i < n_8 {
+                let x = _mm256_loadu_ps(data.as_ptr().add(i));
+                let norm = _mm256_mul_ps(_mm256_sub_ps(x, mean_v), inv_std_v);
+                let g = _mm256_loadu_ps(gamma.as_ptr().add(i));
+                let b = _mm256_loadu_ps(beta.as_ptr().add(i));
+                _mm256_storeu_ps(data.as_mut_ptr().add(i), _mm256_fmadd_ps(g, norm, b));
+                i += 8;
+            }
+        }
+        while i < n {
+            let norm = (data[i] - mean) * inv_std;
+            let val = gamma[i].mul_add(norm, beta[i]);
+            data[i] = if is_relu && val < 0.0 { 0.0 } else { val };
+            i += 1;
+        }
+    }
+
+    true
+}
+
+#[cfg(all(
+    feature = "alloc",
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma"),
+    )
+))]
+#[inline(always)]
+unsafe fn hsum256_f32(v: core::arch::x86_64::__m256) -> f32 {
+    use core::arch::x86_64::*;
+    unsafe {
+        let hi = _mm256_extractf128_ps(v, 1);
+        let lo = _mm256_castps256_ps128(v);
+        let sum128 = _mm_add_ps(lo, hi);
+        let shuf = _mm_movehdup_ps(sum128);
+        let sums = _mm_add_ps(sum128, shuf);
+        let shuf2 = _mm_movehl_ps(sums, sums);
+        _mm_cvtss_f32(_mm_add_ss(sums, shuf2))
+    }
+}
+
+#[cfg(all(
+    feature = "alloc",
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma"),
+    )
+))]
+#[inline(always)]
+fn layer_norm_noop(_: &mut [f64], _: &[f64], _: &[f64], _: Activation) -> bool {
+    false
+}
+
 #[cfg(feature = "alloc")]
 macro_rules! impl_mlp {
-    ($name:ident, $ty:ty, $dot_fn:path, $dot4_fn:path, $activate_fn:path) => {
+    ($name:ident, $ty:ty, $dot_fn:path, $dot4_fn:path, $activate_fn:path, $tiled_fn:path, $ln_fn:path) => {
         /// Feedforward neural network (multi-layer perceptron).
         ///
         /// Immutable after construction. All prediction methods take `&self`.
@@ -228,7 +464,66 @@ macro_rules! impl_mlp {
                     let apply_ln = !is_last && self.ln_gamma.is_some();
                     let out_size_4 = out_size & !3;
 
-                    let mut j = 0;
+                    // SIMD tiled path: dot4_f32_m128 + vectorized bias/activation/store.
+                    // 3 branches because borrow checker needs disjoint src/dst proof.
+                    #[cfg(all(
+                        target_arch = "x86_64",
+                        any(
+                            target_feature = "avx512f",
+                            all(target_feature = "avx2", target_feature = "fma"),
+                        )
+                    ))]
+                    let mut j = {
+                        let apply_activation = !is_last && !apply_ln;
+                        if is_last {
+                            let src = if src_is_a {
+                                &self.scratch_a[..in_size]
+                            } else {
+                                &self.scratch_b[..in_size]
+                            };
+                            $tiled_fn(
+                                &self.weights[w_offset..],
+                                &self.biases[b_offset..],
+                                src,
+                                output,
+                                in_size,
+                                out_size_4,
+                                self.activation,
+                                false,
+                            )
+                        } else if src_is_a {
+                            $tiled_fn(
+                                &self.weights[w_offset..],
+                                &self.biases[b_offset..],
+                                &self.scratch_a[..in_size],
+                                &mut self.scratch_b,
+                                in_size,
+                                out_size_4,
+                                self.activation,
+                                apply_activation,
+                            )
+                        } else {
+                            $tiled_fn(
+                                &self.weights[w_offset..],
+                                &self.biases[b_offset..],
+                                &self.scratch_b[..in_size],
+                                &mut self.scratch_a,
+                                in_size,
+                                out_size_4,
+                                self.activation,
+                                apply_activation,
+                            )
+                        }
+                    };
+                    #[cfg(not(all(
+                        target_arch = "x86_64",
+                        any(
+                            target_feature = "avx512f",
+                            all(target_feature = "avx2", target_feature = "fma"),
+                        )
+                    )))]
+                    let mut j = 0usize;
+
                     while j < out_size_4 {
                         let rows = &self.weights[w_offset + j * in_size..w_offset + (j + 4) * in_size];
                         let src = if src_is_a { &self.scratch_a[..in_size] } else { &self.scratch_b[..in_size] };
@@ -270,35 +565,53 @@ macro_rules! impl_mlp {
                         let ln_g = self.ln_gamma.as_ref().unwrap();
                         let ln_b = self.ln_beta.as_ref().unwrap();
 
-                        let (mean, inv_std) = {
-                            let src_slice = if src_is_a {
-                                &self.scratch_b[..out_size]
-                            } else {
-                                &self.scratch_a[..out_size]
-                            };
-                            let mut mean_acc = 0.0_f64;
-                            for v in src_slice {
-                                mean_acc += *v as f64;
-                            }
-                            let mean = mean_acc / out_size as f64;
-                            let mut var_acc = 0.0_f64;
-                            for v in src_slice {
-                                let d = *v as f64 - mean;
-                                var_acc = d.mul_add(d, var_acc);
-                            }
-                            (mean, 1.0_f64 / sqrt_f64(var_acc / out_size as f64 + 1e-5))
-                        };
-
                         let dst = if src_is_a {
                             &mut self.scratch_b[..out_size]
                         } else {
                             &mut self.scratch_a[..out_size]
                         };
-                        for (k, v) in dst.iter_mut().enumerate() {
-                            let normalized = (*v as f64 - mean) * inv_std;
-                            let ln_val = (ln_g[b_offset + k] as f64)
-                                .mul_add(normalized, ln_b[b_offset + k] as f64);
-                            *v = $activate_fn(ln_val as $ty, self.activation);
+
+                        #[cfg(all(
+                            target_arch = "x86_64",
+                            any(
+                                target_feature = "avx512f",
+                                all(target_feature = "avx2", target_feature = "fma"),
+                            )
+                        ))]
+                        let simd_done = $ln_fn(
+                            dst,
+                            &ln_g[b_offset..b_offset + out_size],
+                            &ln_b[b_offset..b_offset + out_size],
+                            self.activation,
+                        );
+                        #[cfg(not(all(
+                            target_arch = "x86_64",
+                            any(
+                                target_feature = "avx512f",
+                                all(target_feature = "avx2", target_feature = "fma"),
+                            )
+                        )))]
+                        let simd_done = false;
+
+                        if !simd_done {
+                            let mut mean_acc = 0.0_f64;
+                            for v in dst.iter() {
+                                mean_acc += *v as f64;
+                            }
+                            let mean = mean_acc / out_size as f64;
+                            let mut var_acc = 0.0_f64;
+                            for v in dst.iter() {
+                                let d = *v as f64 - mean;
+                                var_acc = d.mul_add(d, var_acc);
+                            }
+                            let inv_std = 1.0_f64 / sqrt_f64(var_acc / out_size as f64 + 1e-5);
+
+                            for (k, v) in dst.iter_mut().enumerate() {
+                                let normalized = (*v as f64 - mean) * inv_std;
+                                let ln_val = (ln_g[b_offset + k] as f64)
+                                    .mul_add(normalized, ln_b[b_offset + k] as f64);
+                                *v = $activate_fn(ln_val as $ty, self.activation);
+                            }
                         }
                     }
 
@@ -337,7 +650,9 @@ impl_mlp!(
     f64,
     crate::dot::dot_f64,
     crate::dot::dot4_f64,
-    crate::activation::activate_f64
+    crate::activation::activate_f64,
+    mlp_tiled_noop,
+    layer_norm_noop
 );
 #[cfg(feature = "alloc")]
 impl_mlp!(
@@ -345,7 +660,9 @@ impl_mlp!(
     f32,
     crate::dot::dot_f32,
     crate::dot::dot4_f32,
-    crate::activation::activate_f32
+    crate::activation::activate_f32,
+    mlp_tiled_simd_f32,
+    layer_norm_simd_f32
 );
 
 #[cfg(test)]
@@ -710,7 +1027,11 @@ mod tests {
 
         let linear_out = [3.0_f64, 5.0, 8.0, -2.0];
         let mean = linear_out.iter().sum::<f64>() / 4.0;
-        let var: f64 = linear_out.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / 4.0;
+        let var: f64 = linear_out
+            .iter()
+            .map(|x| (x - mean) * (x - mean))
+            .sum::<f64>()
+            / 4.0;
         let inv_std = 1.0 / (var + 1e-5_f64).sqrt();
         let expected: f64 = linear_out
             .iter()
