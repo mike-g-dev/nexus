@@ -1,6 +1,7 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use nexus_inference::{
-    Activation, Causal1dConvF32, StackedGruF32, StackedLstmF32, TinyGruF32, TinyLstmF32,
+    Activation, Causal1dConvF32, LinearSsmF32, StackedGruF32, StackedLstmF32, TinyGruF32,
+    TinyLstmF32,
 };
 
 fn make_lstm(input: usize, hidden: usize, output: usize) -> TinyLstmF32 {
@@ -250,6 +251,52 @@ fn bench_conv(c: &mut Criterion) {
     });
 }
 
+fn make_ssm(input: usize, hidden: usize, output: usize) -> LinearSsmF32 {
+    let a_diag = vec![0.9_f32; hidden];
+    let b = vec![0.1_f32; hidden * input];
+    let c = vec![0.1_f32; output * hidden];
+    let d = vec![0.01_f32; output * input];
+    LinearSsmF32::from_parts(&a_diag, &b, &c, &d, output).unwrap()
+}
+
+fn bench_ssm(c: &mut Criterion) {
+    let input_4 = vec![0.5_f32; 4];
+    let input_8 = vec![0.5_f32; 8];
+    let input_16 = vec![0.5_f32; 16];
+
+    let mut m = make_ssm(4, 8, 1);
+    for _ in 0..100 {
+        m.step(&input_4);
+    }
+    c.bench_function("SSM 4→8→1", |b| {
+        b.iter(|| m.step(black_box(&input_4)));
+    });
+
+    let mut m = make_ssm(8, 16, 1);
+    for _ in 0..100 {
+        m.step(&input_8);
+    }
+    c.bench_function("SSM 8→16→1", |b| {
+        b.iter(|| m.step(black_box(&input_8)));
+    });
+
+    let mut m = make_ssm(8, 32, 1);
+    for _ in 0..100 {
+        m.step(&input_8);
+    }
+    c.bench_function("SSM 8→32→1", |b| {
+        b.iter(|| m.step(black_box(&input_8)));
+    });
+
+    let mut m = make_ssm(16, 64, 1);
+    for _ in 0..100 {
+        m.step(&input_16);
+    }
+    c.bench_function("SSM 16→64→1", |b| {
+        b.iter(|| m.step(black_box(&input_16)));
+    });
+}
+
 criterion_group!(
     benches,
     bench_lstm,
@@ -257,5 +304,6 @@ criterion_group!(
     bench_gru,
     bench_stacked_gru,
     bench_conv,
+    bench_ssm,
 );
 criterion_main!(benches);
