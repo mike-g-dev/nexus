@@ -481,7 +481,9 @@ Not profiled — these are architectural observations, not measured splits.
 
 - **MLP f32**: matvec across layers. Relu is free (fused in SIMD).
   Already near FMA throughput wall at 64-wide — diminishing returns
-  from dot-product restructuring.
+  from dot-product restructuring. LayerNorm now SIMD-vectorized
+  (3-pass: mean, variance, normalize+affine+activate). Remaining LN
+  overhead is 35-53% vs the same model without LN.
 
 - **Conv**: split between linearization (memcpy circular buffer into
   contiguous layout) and convolution dot products. The linearization
@@ -500,6 +502,7 @@ Not profiled — these are architectural observations, not measured splits.
 | MLP fused bias+relu in SIMD | MLP f32 | ~2× vs MlpF64 at 64-wide |
 | Conv fused bias+relu in SIMD | Conv f32 | 6-18% vs scalar |
 | GBDT false-branch-next layout | GBDT | ~50% of traversals sequential in L1 |
+| SIMD LayerNorm (3-pass f32) | MLP f32 | ~4× vs scalar LN (65-74% reduction) |
 | `#[inline(never)]` on tiled helpers | MLP, Conv | prevents caller I-cache bloat |
 
 ---
@@ -530,7 +533,16 @@ Ordered by expected impact, not effort.
    LSTM. Requires validating numerical parity with PyTorch's split
    formulation.
 
-5. **Profiled bottleneck decomposition**: run `perf stat` or
+5. **Layer Norm LSTM / Layer Norm GRU**: the same SIMD LayerNorm
+   function (`layer_norm_simd_f32`) can be applied post-gate in LSTM
+   and GRU variants. Literature shows LN stabilizes training for
+   temporal models. Implementation would normalize hidden state after
+   gate application — same 3-pass pattern, applied to hidden_size
+   elements per step. Discuss with Martin whether this is worth the
+   API surface (new constructors / weight format) vs keeping it
+   MLP-only.
+
+6. **Profiled bottleneck decomposition**: run `perf stat` or
    `perf record` on the temporal bench to get actual cycle attribution
    (matvec vs gates vs projection vs overhead). Current "bottleneck"
    claims are architectural reasoning, not measurement.
