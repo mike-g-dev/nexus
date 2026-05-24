@@ -921,6 +921,74 @@ impl crate::Causal1dConvF32 {
     }
 }
 
+// ---- SSM loader ----
+
+impl crate::LinearSsmF32 {
+    /// Load from safetensors data.
+    ///
+    /// Expected tensors under `prefix`:
+    /// - `a_diag`: 1D `[H]` — diagonal of state transition matrix (pre-discretized)
+    /// - `b`: 2D `[H, I]` — input-to-state matrix
+    /// - `c`: 2D `[O, H]` — state-to-output matrix
+    /// - `d`: 2D `[O, I]` — skip connection (optional, defaults to zeros)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::TensorNotFound`] if `a_diag`, `b`, or `c` are
+    /// missing, or [`LoadError::Validation`] if shapes are inconsistent.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let bytes = std::fs::read("ssm.safetensors")?;
+    /// let ssm = LinearSsmF32::from_safetensors(&bytes, "ssm")?;
+    /// ```
+    pub fn from_safetensors(data: &[u8], prefix: &str) -> Result<Self, LoadError> {
+        let st = parse(data)?;
+
+        let a_name = prefixed(prefix, "a_diag");
+        let b_name = prefixed(prefix, "b");
+        let c_name = prefixed(prefix, "c");
+        let d_name = prefixed(prefix, "d");
+
+        let a_diag = extract_f32_1d(&st, &a_name)?;
+        let (b, b_shape) = extract_f32_2d(&st, &b_name)?;
+        let (c, c_shape) = extract_f32_2d(&st, &c_name)?;
+
+        let hidden_size = a_diag.len();
+        let input_size = b_shape[1];
+        let output_size = c_shape[0];
+
+        if b_shape[0] != hidden_size {
+            return Err(LoadError::Validation(
+                "b rows must equal hidden_size (a_diag length)",
+            ));
+        }
+        if c_shape[1] != hidden_size {
+            return Err(LoadError::Validation(
+                "c columns must equal hidden_size (a_diag length)",
+            ));
+        }
+
+        let d = match extract_f32_2d(&st, &d_name) {
+            Ok((d_data, d_shape)) => {
+                if d_shape != [output_size, input_size] {
+                    return Err(LoadError::Validation(
+                        "d shape must be [output_size, input_size]",
+                    ));
+                }
+                d_data
+            }
+            Err(LoadError::TensorNotFound(_)) => {
+                vec![0.0_f32; output_size * input_size]
+            }
+            Err(e) => return Err(e),
+        };
+
+        Self::from_parts(&a_diag, &b, &c, &d, output_size)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{string::ToString, vec, vec::Vec};
@@ -1831,5 +1899,94 @@ mod tests {
         let data = serialize_tensors(vec![]);
         let err = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc");
         assert!(matches!(err, Err(LoadError::TensorNotFound(_))));
+    }
+
+    // ---- SSM ----
+
+    #[test]
+    fn ssm_from_safetensors() {
+        let h = 4_usize;
+        let i = 2_usize;
+        let o = 1_usize;
+
+        let a = vec![0.9_f32; h];
+        let b = vec![0.1_f32; h * i];
+        let c = vec![0.1_f32; o * h];
+        let d = vec![0.01_f32; o * i];
+
+        let a_b = f32_bytes(&a);
+        let b_b = f32_bytes(&b);
+        let c_b = f32_bytes(&c);
+        let d_b = f32_bytes(&d);
+
+        let data = serialize_tensors(vec![
+            ("ssm.a_diag", make_view(Dtype::F32, &[h], &a_b)),
+            ("ssm.b", make_view(Dtype::F32, &[h, i], &b_b)),
+            ("ssm.c", make_view(Dtype::F32, &[o, h], &c_b)),
+            ("ssm.d", make_view(Dtype::F32, &[o, i], &d_b)),
+        ]);
+
+        let ssm = crate::LinearSsmF32::from_safetensors(&data, "ssm").unwrap();
+        assert_eq!(ssm.input_size(), i);
+        assert_eq!(ssm.hidden_size(), h);
+        assert_eq!(ssm.output_size(), o);
+    }
+
+    #[test]
+    fn ssm_missing_d_defaults_to_zeros() {
+        let h = 2_usize;
+        let i = 1_usize;
+        let o = 1_usize;
+
+        let a = vec![0.5_f32; h];
+        let b = vec![1.0_f32; h * i];
+        let c = vec![1.0_f32; o * h];
+
+        let a_b = f32_bytes(&a);
+        let b_b = f32_bytes(&b);
+        let c_b = f32_bytes(&c);
+
+        let data = serialize_tensors(vec![
+            ("m.a_diag", make_view(Dtype::F32, &[h], &a_b)),
+            ("m.b", make_view(Dtype::F32, &[h, i], &b_b)),
+            ("m.c", make_view(Dtype::F32, &[o, h], &c_b)),
+        ]);
+
+        let mut ssm = crate::LinearSsmF32::from_safetensors(&data, "m").unwrap();
+        // h = [0,0]*0.5 + [5,5] = [5, 5]; y = 1*5 + 1*5 + 0 = 10
+        let y = ssm.step(&[5.0]);
+        assert!((y - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ssm_matches_from_parts() {
+        let a = [0.9_f32, 0.8];
+        let b = [0.1_f32, 0.2, 0.3, 0.4];
+        let c = [0.5_f32, 0.6];
+        let d = [0.01_f32, 0.02];
+
+        let a_b = f32_bytes(&a);
+        let b_b = f32_bytes(&b);
+        let c_b = f32_bytes(&c);
+        let d_b = f32_bytes(&d);
+
+        let data = serialize_tensors(vec![
+            ("s.a_diag", make_view(Dtype::F32, &[2], &a_b)),
+            ("s.b", make_view(Dtype::F32, &[2, 2], &b_b)),
+            ("s.c", make_view(Dtype::F32, &[1, 2], &c_b)),
+            ("s.d", make_view(Dtype::F32, &[1, 2], &d_b)),
+        ]);
+
+        let mut st = crate::LinearSsmF32::from_safetensors(&data, "s").unwrap();
+        let mut fp = crate::LinearSsmF32::from_parts(&a, &b, &c, &d, 1).unwrap();
+
+        let input = [1.0_f32, 2.0];
+        let y_st = st.step(&input);
+        let y_fp = fp.step(&input);
+        assert!((y_st - y_fp).abs() < 1e-7, "step 1: st={y_st} fp={y_fp}");
+
+        let y_st2 = st.step(&input);
+        let y_fp2 = fp.step(&input);
+        assert!((y_st2 - y_fp2).abs() < 1e-7, "step 2: st={y_st2} fp={y_fp2}");
     }
 }

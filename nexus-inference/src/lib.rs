@@ -21,6 +21,7 @@
 //! - [`TinyGruF32`] — Single-layer GRU, ~75% of LSTM cost
 //! - [`StackedLstmF32`] — Multi-layer LSTM (PyTorch `nn.LSTM(num_layers=N)`)
 //! - [`StackedGruF32`] — Multi-layer GRU (PyTorch `nn.GRU(num_layers=N)`)
+//! - [`LinearSsmF32`] — Linear state-space model (S4/S4D), no transcendentals
 //! - [`Causal1dConvF32`] — Causal 1D convolution over a sliding window
 
 #[cfg(feature = "alloc")]
@@ -37,6 +38,9 @@ mod mlp;
 
 #[cfg(any(feature = "std", feature = "libm"))]
 mod rnn;
+
+#[cfg(feature = "alloc")]
+mod ssm;
 
 #[cfg(feature = "alloc")]
 mod conv;
@@ -57,3 +61,5 @@ pub use lut::{LutF32, LutF64};
 pub use mlp::{MlpF32, MlpF64};
 #[cfg(any(feature = "std", feature = "libm"))]
 pub use rnn::{StackedGruF32, StackedLstmF32, TinyGruF32, TinyLstmF32};
+#[cfg(feature = "alloc")]
+pub use ssm::LinearSsmF32;

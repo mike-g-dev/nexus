@@ -436,6 +436,52 @@ fn conv1d_leaky_relu() {
     run_conv1d_test("conv1d_leaky_relu");
 }
 
+// ---- SSM tests ----
+
+fn run_ssm_test(name: &str) {
+    let data = load_model(name);
+    let exp = load_expected(name);
+    let tol = exp["tolerance"].as_f64().unwrap();
+
+    let mut ssm = LinearSsmF32::from_safetensors(
+        &data,
+        exp["prefix"].as_str().unwrap(),
+    )
+    .unwrap();
+
+    for (i, (inp, exp_out)) in inputs_f32(&exp)
+        .iter()
+        .zip(expected_outputs(&exp).iter())
+        .enumerate()
+    {
+        let mut out = vec![0.0_f32; exp_out.len()];
+        ssm.step_into(inp, &mut out);
+        for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
+            assert_close(name, i, j, actual as f64, expected, tol);
+        }
+    }
+}
+
+#[test]
+fn ssm() {
+    run_ssm_test("ssm");
+}
+
+#[test]
+fn ssm_no_skip() {
+    run_ssm_test("ssm_no_skip");
+}
+
+#[test]
+fn ssm_multi_output() {
+    run_ssm_test("ssm_multi_output");
+}
+
+#[test]
+fn ssm_large() {
+    run_ssm_test("ssm_large");
+}
+
 // ---- Stacked LSTM tests ----
 
 #[test]
@@ -519,4 +565,11 @@ fuzz_tests!(
     fuzz_stacked_gru_1,
     fuzz_stacked_gru_2,
     fuzz_stacked_gru_3,
+);
+fuzz_tests!(
+    run_ssm_test,
+    fuzz_ssm_0,
+    fuzz_ssm_1,
+    fuzz_ssm_2,
+    fuzz_ssm_3,
 );
