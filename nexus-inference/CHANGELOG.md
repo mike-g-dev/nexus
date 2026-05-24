@@ -74,4 +74,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `predict_n()` for partial ensemble evaluation. Requires `alloc`.
 - **LightGBM text format loader** — `GbdtF64::from_lightgbm(&[u8])` /
   `GbdtF32::from_lightgbm(&[u8])`. Parses LightGBM model text files.
-  Requires `loader-lightgbm` feature (implies `std`).
+  Requires `loader-lightgbm` feature (implies `alloc`).

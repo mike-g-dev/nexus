@@ -314,7 +314,7 @@ impl crate::StackedLstmF32 {
     ///
     /// Returns [`LoadError::TensorNotFound`] if required tensors are
     /// missing, or [`LoadError::Validation`] if shapes are inconsistent
-    /// or layers have non-consecutive indices.
+    /// or shapes are inconsistent between layers.
     ///
     /// # Examples
     ///
@@ -431,7 +431,7 @@ impl crate::StackedGruF32 {
     ///
     /// Returns [`LoadError::TensorNotFound`] if required tensors are
     /// missing, or [`LoadError::Validation`] if shapes are inconsistent
-    /// or layers have non-consecutive indices.
+    /// or shapes are inconsistent between layers.
     ///
     /// # Examples
     ///

@@ -233,7 +233,7 @@ not a gating mechanism. Small kernels (3-8) and moderate filter counts
 - `safetensors` (default) — PyTorch safetensors loader for MLP, LSTM, GRU, Stacked LSTM/GRU, Conv (implies `alloc`)
 - `alloc` — enables MLP, LUT, GBDT, Conv types (heap allocation for weight storage)
 - `libm` — no_std math fallback (enables LSTM/GRU without std)
-- `loader-lightgbm` — LightGBM text format parser (implies `std`)
+- `loader-lightgbm` — LightGBM text format parser (implies `alloc`)
 
 ## Usage
 
