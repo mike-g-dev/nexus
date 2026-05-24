@@ -301,6 +301,127 @@ hidden + hidden` (typically ≥ 32), clearing the threshold.
 
 ---
 
+## BNN (`src/bnn.rs`)
+
+### Architecture
+
+Pipeline: fp32 input matmul → binarize → N × XNOR+popcount layers →
+fused output (masked accumulation from bits).
+
+Binary layers pack ±1 weights as u64 words (1 bit per weight).
+Inference replaces multiply-add with XNOR + popcount: `popcount(
+!(weight_row XOR input_bits)) >= threshold`. Hidden size must be a
+multiple of 64 for clean bit packing.
+
+### Fused output — masked accumulation from bits
+
+Original path: `unpack_bits` (64 conditional stores to ±1.0 f32 array)
+→ `matvec_bias_f32` (dot product reading those f32s back). This writes
+256B to float_scratch and reads it back — one full cache-line round-trip.
+
+Replacement: `output_from_bits_simd` computes the output directly from
+the packed bit pattern. The math:
+
+```
+y = Σ w[i] * sign(bit_i) = 2 * Σ(w[i] where bit=1) - Σ w[i]
+```
+
+`Σ w[i]` is precomputed at construction (`w_output_row_sum`). The masked
+sum uses AVX2: expand each byte of the u64 to an 8-lane mask via
+`set1 → AND → cmpeq` with `[1,2,4,8,16,32,64,128]`, then
+`AND` with loaded weights, accumulate with `addps`. 8 iterations for
+H=64 (one byte per iteration, 8 f32 weights per byte).
+
+`#[inline(never)]` — the function has enough register pressure and
+loop structure that inlining would bloat callers.
+
+### Fused input — matvec + binarize in one pass
+
+Original path: `matvec_bias_f32` writes 64 f32 results to float_scratch,
+then `binarize` reads them back and packs into u64.
+
+Replacement: `matvec_bias_binarize_f32` computes dot products using
+`dot4_f32_m128` / `dot8_f32_m256` (same tiled infrastructure as MLP/LSTM),
+adds bias, compares against zero with `cmpge_ps`, extracts comparison
+results with `movemask_ps`, and shifts into the u64 word directly. Never
+materializes the intermediate f32 values.
+
+For `in_size >= 32`: dot8 path produces 8 dot products per iteration,
+`_mm256_movemask_ps` → 8 bits. 8 iterations per 64-bit word.
+
+For `in_size < 32`: dot4 path produces 4 dot products per iteration,
+`_mm_movemask_ps` → 4 bits. 16 iterations per 64-bit word.
+
+The combined effect: `float_scratch` is entirely eliminated from the
+SIMD path (cfg-gated out of the struct). Only the scalar fallback
+allocates it.
+
+### LLVM auto-vectorization of binary_layer_forward
+
+The binary layer hot loop is NOT hand-written SIMD — LLVM
+auto-vectorizes it remarkably well:
+
+- **vpshufb + vpsadbw**: SIMD nibble-lookup popcount. Processes 32 bytes
+  of XNOR results per vpshufb instruction, horizontal byte-sum via
+  vpsadbw.
+- **vgf2p8affineqb**: GF(2^8) affine transformation (GFNI, Zen3+/Ice
+  Lake+). Used as an alternative bit-manipulation path alongside vpshufb.
+- **4× unrolled**: processes 16 neurons per loop iteration (4 groups
+  of 4 u64s in YMM registers).
+- **Single scalar `popcnt`** only for the remainder path.
+
+This codegen matches or exceeds what hand-written SIMD would produce.
+No manual intervention needed.
+
+### Measured results
+
+Before: original implementation with `unpack_bits + matvec_bias_f32`
+output and separate `matvec_bias_f32 + binarize` input.
+
+| Config | Before | After | Delta |
+|--------|--------|-------|-------|
+| BNN 8→64→1 (0 binary) | 110ns | 83ns | **-25%** |
+| BNN 8→64→1 (1 binary) | 217ns | 195ns | **-10%** |
+| BNN 8→64→1 (2 binary) | 325ns | 309ns | **-5%** |
+| BNN 8→128→1 (2 binary) | 709ns | 666ns | **-6%** |
+
+Binary layer marginal cost: ~112ns (H=64, wpr=1). Unchanged by the
+optimizations — the savings are purely in the fp32 bookends.
+
+### vs GBDT (competitive positioning)
+
+| BNN Config | BNN | GBDT equivalent | GBDT | BNN advantage |
+|------------|-----|-----------------|------|---------------|
+| 1 binary layer (H=64) | 195ns | 50 trees × depth 6 | 233ns | **16% faster** |
+| 2 binary layers (H=64) | 309ns | 100 trees × depth 6 | 487ns | **37% faster** |
+
+### What wasn't done (and why)
+
+- **Fused final-binary-layer + output**: would combine the last binary
+  layer's popcount-threshold decision with output weight accumulation.
+  Rejected because it mixes integer (popcount) and float (weight
+  accumulation) pipelines in one loop body, creating loop-carried float
+  dependencies that prevent LLVM from vectorizing across neurons. The
+  current two-pass approach (pure-integer binary layer → pure-float
+  output) lets LLVM vectorize each pass independently, which is faster.
+
+- **Manual SIMD for binary_layer_forward**: LLVM already produces
+  optimal code (vpshufb+vpsadbw popcount, 4× unrolled, 16 neurons/iter).
+  Hand-writing this would match but not exceed the auto-vectorized output.
+
+- **AVX-512 VPOPCNTDQ**: would replace the vpshufb popcount with native
+  vector popcount (4 u64s in one instruction). Available only on Ice
+  Lake+ and Zen4+. The vpshufb approach is already fast enough that the
+  target-restriction isn't worth the codegen complexity.
+
+- **Specialize for wpr=1**: the inner `for k in 0..wpr` loop is a
+  runtime value. For H=64 (wpr=1), the loop is trivially one iteration.
+  LLVM already handles this — the vectorized path loads contiguous
+  neuron weights (which for wpr=1 are adjacent u64s), so no loop
+  overhead exists in the vectorized case.
+
+---
+
 ## Cross-cutting: things that apply everywhere
 
 ### `#[inline(never)]` for SIMD helpers
@@ -469,6 +590,19 @@ No changes to GBDT — already optimized with false-branch-next layout.
 
 O(1) lookup, no optimization needed.
 
+### BNN
+
+| Config | Latency | Binary layer marginal |
+|--------|---------|----------------------|
+| BNN 8→64→1 (0 binary) | 83ns | — (fp32 overhead only) |
+| BNN 8→64→1 (1 binary) | 195ns | 112ns |
+| BNN 8→64→1 (2 binary) | 309ns | 113ns |
+| BNN 8→128→1 (2 binary) | 666ns | ~291ns |
+
+Binary layer cost scales with H²/64 XNOR+popcount operations.
+H=128 (wpr=2) costs ~2.6× the H=64 (wpr=1) layer — better than
+the 4× theoretical increase due to SIMD amortization with more data.
+
 ### Current bottlenecks
 
 Not profiled — these are architectural observations, not measured splits.
@@ -489,6 +623,11 @@ Not profiled — these are architectural observations, not measured splits.
   contiguous layout) and convolution dot products. The linearization
   cost is fixed and doesn't shrink with SIMD improvements.
 
+- **BNN**: binary layer dominates (54-57% of predict time for 1-binary
+  config). Already auto-vectorized with optimal vpshufb+vpsadbw
+  popcount. Further improvement requires AVX-512 VPOPCNTDQ (native
+  vector popcount) or algorithmic change.
+
 ---
 
 ## Summary: what moves the needle
@@ -503,7 +642,9 @@ Not profiled — these are architectural observations, not measured splits.
 | Conv fused bias+relu in SIMD | Conv f32 | 6-18% vs scalar |
 | GBDT false-branch-next layout | GBDT | ~50% of traversals sequential in L1 |
 | SIMD LayerNorm (3-pass f32) | MLP f32 | ~4× vs scalar LN (65-74% reduction) |
-| `#[inline(never)]` on tiled helpers | MLP, Conv | prevents caller I-cache bloat |
+| BNN fused output (masked sum from bits) | BNN | -14ns: eliminates unpack + output matmul |
+| BNN fused input (matvec+binarize+movemask) | BNN | -14ns: eliminates float_scratch round-trip |
+| `#[inline(never)]` on tiled helpers | MLP, Conv, BNN | prevents caller I-cache bloat |
 
 ---
 

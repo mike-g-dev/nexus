@@ -155,6 +155,45 @@ SIMD-tiled with fused bias + activation (same pattern as MLP).
 | 4ch x 8k x 16f → 1 | 32 | 68 ns |
 | 8ch x 8k x 32f → 1 | 64 | 115 ns |
 
+## BNN
+
+Binary neural network with ±1 weights and XNOR+popcount inference.
+The fp32 input layer projects to hidden, binarization converts to
+packed bits, N binary layers apply XNOR+popcount (replacing multiply-
+add), and the output layer computes a weighted sum directly from bits
+without unpacking.
+
+Binary layer cost is O(H²/64) integer operations — each neuron does
+one XNOR+popcount per 64-bit weight word. LLVM auto-vectorizes this
+with vpshufb+vpsadbw (SIMD popcount), processing 16 neurons per loop
+iteration.
+
+| Configuration | Latency | vs GBDT |
+|--------------|--------:|---------|
+| 8→64→1 (0 binary layers) | 83 ns | — |
+| 8→64→1 (1 binary layer) | 195 ns | 16% faster than GBDT 50x6 |
+| 8→64→1 (2 binary layers) | 309 ns | 37% faster than GBDT 100x6 |
+| 8→128→1 (2 binary layers) | 666 ns | — |
+
+Binary layer weights use 32x less memory than fp32 (H×H bits vs
+H×H×4 bytes). For H=64: 512 bytes vs 16 KB per layer.
+
+## SSM
+
+Diagonal linear state-space model. Pre-discretized dynamics with
+element-wise A (no matrix multiply for state transition). Per-step
+cost is O(H×I + H + H×O + I×O) with no transcendentals.
+
+| Configuration | Latency | vs LSTM |
+|--------------|--------:|---------|
+| 4→8→1 | 42 ns | 2.5x faster |
+| 8→16→1 | 55 ns | 2.5x faster |
+| 8→32→1 | 74 ns | 4x faster |
+| 16→64→1 | 131 ns | 8x faster |
+
+The `A ⊙ h` mul_add loop auto-vectorizes to 8-wide `vfmadd213ps`,
+unrolled 4x. No manual SIMD needed.
+
 ## Complexity
 
 | Type | Predict | Construction |
@@ -165,6 +204,8 @@ SIMD-tiled with fused bias + activation (same pattern as MLP).
 | LSTM | O(H x (I+H)) per layer | O(total_weights) |
 | GRU | O(H x I + H x H) per layer | O(total_weights) |
 | Conv | O(filters x kernel x channels) | O(total_weights) |
+| BNN | O(H×I + N×H²/64 + O×H) | O(total_weights) |
+| SSM | O(H×I + H + H×O + I×O) | O(total_weights) |
 
 ## Memory
 
@@ -179,3 +220,5 @@ pre-allocated at construction.
 | LSTM | 4B x (4H(I+H) + 4H + 6H) per layer | 8→32→1 x 2L: ~42 KB |
 | GRU | 4B x (3HI + 3HH + 3H + 3H + 7H) per layer | 8→32→1 x 2L: ~30 KB |
 | Conv | 4B x (F x K x C + F + O x F + O) | 8ch x 8k x 32f→1: ~8 KB |
+| BNN | 4B×(H×I + H + O×H + O) + 8B×N×H²/64 | I=8 H=64 O=1 N=2: ~4.4 KB |
+| SSM | 4B x (H + H×I + O×H + O×I) | I=2 H=2 O=1: 56 B |
