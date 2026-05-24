@@ -3,6 +3,13 @@ extern crate alloc;
 use alloc::{boxed::Box, vec, vec::Vec};
 
 use crate::LoadError;
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma")
+    )
+)))]
 use crate::dot::matvec_bias_f32;
 
 fn bias_to_int_threshold(bias: f32, hidden_size: usize) -> u32 {
@@ -10,6 +17,13 @@ fn bias_to_int_threshold(bias: f32, hidden_size: usize) -> u32 {
     half.ceil().clamp(0.0, (hidden_size + 1) as f32) as u32
 }
 
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma")
+    )
+)))]
 fn binarize(values: &[f32], bits: &mut [u64]) {
     debug_assert_eq!(values.len(), bits.len() * 64);
     for (w, word) in bits.iter_mut().enumerate() {
@@ -21,6 +35,68 @@ fn binarize(values: &[f32], bits: &mut [u64]) {
             }
         }
         *word = val;
+    }
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx512f",
+        all(target_feature = "avx2", target_feature = "fma")
+    )
+))]
+#[inline(never)]
+fn matvec_bias_binarize_f32(
+    weight: &[f32],
+    input: &[f32],
+    bias: &[f32],
+    bits: &mut [u64],
+    out_size: usize,
+    in_size: usize,
+) {
+    use crate::dot::{dot4_f32_m128, dot8_f32_m256};
+    use core::arch::x86_64::*;
+
+    let wpr = out_size / 64;
+    debug_assert_eq!(out_size, wpr * 64);
+    debug_assert_eq!(bits.len(), wpr);
+
+    unsafe {
+        for word_idx in 0..wpr {
+            let base = word_idx * 64;
+            let mut bit_word = 0_u64;
+            let mut k = 0_usize;
+
+            if in_size >= 32 {
+                let zero_256 = _mm256_setzero_ps();
+                while k + 8 <= 64 {
+                    let j = base + k;
+                    let rows = &weight[j * in_size..(j + 8) * in_size];
+                    let dots = dot8_f32_m256(rows, input);
+                    let bias_v = _mm256_loadu_ps(bias.as_ptr().add(j));
+                    let result = _mm256_add_ps(dots, bias_v);
+                    let cmp = _mm256_cmp_ps(result, zero_256, _CMP_GE_OQ);
+                    let mask = _mm256_movemask_ps(cmp) as u64;
+                    bit_word |= mask << k;
+                    k += 8;
+                }
+            }
+
+            let zero_128 = _mm_setzero_ps();
+            while k + 4 <= 64 {
+                let j = base + k;
+                let rows = &weight[j * in_size..(j + 4) * in_size];
+                let dots = dot4_f32_m128(rows, input);
+                let bias_v = _mm_loadu_ps(bias.as_ptr().add(j));
+                let result = _mm_add_ps(dots, bias_v);
+                let cmp = _mm_cmpge_ps(result, zero_128);
+                let mask = _mm_movemask_ps(cmp) as u64;
+                bit_word |= mask << k;
+                k += 4;
+            }
+
+            bits[word_idx] = bit_word;
+        }
     }
 }
 
@@ -181,6 +257,13 @@ pub struct BnnF32 {
     w_output_row_sum: Box<[f32]>,
     bits_a: Box<[u64]>,
     bits_b: Box<[u64]>,
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        any(
+            target_feature = "avx512f",
+            all(target_feature = "avx2", target_feature = "fma")
+        )
+    )))]
     float_scratch: Box<[f32]>,
     input_size: u16,
     hidden_size: u16,
@@ -314,6 +397,13 @@ impl BnnF32 {
             w_output_row_sum: w_output_row_sum.into_boxed_slice(),
             bits_a: vec![0_u64; wpr].into_boxed_slice(),
             bits_b: vec![0_u64; wpr].into_boxed_slice(),
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                any(
+                    target_feature = "avx512f",
+                    all(target_feature = "avx2", target_feature = "fma")
+                )
+            )))]
             float_scratch: vec![0.0_f32; hidden_size].into_boxed_slice(),
             input_size: input_size as u16,
             hidden_size: hidden_size as u16,
@@ -357,18 +447,42 @@ impl BnnF32 {
         assert_eq!(input.len(), i_sz, "input length must equal input_size");
         assert_eq!(output.len(), o_sz, "output length must equal output_size");
 
-        // fp32 input layer
-        matvec_bias_f32(
-            &self.w_input,
-            input,
-            &self.b_input,
-            &mut self.float_scratch,
-            h_sz,
-            i_sz,
-        );
-
-        // binarize
-        binarize(&self.float_scratch, &mut self.bits_a);
+        // fused input: matmul + binarize in one pass
+        #[cfg(all(
+            target_arch = "x86_64",
+            any(
+                target_feature = "avx512f",
+                all(target_feature = "avx2", target_feature = "fma")
+            )
+        ))]
+        {
+            matvec_bias_binarize_f32(
+                &self.w_input,
+                input,
+                &self.b_input,
+                &mut self.bits_a,
+                h_sz,
+                i_sz,
+            );
+        }
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(
+                target_feature = "avx512f",
+                all(target_feature = "avx2", target_feature = "fma")
+            )
+        )))]
+        {
+            matvec_bias_f32(
+                &self.w_input,
+                input,
+                &self.b_input,
+                &mut self.float_scratch,
+                h_sz,
+                i_sz,
+            );
+            binarize(&self.float_scratch, &mut self.bits_a);
+        }
 
         // binary hidden layers (alternating buffers)
         let n_layers = self.binary_layers.len();
