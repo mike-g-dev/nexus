@@ -25,18 +25,19 @@ at construction and mutated in place.
 
 ## GBDT
 
-16-byte nodes in false-branch-next (depth-first) layout. The right
-child is always at `idx + 1`, so ~50% of tree traversal is
-sequential memory access served by the hardware prefetcher.
+8-byte nodes in false-branch-next (depth-first) layout. Branchless
+traversal via `select_unpredictable` — single cmov per tree level,
+deterministic latency regardless of input data. The right child is
+always at `idx + 1`, so ~50% of traversal is sequential memory access.
 
-| Configuration | `predict` |
-|--------------|----------:|
-| 50 trees x depth 6, 8 features | 264 ns |
-| 100 trees x depth 6, 8 features | 550 ns |
-| 200 trees x depth 8, 16 features | 2.47 us |
+| Configuration | `predict` | p90/p50 |
+|--------------|----------:|--------:|
+| 50 trees x depth 6, 8 features | ~280 ns | 1.04x |
+| 100 trees x depth 6, 8 features | ~560 ns | 1.04x |
+| 200 trees x depth 8, 16 features | ~2.5 us | 1.04x |
 
-Per-node cost: ~4.7 cycles — within ~1 cycle of the L1 load latency
-floor for data-dependent tree traversal.
+Per-node cost: ~5 cycles. Distribution is nearly flat — random features
+produce the same tail shape as constant features (branchless).
 
 ## MLP
 
