@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::activation::{Activation, activate_f32};
 use crate::dot::{dot_f32, dot4_f32, matvec_bias_f32};
@@ -326,7 +322,6 @@ impl Causal1dConv {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for Causal1dConv {
     fn predict(&mut self, input: &[f32]) -> f32 {
         Causal1dConv::predict(self, input)

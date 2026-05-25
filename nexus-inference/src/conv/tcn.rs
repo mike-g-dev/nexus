@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec, vec::Vec};
-
 use crate::LoadError;
 use crate::activation::{Activation, activate_f32};
 use crate::dot::{dot_f32, dot4_f32, matvec_bias_f32};
@@ -426,7 +422,6 @@ fn conv_from_buffer(
     layer.write_idx = if next >= buf_len { 0 } else { next as u16 };
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for TinyTcn {
     fn predict(&mut self, input: &[f32]) -> f32 {
         TinyTcn::predict(self, input)

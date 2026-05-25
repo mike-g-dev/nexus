@@ -1,17 +1,7 @@
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
-#[cfg(feature = "alloc")]
-use alloc::{boxed::Box, vec, vec::Vec};
-
-#[cfg(feature = "alloc")]
 use crate::LoadError;
-#[cfg(feature = "alloc")]
 use crate::activation::{Activation, activate_f32};
-#[cfg(feature = "alloc")]
 use crate::Scratch;
 
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 struct QuantLayer {
     w_i8: Box<[i8]>,
@@ -58,7 +48,6 @@ struct QuantLayer {
 ///
 /// let output = model.predict(&[1.0, 2.0]);
 /// ```
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct QuantizedMlp {
     layers: Box<[QuantLayer]>,
@@ -285,7 +274,6 @@ fn quantize_f32_to_i8(src: &[f32], dst: &mut [i8], inv_scale: f32, zero_point: i
     }
 }
 
-#[cfg(feature = "alloc")]
 impl QuantizedMlp {
     /// Construct from pre-trained quantized weights.
     ///
@@ -572,7 +560,6 @@ impl QuantizedMlp {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for QuantizedMlp {
     fn predict(&mut self, input: &[f32]) -> f32 {
         QuantizedMlp::predict(self, input)
@@ -585,7 +572,6 @@ impl crate::Model for QuantizedMlp {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::StatelessModel for QuantizedMlp {}
 
 #[cfg(test)]

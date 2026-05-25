@@ -11,15 +11,11 @@ keywords = ["inference", "machine-learning", "gbdt", "lightgbm", "trading"]
 categories = ["algorithms", "science"]
 
 [features]
-default = ["std", "safetensors", "loader-lightgbm"]
-std = ["alloc"]
-alloc = []
-libm = ["alloc", "dep:libm"]
-loader-lightgbm = ["alloc"]
-safetensors = ["alloc", "dep:safetensors"]
+default = ["safetensors", "loader-lightgbm"]
+loader-lightgbm = []
+safetensors = ["dep:safetensors"]
 
 [dependencies]
-libm = { version = "0.2", optional = true }
 safetensors = { version = "0.7", default-features = false, optional = true }
 
 [dev-dependencies]

@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::dot::{dot_f32, matvec_f32};
 
@@ -193,7 +189,6 @@ impl LinearSsm {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for LinearSsm {
     fn predict(&mut self, input: &[f32]) -> f32 {
         LinearSsm::predict(self, input)

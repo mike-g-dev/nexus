@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::dot::{matvec_bias_f32, matvec_f32};
 
@@ -256,7 +252,6 @@ impl TinyGru {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for TinyGru {
     fn predict(&mut self, input: &[f32]) -> f32 {
         TinyGru::predict(self, input)

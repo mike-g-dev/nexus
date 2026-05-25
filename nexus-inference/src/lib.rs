@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
 
 //! Real-time CPU inference for small, pre-trained models.
@@ -27,55 +26,32 @@
 //! - [`Causal1dConv`] — Causal 1D convolution over a sliding window
 //! - [`TinyTcn`] — Temporal convolutional network (dilated causal conv stack)
 
-use core::cell::UnsafeCell;
+use std::cell::UnsafeCell;
 
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
-#[cfg(feature = "alloc")]
 mod activation;
-#[cfg(feature = "alloc")]
 mod dot;
 mod error;
 mod gbdt;
 mod lut;
 mod mlp;
-#[cfg(feature = "alloc")]
 mod quantized_mlp;
-
-#[cfg(feature = "alloc")]
 mod rnn;
-
-#[cfg(feature = "alloc")]
 mod bnn;
-
-#[cfg(feature = "alloc")]
 mod ssm;
-
-#[cfg(feature = "alloc")]
 mod conv;
 
 #[cfg(any(feature = "loader-lightgbm", feature = "safetensors"))]
 mod loader;
 
-#[cfg(feature = "alloc")]
 pub use activation::Activation;
-#[cfg(feature = "alloc")]
 pub use bnn::Bnn;
-#[cfg(feature = "alloc")]
 pub use conv::{Causal1dConv, TinyTcn};
 pub use error::LoadError;
-#[cfg(feature = "alloc")]
 pub use gbdt::Gbdt;
-#[cfg(feature = "alloc")]
 pub use lut::Lut;
-#[cfg(feature = "alloc")]
 pub use mlp::Mlp;
-#[cfg(feature = "alloc")]
 pub use quantized_mlp::QuantizedMlp;
-#[cfg(feature = "alloc")]
 pub use rnn::{StackedGru, StackedLstm, TinyGru, TinyLstm};
-#[cfg(feature = "alloc")]
 pub use ssm::LinearSsm;
 
 /// Inference model with mutable access.

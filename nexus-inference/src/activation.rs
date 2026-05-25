@@ -1,7 +1,7 @@
 /// Activation function for hidden layers and convolution outputs.
 ///
-/// Applied element-wise. All variants are available regardless of
-/// feature flags — no `std` or `libm` required.
+/// Applied element-wise. All variants use pure arithmetic
+/// approximations — no libm or runtime math library required.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Activation {
     /// max(0, x)

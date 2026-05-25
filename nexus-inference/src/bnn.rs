@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec, vec::Vec};
-
 use crate::LoadError;
 #[cfg(not(all(
     target_arch = "x86_64",
@@ -565,7 +561,6 @@ impl Bnn {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for Bnn {
     fn predict(&mut self, input: &[f32]) -> f32 {
         Bnn::predict(self, input)
@@ -578,7 +573,6 @@ impl crate::Model for Bnn {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::StatelessModel for Bnn {}
 
 #[cfg(test)]

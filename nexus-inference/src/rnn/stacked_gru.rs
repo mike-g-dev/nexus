@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec, vec::Vec};
-
 use crate::LoadError;
 use crate::dot::{matvec_bias_f32, matvec_f32};
 
@@ -324,7 +320,6 @@ impl StackedGru {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for StackedGru {
     fn predict(&mut self, input: &[f32]) -> f32 {
         StackedGru::predict(self, input)

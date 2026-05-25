@@ -1,21 +1,10 @@
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
-#[cfg(feature = "alloc")]
-use alloc::{boxed::Box, vec::Vec};
-
-#[cfg(feature = "alloc")]
 use crate::LoadError;
-#[cfg(feature = "alloc")]
 use crate::activation::{Activation, activate_f32};
-#[cfg(feature = "alloc")]
 use crate::dot::{dot_f32, dot4_f32};
-#[cfg(feature = "alloc")]
 use crate::Scratch;
 
 /// Fast f32 inverse sqrt via bit manipulation + Newton-Raphson.
 /// Used by the scalar LayerNorm fallback on non-SIMD platforms.
-#[cfg(feature = "alloc")]
 #[inline(always)]
 fn rsqrt_f32(x: f32) -> f32 {
     let mut y = f32::from_bits(0x5f37_5a86 - (x.to_bits() >> 1));
@@ -25,7 +14,6 @@ fn rsqrt_f32(x: f32) -> f32 {
 }
 
 #[cfg(all(
-    feature = "alloc",
     target_arch = "x86_64",
     any(
         target_feature = "avx512f",
@@ -89,7 +77,6 @@ fn mlp_tiled_simd_f32(
 }
 
 #[cfg(all(
-    feature = "alloc",
     target_arch = "x86_64",
     any(
         target_feature = "avx512f",
@@ -180,7 +167,6 @@ fn layer_norm_simd_f32(
 }
 
 #[cfg(all(
-    feature = "alloc",
     target_arch = "x86_64",
     any(
         target_feature = "avx512f",
@@ -221,7 +207,6 @@ unsafe fn hsum256_f32(v: core::arch::x86_64::__m256) -> f32 {
 /// ).unwrap();
 /// let score = model.predict(&[1.0_f32, 2.0]);
 /// ```
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct Mlp {
     weights: Box<[f32]>,
@@ -234,7 +219,6 @@ pub struct Mlp {
     scratch_b: Scratch<Vec<f32>>,
 }
 
-#[cfg(feature = "alloc")]
 impl Mlp {
     /// Construct from pre-trained weights.
     ///
@@ -303,8 +287,8 @@ impl Mlp {
             ln_beta: None,
             layer_sizes: layer_sizes_u16,
             activation,
-            scratch_a: Scratch::new(alloc::vec![0.0_f32; max_dim]),
-            scratch_b: Scratch::new(alloc::vec![0.0_f32; max_dim]),
+            scratch_a: Scratch::new(vec![0.0_f32; max_dim]),
+            scratch_b: Scratch::new(vec![0.0_f32; max_dim]),
         })
     }
 
@@ -582,7 +566,6 @@ impl Mlp {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for Mlp {
     fn predict(&mut self, input: &[f32]) -> f32 {
         Mlp::predict(self, input)
@@ -595,18 +578,13 @@ impl crate::Model for Mlp {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::StatelessModel for Mlp {}
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "alloc")]
     use super::*;
-    #[cfg(feature = "alloc")]
-    use alloc::vec;
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn single_neuron_no_hidden() {
         // 1 input → 1 output, w=2.0, b=0.5 → 2*x + 0.5
         let model = Mlp::from_parts(&[1, 1], &[2.0], &[0.5], Activation::Relu).unwrap();
@@ -614,7 +592,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn two_layer_relu() {
         // 2 inputs → 2 hidden (relu) → 1 output
         // Hidden weights (2×2, row-major):
@@ -629,7 +606,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn relu_clips_negative() {
         // 1 input → 1 hidden (relu) → 1 output
         // h0 = relu(1.0*x + (-5.0)) → relu(x - 5)
@@ -641,7 +617,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn leaky_relu() {
         // 1 input → 1 hidden (leaky_relu 0.1) → 1 output
         // h0 = leaky_relu(1.0*x + 0.0)
@@ -658,7 +633,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn tanh_activation() {
         // 1 input → 1 hidden (tanh) → 1 output
         // h0 = tanh(1.0*x + 0.0)
@@ -670,7 +644,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn sigmoid_activation() {
         // 1 input → 1 hidden (sigmoid) → 1 output
         // h0 = sigmoid(1.0*x + 0.0)
@@ -682,7 +655,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn three_layer() {
         // 3 inputs → 4 hidden → 2 hidden → 1 output (relu)
         //
@@ -730,7 +702,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn output_layer_no_activation() {
         // 1 input → 1 hidden (relu) → 1 output
         // Hidden: h = relu(1.0*x + 0.0) = relu(x)
@@ -743,7 +714,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     #[should_panic]
     fn wrong_input_panics() {
         let model = Mlp::from_parts(&[2, 1], &[1.0, 1.0], &[0.0], Activation::Relu).unwrap();
@@ -751,7 +721,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn from_parts_validates_sizes() {
         // Wrong weight count
         let err = Mlp::from_parts(&[2, 3, 1], &[1.0; 5], &[0.0; 4], Activation::Relu);
@@ -762,7 +731,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn from_parts_validates_layer_sizes() {
         // Empty
         let err = Mlp::from_parts(&[], &[], &[], Activation::Relu);
@@ -776,7 +744,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn nan_through_relu_propagates() {
         // 1 input → 1 hidden (relu) → 1 output
         // NaN goes through relu hidden layer — must come out as NaN
@@ -786,7 +753,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn multi_output() {
         // 2 inputs → 4 hidden (relu) → 3 outputs
         // Hidden: identity-ish
@@ -825,7 +791,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     #[should_panic]
     fn predict_panics_multi_output() {
         let model = Mlp::from_parts(&[2, 3], &[1.0; 6], &[0.0; 3], Activation::Relu).unwrap();
@@ -833,7 +798,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     #[should_panic]
     fn predict_into_wrong_output_len() {
         let model = Mlp::from_parts(&[1, 1], &[1.0], &[0.0], Activation::Relu).unwrap();
@@ -842,7 +806,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn identity_activation() {
         // 1 input → 1 hidden (identity) → 1 output
         // h0 = identity(1.0*x + 0.0) = x (no clipping)
@@ -854,7 +817,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn elu_activation() {
         // 1 input → 1 hidden (elu alpha=1.0) → 1 output
         // h0 = elu(1.0*x + 0.0)
@@ -869,7 +831,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn gelu_activation() {
         // 1 input → 1 hidden (gelu) → 1 output
         let model =
@@ -885,7 +846,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn swish_activation() {
         // 1 input → 1 hidden (swish) → 1 output
         let model =
@@ -898,7 +858,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn layer_norm_identity_weights() {
         // 2 inputs → 4 hidden (LN + relu) → 1 output
         // LN with gamma=1, beta=0 should normalize hidden activations
@@ -955,7 +914,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn layer_norm_with_scale_shift() {
         // 1 input → 2 hidden (LN gamma=2, beta=0.5 + identity) → 1 output
         let weights: Vec<f32> = vec![1.0, -1.0, 1.0, 1.0];
@@ -997,7 +955,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn layer_norm_validation() {
         // Wrong ln_gamma length
         let err = Mlp::from_parts_with_layer_norm(

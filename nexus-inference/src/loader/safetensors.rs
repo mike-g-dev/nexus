@@ -1,6 +1,3 @@
-extern crate alloc;
-
-use alloc::{format, string::String, vec, vec::Vec};
 use safetensors::{Dtype, SafeTensors};
 
 use crate::LoadError;
@@ -143,14 +140,8 @@ fn extract_i8_2d(st: &SafeTensors<'_>, name: &str) -> Result<(Vec<i8>, [usize; 2
 
 // ---- sqrt helper for BatchNorm fusion ----
 
-#[cfg(feature = "std")]
 fn sqrt_f64(x: f64) -> f64 {
     x.sqrt()
-}
-
-#[cfg(all(not(feature = "std"), feature = "libm"))]
-fn sqrt_f64(x: f64) -> f64 {
-    libm::sqrt(x)
 }
 
 // ---- RNN loaders ----
@@ -718,68 +709,59 @@ macro_rules! impl_mlp_safetensors {
                         .iter()
                         .find(|&&bi| bi > idx && bi < next_linear)
                     {
-                        #[cfg(not(any(feature = "std", feature = "libm")))]
-                        {
+                        let bn_mean =
+                            $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_mean"))?;
+                        let bn_var =
+                            $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_var"))?;
+                        let out_features = w_shape[0];
+                        let in_features = w_shape[1];
+                        if bn_mean.len() != out_features || bn_var.len() != out_features {
                             return Err(LoadError::Validation(
-                                "BatchNorm fusion requires 'std' or 'libm' feature",
+                                "BatchNorm size mismatch with linear output",
                             ));
                         }
-                        #[cfg(any(feature = "std", feature = "libm"))]
-                        {
-                            let bn_mean =
-                                $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_mean"))?;
-                            let bn_var =
-                                $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_var"))?;
-                            let out_features = w_shape[0];
-                            let in_features = w_shape[1];
-                            if bn_mean.len() != out_features || bn_var.len() != out_features {
-                                return Err(LoadError::Validation(
-                                    "BatchNorm size mismatch with linear output",
-                                ));
-                            }
-                            let bn_gamma: Vec<$ty> =
-                                match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.weight")) {
-                                    Ok(g) => {
-                                        if g.len() != out_features {
-                                            return Err(LoadError::Validation(
-                                                "BatchNorm gamma size mismatch",
-                                            ));
-                                        }
-                                        g
+                        let bn_gamma: Vec<$ty> =
+                            match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.weight")) {
+                                Ok(g) => {
+                                    if g.len() != out_features {
+                                        return Err(LoadError::Validation(
+                                            "BatchNorm gamma size mismatch",
+                                        ));
                                     }
-                                    Err(LoadError::TensorNotFound(_)) => {
-                                        vec![1.0 as $ty; out_features]
-                                    }
-                                    Err(e) => return Err(e),
-                                };
-                            let bn_beta: Vec<$ty> =
-                                match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.bias")) {
-                                    Ok(b) => {
-                                        if b.len() != out_features {
-                                            return Err(LoadError::Validation(
-                                                "BatchNorm beta size mismatch",
-                                            ));
-                                        }
-                                        b
-                                    }
-                                    Err(LoadError::TensorNotFound(_)) => {
-                                        vec![0.0 as $ty; out_features]
-                                    }
-                                    Err(e) => return Err(e),
-                                };
-                            let eps = 1e-5_f64;
-                            for row in 0..out_features {
-                                let scale =
-                                    bn_gamma[row] as f64 / sqrt_f64(bn_var[row] as f64 + eps);
-                                for col in 0..in_features {
-                                    let wi = row * in_features + col;
-                                    w_data[wi] = (w_data[wi] as f64 * scale) as $ty;
+                                    g
                                 }
-                                b_data[row] = scale.mul_add(
-                                    b_data[row] as f64 - bn_mean[row] as f64,
-                                    bn_beta[row] as f64,
-                                ) as $ty;
+                                Err(LoadError::TensorNotFound(_)) => {
+                                    vec![1.0 as $ty; out_features]
+                                }
+                                Err(e) => return Err(e),
+                            };
+                        let bn_beta: Vec<$ty> =
+                            match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.bias")) {
+                                Ok(b) => {
+                                    if b.len() != out_features {
+                                        return Err(LoadError::Validation(
+                                            "BatchNorm beta size mismatch",
+                                        ));
+                                    }
+                                    b
+                                }
+                                Err(LoadError::TensorNotFound(_)) => {
+                                    vec![0.0 as $ty; out_features]
+                                }
+                                Err(e) => return Err(e),
+                            };
+                        let eps = 1e-5_f64;
+                        for row in 0..out_features {
+                            let scale =
+                                bn_gamma[row] as f64 / sqrt_f64(bn_var[row] as f64 + eps);
+                            for col in 0..in_features {
+                                let wi = row * in_features + col;
+                                w_data[wi] = (w_data[wi] as f64 * scale) as $ty;
                             }
+                            b_data[row] = scale.mul_add(
+                                b_data[row] as f64 - bn_mean[row] as f64,
+                                bn_beta[row] as f64,
+                            ) as $ty;
                         }
                     }
 
@@ -1444,7 +1426,6 @@ impl crate::QuantizedMlp {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::ToString, vec, vec::Vec};
     use safetensors::Dtype;
 
     use crate::LoadError;
@@ -1468,7 +1449,6 @@ mod tests {
     // ---- LSTM ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn lstm_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -1505,7 +1485,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn lstm_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -1552,7 +1531,6 @@ mod tests {
     // ---- GRU ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn gru_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -1589,7 +1567,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn gru_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -1703,7 +1680,6 @@ mod tests {
     // ---- BatchNorm fusion ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn mlp_f32_batchnorm_fusion() {
         // 2 → 4 (Linear+BN) → ReLU → 1 (Linear)
         // Sequential: 0=Linear, 1=BatchNorm, 2=ReLU, 3=Linear
@@ -1766,7 +1742,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn mlp_f32_batchnorm_affine_false() {
         // BatchNorm with affine=False — no gamma/beta tensors
         let w0: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0]; // (2, 2) identity
@@ -1923,7 +1898,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn lstm_missing_tensor() {
         let w = vec![0.1_f32; 8];
         let w_b = f32_bytes(&w);
@@ -1951,7 +1925,6 @@ mod tests {
     // ---- Stacked LSTM ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -2009,7 +1982,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -2088,7 +2060,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_single_layer_auto_detect() {
         let i = 4_usize;
         let h = 8_usize;
@@ -2123,7 +2094,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_rejects_non_consecutive_layers() {
         // l0 and l2 present, l1 missing. A gap means a malformed file or
         // wrong prefix; must error rather than silently load 1 layer.
@@ -2169,7 +2139,6 @@ mod tests {
     // ---- Stacked GRU ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_gru_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -2227,7 +2196,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_gru_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -2306,7 +2274,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_missing_l0() {
         let data = serialize_tensors(vec![]);
         let err = crate::StackedLstm::from_safetensors(&data, "lstm", "fc");

@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec, vec::Vec};
-
 use crate::LoadError;
 use crate::dot::matvec_bias_f32;
 
@@ -337,7 +333,6 @@ impl StackedLstm {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for StackedLstm {
     fn predict(&mut self, input: &[f32]) -> f32 {
         StackedLstm::predict(self, input)

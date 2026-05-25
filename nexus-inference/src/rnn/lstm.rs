@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::dot::matvec_bias_f32;
 
@@ -266,7 +262,6 @@ impl TinyLstm {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for TinyLstm {
     fn predict(&mut self, input: &[f32]) -> f32 {
         TinyLstm::predict(self, input)

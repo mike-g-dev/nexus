@@ -1,10 +1,3 @@
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
-#[cfg(feature = "alloc")]
-use alloc::{boxed::Box, vec::Vec};
-
-#[cfg(feature = "alloc")]
 use crate::LoadError;
 
 /// Lookup table predictor with uniform bin spacing.
@@ -28,7 +21,6 @@ use crate::LoadError;
 /// ).unwrap();
 /// assert_eq!(model.predict(&[0.1]), 10.0);
 /// ```
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct Lut {
     table: Box<[f32]>,
@@ -38,7 +30,6 @@ pub struct Lut {
     n_bins: u16,
 }
 
-#[cfg(feature = "alloc")]
 impl Lut {
     /// Construct from pre-computed table.
     ///
@@ -151,7 +142,6 @@ impl Lut {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::Model for Lut {
     fn predict(&mut self, input: &[f32]) -> f32 {
         Lut::predict(self, input)
@@ -164,10 +154,8 @@ impl crate::Model for Lut {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl crate::StatelessModel for Lut {}
 
-#[cfg(feature = "alloc")]
 fn checked_pow(base: usize, exp: usize) -> Option<usize> {
     let mut result = 1usize;
     for _ in 0..exp {
@@ -178,11 +166,9 @@ fn checked_pow(base: usize, exp: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "alloc")]
     use super::*;
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn single_feature() {
         // 1 feature, 4 bins over [0, 1)
         // bins: [0, 0.25), [0.25, 0.5), [0.5, 0.75), [0.75, 1.0)
@@ -194,7 +180,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn two_features() {
         // 2 features, 3 bins each → 9 entries
         // Feature 0: [0, 3), bins at width 1.0
@@ -209,21 +194,18 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn clamp_low() {
         let model = Lut::from_parts(1, 4, &[0.0], &[1.0], &[10.0, 20.0, 30.0, 40.0]).unwrap();
         assert_eq!(model.predict(&[-5.0]), 10.0);
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn clamp_high() {
         let model = Lut::from_parts(1, 4, &[0.0], &[1.0], &[10.0, 20.0, 30.0, 40.0]).unwrap();
         assert_eq!(model.predict(&[99.0]), 40.0);
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn boundary_values() {
         // 1 feature, 4 bins over [0, 4), step=1.0
         // bins: [0,1), [1,2), [2,3), [3,4)
@@ -236,7 +218,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     #[should_panic]
     fn wrong_feature_count_panics() {
         let model = Lut::from_parts(1, 4, &[0.0], &[1.0], &[10.0, 20.0, 30.0, 40.0]).unwrap();
@@ -244,7 +225,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn from_parts_validates() {
         // Wrong table size
         assert!(Lut::from_parts(1, 4, &[0.0], &[1.0], &[1.0; 3]).is_err());
@@ -260,7 +240,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn three_features() {
         // 3 features × 5 bins → 125 entries
         // table[f0*25 + f1*5 + f2]
@@ -273,7 +252,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn nan_maps_to_bin_zero() {
         let model = Lut::from_parts(1, 4, &[0.0], &[1.0], &[10.0, 20.0, 30.0, 40.0]).unwrap();
         assert_eq!(model.predict(&[f32::NAN]), 10.0);
