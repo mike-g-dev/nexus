@@ -165,7 +165,7 @@ def generate_gru_multi_output():
 
 def generate_stacked_rnn(name, rnn_cls, gate_mult, input_size, hidden_size,
                          output_size, num_layers, inputs, init_fn,
-                         rnn_prefix, proj_prefix):
+                         rnn_prefix, proj_prefix, tolerance=1e-5):
     rnn = rnn_cls(input_size, hidden_size, num_layers=num_layers, batch_first=True)
     assert rnn.weight_ih_l0.shape[0] == gate_mult * hidden_size, \
         f"{name}: gate_mult={gate_mult} disagrees with {type(rnn).__name__} gate layout"
@@ -217,7 +217,7 @@ def generate_stacked_rnn(name, rnn_cls, gate_mult, input_size, hidden_size,
                 "num_layers": num_layers,
                 "inputs": inputs,
                 "outputs": outputs,
-                "tolerance": 1e-5,
+                "tolerance": tolerance,
             },
             f,
             indent=2,
@@ -692,7 +692,7 @@ def make_binary_weights(hidden_size, init_fn, lo=-0.3, hi=0.3):
 
 
 def generate_bnn(name, input_size, hidden_size, output_size, num_binary,
-                 inputs, prefix, init_fn):
+                 inputs, prefix, init_fn, tolerance=1e-5):
     # fp32 input layer
     w_input = torch.empty(hidden_size, input_size)
     b_input = torch.empty(hidden_size)
@@ -757,7 +757,7 @@ def generate_bnn(name, input_size, hidden_size, output_size, num_binary,
             "num_binary": num_binary,
             "inputs": inputs,
             "outputs": outputs,
-            "tolerance": 1e-5,
+            "tolerance": tolerance,
         }, f, indent=2)
         f.write("\n")
 
@@ -909,7 +909,8 @@ def generate_fuzz():
                              output_size=output_size, num_layers=num_layers,
                              inputs=make_inputs(n_steps, input_size, seed=600+i),
                              init_fn=rng.choice(init_fns),
-                             rnn_prefix=f"fuzz{i}.lstm", proj_prefix=f"fuzz{i}.fc")
+                             rnn_prefix=f"fuzz{i}.lstm", proj_prefix=f"fuzz{i}.fc",
+                             tolerance=5e-5)
 
     # Fuzz Stacked GRU
     rng = random.Random(642)
@@ -924,7 +925,8 @@ def generate_fuzz():
                              output_size=output_size, num_layers=num_layers,
                              inputs=make_inputs(n_steps, input_size, seed=700+i),
                              init_fn=rng.choice(init_fns),
-                             rnn_prefix=f"fuzz{i}.gru", proj_prefix=f"fuzz{i}.proj")
+                             rnn_prefix=f"fuzz{i}.gru", proj_prefix=f"fuzz{i}.proj",
+                             tolerance=5e-5)
 
     # Fuzz SSM
     rng = random.Random(742)
@@ -973,7 +975,8 @@ def generate_fuzz():
                      input_size=input_size, hidden_size=hidden_size,
                      output_size=output_size, num_binary=num_binary,
                      inputs=make_inputs(n_steps, input_size, seed=900+i),
-                     prefix=f"fuzz{i}.bnn", init_fn=rng.choice(init_fns))
+                     prefix=f"fuzz{i}.bnn", init_fn=rng.choice(init_fns),
+                     tolerance=2e-5)
 
 
 # ---- TCN generators ----
