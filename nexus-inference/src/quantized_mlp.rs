@@ -13,12 +13,11 @@ use crate::activation::{Activation, activate_f32};
 #[derive(Debug, Clone)]
 struct QuantLayer {
     w_i8: Box<[i8]>,
-    bias_f32: Box<[f32]>,
-    w_scale: f32,
+    bias_adjusted: Box<[f32]>,
+    combined_scale: f32,
+    inv_input_scale: f32,
     w_zero_point: i8,
-    input_scale: f32,
     input_zero_point: i8,
-    row_sum: Box<[i32]>,
     in_size: u16,
     out_size: u16,
 }
@@ -117,39 +116,10 @@ fn matvec_i8_i32_simd(
     in_size: usize,
 ) -> usize {
     use core::arch::x86_64::*;
-    let mut j = 0;
-    let in_32 = in_size & !31;
 
-    // SAFETY: cfg guarantees AVX2 availability.
-    // All pointer accesses are bounded by out_size * in_size (weights),
-    // in_size (input), and out_size (output).
-    unsafe {
-        while j < out_size {
-            let row = &weights[j * in_size..];
-            let mut acc = _mm256_setzero_si256();
-            let ones_16 = _mm256_set1_epi16(1);
-
-            let mut i = 0;
-            while i < in_32 {
-                // Load 32 bytes of weights (i8) and input (i8).
-                // _mm256_maddubs_epi16 requires first arg unsigned, second signed.
-                // We treat input as unsigned: i8 → u8 by XOR with 0x80.
-                // Correction: sum(w * (x+128)) = sum(w*x) + 128*sum(w)
-                // The 128*sum(w) correction is applied via row_sum after the loop.
-                let w = _mm256_loadu_si256(row.as_ptr().add(i) as *const _);
-                let x_i8 = _mm256_loadu_si256(input.as_ptr().add(i) as *const _);
-                let x_u8 = _mm256_xor_si256(x_i8, _mm256_set1_epi8(-128));
-
-                // maddubs: u8*i8 → i16 with pairwise horizontal add
-                let prod16 = _mm256_maddubs_epi16(x_u8, w);
-                // madd: i16*1 → i32 with pairwise horizontal add
-                let prod32 = _mm256_madd_epi16(prod16, ones_16);
-                acc = _mm256_add_epi32(acc, prod32);
-
-                i += 32;
-            }
-
-            // Horizontal sum of 8 i32 lanes
+    #[inline(always)]
+    unsafe fn hsum_i32(acc: core::arch::x86_64::__m256i) -> i32 {
+        unsafe {
             let hi128 = _mm256_extracti128_si256(acc, 1);
             let lo128 = _mm256_castsi256_si128(acc);
             let sum128 = _mm_add_epi32(lo128, hi128);
@@ -157,12 +127,99 @@ fn matvec_i8_i32_simd(
             let sum64 = _mm_add_epi32(sum128, hi64);
             let hi32 = _mm_shuffle_epi32(sum64, 0x01);
             let sum32 = _mm_add_epi32(sum64, hi32);
-            let mut dot = _mm_cvtsi128_si32(sum32);
+            _mm_cvtsi128_si32(sum32)
+        }
+    }
 
-            // Scalar remainder — must match SIMD path: multiply (input+128) * weight
-            // so the 128*row_sum correction in predict_into applies uniformly.
+    let mut j = 0;
+    let in_32 = in_size & !31;
+
+    // SAFETY: cfg guarantees AVX2 availability.
+    // All pointer accesses are bounded by out_size * in_size (weights),
+    // in_size (input), and out_size (output).
+    unsafe {
+        let flip = _mm256_set1_epi8(-128);
+        let ones_16 = _mm256_set1_epi16(1);
+
+        // 4-row tiled: load input once, apply to 4 weight rows.
+        // Amortizes input memory traffic across 4 maddubs per iteration.
+        while j + 4 <= out_size {
+            let mut acc0 = _mm256_setzero_si256();
+            let mut acc1 = _mm256_setzero_si256();
+            let mut acc2 = _mm256_setzero_si256();
+            let mut acc3 = _mm256_setzero_si256();
+
+            let w_base = weights.as_ptr().add(j * in_size);
+            let mut i = 0;
+            while i < in_32 {
+                let x_i8 = _mm256_loadu_si256(input.as_ptr().add(i) as *const _);
+                let x_u8 = _mm256_xor_si256(x_i8, flip);
+
+                let w0 = _mm256_loadu_si256(w_base.add(i) as *const _);
+                let w1 = _mm256_loadu_si256(w_base.add(in_size + i) as *const _);
+                let w2 = _mm256_loadu_si256(w_base.add(2 * in_size + i) as *const _);
+                let w3 = _mm256_loadu_si256(w_base.add(3 * in_size + i) as *const _);
+
+                acc0 = _mm256_add_epi32(
+                    acc0,
+                    _mm256_madd_epi16(_mm256_maddubs_epi16(x_u8, w0), ones_16),
+                );
+                acc1 = _mm256_add_epi32(
+                    acc1,
+                    _mm256_madd_epi16(_mm256_maddubs_epi16(x_u8, w1), ones_16),
+                );
+                acc2 = _mm256_add_epi32(
+                    acc2,
+                    _mm256_madd_epi16(_mm256_maddubs_epi16(x_u8, w2), ones_16),
+                );
+                acc3 = _mm256_add_epi32(
+                    acc3,
+                    _mm256_madd_epi16(_mm256_maddubs_epi16(x_u8, w3), ones_16),
+                );
+                i += 32;
+            }
+
+            let mut dot0 = hsum_i32(acc0);
+            let mut dot1 = hsum_i32(acc1);
+            let mut dot2 = hsum_i32(acc2);
+            let mut dot3 = hsum_i32(acc3);
+
+            // Scalar remainder for in_size % 32
+            let mut i = in_32;
             while i < in_size {
-                dot += (input[i] as i32 + 128) * row[i] as i32;
+                let x = input[i] as i32 + 128;
+                dot0 += x * *w_base.add(i) as i32;
+                dot1 += x * *w_base.add(in_size + i) as i32;
+                dot2 += x * *w_base.add(2 * in_size + i) as i32;
+                dot3 += x * *w_base.add(3 * in_size + i) as i32;
+                i += 1;
+            }
+
+            output[j] = dot0;
+            output[j + 1] = dot1;
+            output[j + 2] = dot2;
+            output[j + 3] = dot3;
+            j += 4;
+        }
+
+        // Remainder rows (out_size % 4)
+        while j < out_size {
+            let row = weights.as_ptr().add(j * in_size);
+            let mut acc = _mm256_setzero_si256();
+
+            let mut i = 0;
+            while i < in_32 {
+                let x_i8 = _mm256_loadu_si256(input.as_ptr().add(i) as *const _);
+                let x_u8 = _mm256_xor_si256(x_i8, flip);
+                let w = _mm256_loadu_si256(row.add(i) as *const _);
+                let prod16 = _mm256_maddubs_epi16(x_u8, w);
+                acc = _mm256_add_epi32(acc, _mm256_madd_epi16(prod16, ones_16));
+                i += 32;
+            }
+
+            let mut dot = hsum_i32(acc);
+            while i < in_size {
+                dot += (input[i] as i32 + 128) * *row.add(i) as i32;
                 i += 1;
             }
 
@@ -281,18 +338,30 @@ impl QuantizedMlpI8 {
                 }
             }
 
-            // Precompute row sums for zero-point correction.
-            // When input x_i8 is XOR'd with 0x80 to produce u8 for maddubs,
-            // the result includes an extra 128 * sum(w_row) term.
-            // Also, for asymmetric input: sum(w * (x - x_zp)) = sum(w*x) - x_zp * sum(w).
-            // Both corrections use the same row_sum precomputation.
+            // Precompute row sums and adjusted bias.
+            // The SIMD path uses XOR 0x80 (i8→u8), producing dot = sum((x+128)*w).
+            // Corrections folded into bias at construction:
+            //   bias_adj = bias - correction_factor * row_sum * combined_scale
+            // where correction_factor = 128 + input_zp (SIMD) or input_zp (scalar).
+            let combined_scale = w_scales[k] * input_scales[k];
+            let inv_input_scale = 1.0 / input_scales[k];
+            let input_zp_i32 = input_zero_points[k] as i32;
+
+            #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+            let correction_factor = 128 + input_zp_i32;
+            #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+            let correction_factor = input_zp_i32;
+
             let mut row_sum = vec![0_i32; out_size];
+            let mut bias_adjusted = vec![0.0_f32; out_size];
             for j in 0..out_size {
                 let mut s = 0_i32;
                 for i in 0..in_size {
                     s += layers_w[k][j * in_size + i] as i32;
                 }
                 row_sum[j] = s;
+                bias_adjusted[j] =
+                    ((correction_factor * s) as f32).mul_add(-combined_scale, layers_b[k][j]);
             }
 
             if in_size > max_dim {
@@ -304,12 +373,11 @@ impl QuantizedMlpI8 {
 
             layers.push(QuantLayer {
                 w_i8: layers_w[k].into(),
-                bias_f32: layers_b[k].into(),
-                w_scale: w_scales[k],
+                bias_adjusted: bias_adjusted.into_boxed_slice(),
+                combined_scale,
+                inv_input_scale,
                 w_zero_point: w_zero_points[k],
-                input_scale: input_scales[k],
                 input_zero_point: input_zero_points[k],
-                row_sum: row_sum.into_boxed_slice(),
                 in_size: in_size as u16,
                 out_size: out_size as u16,
             });
@@ -364,11 +432,10 @@ impl QuantizedMlpI8 {
             let out_size = self.layers[layer_idx].out_size as usize;
             let is_last = layer_idx == n_layers - 1;
 
-            let inv_input_scale = 1.0 / self.layers[layer_idx].input_scale;
+            let inv_input_scale = self.layers[layer_idx].inv_input_scale;
             let input_zp = self.layers[layer_idx].input_zero_point;
             let w_zp = self.layers[layer_idx].w_zero_point as i32;
-            let combined_scale =
-                self.layers[layer_idx].w_scale * self.layers[layer_idx].input_scale;
+            let combined_scale = self.layers[layer_idx].combined_scale;
 
             // Step 1: Quantize f32 → i8
             quantize_f32_to_i8(
@@ -409,42 +476,33 @@ impl QuantizedMlpI8 {
                 }
             }
 
-            // Step 3: Zero-point correction + dequantize + bias + activation
-            let input_zp_i32 = input_zp as i32;
+            // Step 3: Dequantize + bias (128 and input_zp corrections precomputed
+            // into bias_adjusted at construction) + weight zp correction + activation
             let dst = if is_last {
                 &mut *output
             } else {
                 &mut self.scratch_f32[..out_size]
             };
 
+            // Weight zero-point correction requires input_sum (input-dependent).
+            // Hoisted out of the output loop — constant across all output neurons.
+            let w_zp_correction = if w_zp != 0 {
+                let mut input_sum = 0_i32;
+                for i in 0..in_size {
+                    input_sum += self.scratch_i8[i] as i32;
+                }
+                w_zp * input_sum - (in_size as i32) * w_zp * (input_zp as i32)
+            } else {
+                0
+            };
+
             for j in 0..out_size {
-                let mut acc = self.scratch_i32[j];
+                let acc = self.scratch_i32[j] - w_zp_correction;
 
-                // Correct for SIMD u8 trick: subtract 128 * row_sum
-                #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-                {
-                    acc -= 128 * self.layers[layer_idx].row_sum[j];
-                }
-
-                // Correct for input zero point: subtract input_zp * row_sum
-                if input_zp_i32 != 0 {
-                    acc -= input_zp_i32 * self.layers[layer_idx].row_sum[j];
-                }
-
-                // Correct for weight zero point: subtract w_zp * sum(input)
-                if w_zp != 0 {
-                    let mut input_sum = 0_i32;
-                    for i in 0..in_size {
-                        input_sum += self.scratch_i8[i] as i32;
-                    }
-                    acc -= w_zp * input_sum;
-                    // Also correct the cross-term: + N * w_zp * input_zp
-                    acc += (in_size as i32) * w_zp * input_zp_i32;
-                }
-
-                // Dequantize: y = acc * (w_scale * input_scale) + bias
-                let mut y =
-                    (acc as f32).mul_add(combined_scale, self.layers[layer_idx].bias_f32[j]);
+                // Dequantize: y = acc * combined_scale + bias_adjusted
+                // (bias_adjusted already includes 128*row_sum and input_zp*row_sum corrections)
+                let mut y = (acc as f32)
+                    .mul_add(combined_scale, self.layers[layer_idx].bias_adjusted[j]);
 
                 // Activation (not on last layer)
                 if !is_last {
