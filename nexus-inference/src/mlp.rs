@@ -7,7 +7,9 @@ use alloc::{boxed::Box, vec::Vec};
 #[cfg(feature = "alloc")]
 use crate::LoadError;
 #[cfg(feature = "alloc")]
-use crate::activation::Activation;
+use crate::activation::{Activation, activate_f32};
+#[cfg(feature = "alloc")]
+use crate::dot::{dot_f32, dot4_f32};
 
 #[cfg(all(feature = "alloc", feature = "std"))]
 fn sqrt_f64(x: f64) -> f64 {
@@ -219,405 +221,399 @@ unsafe fn hsum256_f32(v: core::arch::x86_64::__m256) -> f32 {
     }
 }
 
+/// Feedforward neural network (multi-layer perceptron).
+///
+/// Immutable after construction. All prediction methods take `&self`.
+/// Weights are row-major (output-major): each row of a weight matrix
+/// contains the weights for one output neuron. This matches PyTorch's
+/// `nn.Linear.weight` layout.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_inference::{Mlp, Activation};
+///
+/// let mut model = Mlp::from_parts(
+///     &[2, 3, 1],
+///     &[0.1_f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+///     &[0.0_f32, 0.0, 0.0, 0.0],
+///     Activation::Relu,
+/// ).unwrap();
+/// let score = model.predict(&[1.0_f32, 2.0]);
+/// ```
 #[cfg(feature = "alloc")]
-macro_rules! impl_mlp {
-    ($name:ident, $ty:ty, $dot_fn:path, $dot4_fn:path, $activate_fn:path, $tiled_fn:path, $ln_fn:path) => {
-        /// Feedforward neural network (multi-layer perceptron).
-        ///
-        /// Immutable after construction. All prediction methods take `&self`.
-        /// Weights are row-major (output-major): each row of a weight matrix
-        /// contains the weights for one output neuron. This matches PyTorch's
-        /// `nn.Linear.weight` layout.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use nexus_inference::{MlpF32, Activation};
-        ///
-        /// let mut model = MlpF32::from_parts(
-        ///     &[2, 3, 1],
-        ///     &[0.1_f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
-        ///     &[0.0_f32, 0.0, 0.0, 0.0],
-        ///     Activation::Relu,
-        /// ).unwrap();
-        /// let score = model.predict(&[1.0_f32, 2.0]);
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            weights: Box<[$ty]>,
-            biases: Box<[$ty]>,
-            ln_gamma: Option<Box<[$ty]>>,
-            ln_beta: Option<Box<[$ty]>>,
-            layer_sizes: Box<[u16]>,
-            activation: Activation,
-            scratch_a: Vec<$ty>,
-            scratch_b: Vec<$ty>,
-        }
-
-        impl $name {
-            /// Construct from pre-trained weights.
-            ///
-            /// `layer_sizes` defines the full topology: `[n_inputs, h1, h2, ..., n_outputs]`.
-            /// Minimum length 2 (input + output).
-            ///
-            /// Weight layout is row-major (output-major). For layer `l` connecting
-            /// `layer_sizes[l]` inputs to `layer_sizes[l+1]` outputs, the weight
-            /// matrix has `layer_sizes[l+1]` rows of `layer_sizes[l]` columns.
-            pub fn from_parts(
-                layer_sizes: &[usize],
-                weights: &[$ty],
-                biases: &[$ty],
-                activation: Activation,
-            ) -> Result<Self, LoadError> {
-                if layer_sizes.len() < 2 {
-                    return Err(LoadError::Validation("layer_sizes must have at least 2 elements"));
-                }
-                for &sz in layer_sizes.iter() {
-                    if sz == 0 {
-                        return Err(LoadError::Validation("layer size must be > 0"));
-                    }
-                    if sz > u16::MAX as usize {
-                        return Err(LoadError::Validation("layer size exceeds u16::MAX"));
-                    }
-                }
-
-                let n_layers = layer_sizes.len() - 1;
-                let expected_weights: usize = (0..n_layers)
-                    .map(|i| layer_sizes[i] * layer_sizes[i + 1])
-                    .sum();
-                let expected_biases: usize = (0..n_layers).map(|i| layer_sizes[i + 1]).sum();
-
-                if weights.len() != expected_weights {
-                    return Err(LoadError::Validation("weights length mismatch"));
-                }
-                if biases.len() != expected_biases {
-                    return Err(LoadError::Validation("biases length mismatch"));
-                }
-
-                for &w in weights {
-                    if !w.is_finite() {
-                        return Err(LoadError::Validation("non-finite weight"));
-                    }
-                }
-                for &b in biases {
-                    if !b.is_finite() {
-                        return Err(LoadError::Validation("non-finite bias"));
-                    }
-                }
-
-                #[cfg(not(any(feature = "std", feature = "libm")))]
-                match activation {
-                    Activation::Tanh
-                    | Activation::Sigmoid
-                    | Activation::Elu(_)
-                    | Activation::Gelu
-                    | Activation::Swish => {
-                        return Err(LoadError::Validation(
-                            "Tanh/Sigmoid/Elu/Gelu/Swish require std or libm feature",
-                        ));
-                    }
-                    _ => {}
-                }
-
-                let layer_sizes_u16: Box<[u16]> = layer_sizes
-                    .iter()
-                    .map(|&s| s as u16)
-                    .collect::<Vec<u16>>()
-                    .into_boxed_slice();
-
-                let max_dim = layer_sizes.iter().copied().max().unwrap();
-
-                Ok(Self {
-                    weights: weights.into(),
-                    biases: biases.into(),
-                    ln_gamma: None,
-                    ln_beta: None,
-                    layer_sizes: layer_sizes_u16,
-                    activation,
-                    scratch_a: alloc::vec![0.0 as $ty; max_dim],
-                    scratch_b: alloc::vec![0.0 as $ty; max_dim],
-                })
-            }
-
-            /// Construct from pre-trained weights with LayerNorm parameters.
-            ///
-            /// Same as [`from_parts`](Self::from_parts), but with per-hidden-layer
-            /// LayerNorm gamma and beta packed contiguously. The packed layout
-            /// matches bias layout for hidden layers: `[gamma_layer0, gamma_layer1, ...]`.
-            ///
-            /// Total length of `ln_gamma` and `ln_beta` must equal the sum of
-            /// all hidden layer sizes (i.e. total biases minus output size).
-            ///
-            /// LayerNorm uses eps=1e-5 (PyTorch default).
-            #[cfg(any(feature = "std", feature = "libm"))]
-            pub fn from_parts_with_layer_norm(
-                layer_sizes: &[usize],
-                weights: &[$ty],
-                biases: &[$ty],
-                ln_gamma: &[$ty],
-                ln_beta: &[$ty],
-                activation: Activation,
-            ) -> Result<Self, LoadError> {
-                let mut mlp = Self::from_parts(layer_sizes, weights, biases, activation)?;
-
-                let n_layers = layer_sizes.len() - 1;
-                let expected_ln: usize = (0..n_layers.saturating_sub(1))
-                    .map(|i| layer_sizes[i + 1])
-                    .sum();
-
-                if ln_gamma.len() != expected_ln {
-                    return Err(LoadError::Validation("ln_gamma length mismatch"));
-                }
-                if ln_beta.len() != expected_ln {
-                    return Err(LoadError::Validation("ln_beta length mismatch"));
-                }
-                for &g in ln_gamma {
-                    if !g.is_finite() {
-                        return Err(LoadError::Validation("non-finite ln_gamma"));
-                    }
-                }
-                for &b in ln_beta {
-                    if !b.is_finite() {
-                        return Err(LoadError::Validation("non-finite ln_beta"));
-                    }
-                }
-
-                mlp.ln_gamma = Some(ln_gamma.into());
-                mlp.ln_beta = Some(ln_beta.into());
-                Ok(mlp)
-            }
-
-            /// Single-output prediction.
-            ///
-            /// NaN inputs propagate through the computation.
-            /// Panics if `n_outputs() != 1`.
-            pub fn predict(&mut self, input: &[$ty]) -> $ty {
-                assert_eq!(
-                    self.n_outputs(),
-                    1,
-                    "predict() requires n_outputs == 1, use predict_into()"
-                );
-                let mut out = [0.0 as $ty];
-                self.predict_into(input, &mut out);
-                out[0]
-            }
-
-            /// General prediction (multi-output).
-            ///
-            /// NaN inputs propagate through the computation.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `input.len() != self.n_inputs()` or
-            /// `output.len() != self.n_outputs()`.
-            pub fn predict_into(&mut self, input: &[$ty], output: &mut [$ty]) {
-                assert_eq!(input.len(), self.n_inputs());
-                assert_eq!(output.len(), self.n_outputs());
-
-                let n_layers = self.layer_sizes.len() - 1;
-
-                self.scratch_a[..input.len()].copy_from_slice(input);
-                let mut src_is_a = true;
-                let mut w_offset = 0usize;
-                let mut b_offset = 0usize;
-
-                for layer in 0..n_layers {
-                    let in_size = self.layer_sizes[layer] as usize;
-                    let out_size = self.layer_sizes[layer + 1] as usize;
-                    let is_last = layer == n_layers - 1;
-                    let apply_ln = !is_last && self.ln_gamma.is_some();
-                    let out_size_4 = out_size & !3;
-
-                    // SIMD tiled path: dot4_f32_m128 + vectorized bias/activation/store.
-                    // 3 branches because borrow checker needs disjoint src/dst proof.
-                    #[cfg(all(
-                        target_arch = "x86_64",
-                        any(
-                            target_feature = "avx512f",
-                            all(target_feature = "avx2", target_feature = "fma"),
-                        )
-                    ))]
-                    let mut j = {
-                        let apply_activation = !is_last && !apply_ln;
-                        if is_last {
-                            let src = if src_is_a {
-                                &self.scratch_a[..in_size]
-                            } else {
-                                &self.scratch_b[..in_size]
-                            };
-                            $tiled_fn(
-                                &self.weights[w_offset..],
-                                &self.biases[b_offset..],
-                                src,
-                                output,
-                                in_size,
-                                out_size_4,
-                                self.activation,
-                                false,
-                            )
-                        } else if src_is_a {
-                            $tiled_fn(
-                                &self.weights[w_offset..],
-                                &self.biases[b_offset..],
-                                &self.scratch_a[..in_size],
-                                &mut self.scratch_b,
-                                in_size,
-                                out_size_4,
-                                self.activation,
-                                apply_activation,
-                            )
-                        } else {
-                            $tiled_fn(
-                                &self.weights[w_offset..],
-                                &self.biases[b_offset..],
-                                &self.scratch_b[..in_size],
-                                &mut self.scratch_a,
-                                in_size,
-                                out_size_4,
-                                self.activation,
-                                apply_activation,
-                            )
-                        }
-                    };
-                    #[cfg(not(all(
-                        target_arch = "x86_64",
-                        any(
-                            target_feature = "avx512f",
-                            all(target_feature = "avx2", target_feature = "fma"),
-                        )
-                    )))]
-                    let mut j = 0usize;
-
-                    while j < out_size_4 {
-                        let rows = &self.weights[w_offset + j * in_size..w_offset + (j + 4) * in_size];
-                        let src = if src_is_a { &self.scratch_a[..in_size] } else { &self.scratch_b[..in_size] };
-                        let dots = $dot4_fn(rows, src);
-                        for k in 0..4 {
-                            let mut sum = self.biases[b_offset + j + k] + dots[k];
-                            if !is_last && !apply_ln {
-                                sum = $activate_fn(sum, self.activation);
-                            }
-                            if is_last {
-                                output[j + k] = sum;
-                            } else if src_is_a {
-                                self.scratch_b[j + k] = sum;
-                            } else {
-                                self.scratch_a[j + k] = sum;
-                            }
-                        }
-                        j += 4;
-                    }
-                    while j < out_size {
-                        let row = &self.weights[w_offset + j * in_size..w_offset + (j + 1) * in_size];
-                        let src = if src_is_a { &self.scratch_a[..in_size] } else { &self.scratch_b[..in_size] };
-                        let mut sum = self.biases[b_offset + j] + $dot_fn(row, src);
-                        if !is_last && !apply_ln {
-                            sum = $activate_fn(sum, self.activation);
-                        }
-                        if is_last {
-                            output[j] = sum;
-                        } else if src_is_a {
-                            self.scratch_b[j] = sum;
-                        } else {
-                            self.scratch_a[j] = sum;
-                        }
-                        j += 1;
-                    }
-
-                    #[cfg(any(feature = "std", feature = "libm"))]
-                    if apply_ln {
-                        let ln_g = self.ln_gamma.as_ref().unwrap();
-                        let ln_b = self.ln_beta.as_ref().unwrap();
-
-                        let dst = if src_is_a {
-                            &mut self.scratch_b[..out_size]
-                        } else {
-                            &mut self.scratch_a[..out_size]
-                        };
-
-                        #[cfg(all(
-                            target_arch = "x86_64",
-                            any(
-                                target_feature = "avx512f",
-                                all(target_feature = "avx2", target_feature = "fma"),
-                            )
-                        ))]
-                        let simd_done = $ln_fn(
-                            dst,
-                            &ln_g[b_offset..b_offset + out_size],
-                            &ln_b[b_offset..b_offset + out_size],
-                            self.activation,
-                        );
-                        #[cfg(not(all(
-                            target_arch = "x86_64",
-                            any(
-                                target_feature = "avx512f",
-                                all(target_feature = "avx2", target_feature = "fma"),
-                            )
-                        )))]
-                        let simd_done = false;
-
-                        if !simd_done {
-                            let mut mean_acc = 0.0_f64;
-                            for v in dst.iter() {
-                                mean_acc += *v as f64;
-                            }
-                            let mean = mean_acc / out_size as f64;
-                            let mut var_acc = 0.0_f64;
-                            for v in dst.iter() {
-                                let d = *v as f64 - mean;
-                                var_acc = d.mul_add(d, var_acc);
-                            }
-                            let inv_std = 1.0_f64 / sqrt_f64(var_acc / out_size as f64 + 1e-5);
-
-                            for (k, v) in dst.iter_mut().enumerate() {
-                                let normalized = (*v as f64 - mean) * inv_std;
-                                let ln_val = (ln_g[b_offset + k] as f64)
-                                    .mul_add(normalized, ln_b[b_offset + k] as f64);
-                                *v = $activate_fn(ln_val as $ty, self.activation);
-                            }
-                        }
-                    }
-
-                    w_offset += in_size * out_size;
-                    b_offset += out_size;
-                    src_is_a = !src_is_a;
-                }
-            }
-
-            /// Number of input features.
-            pub fn n_inputs(&self) -> usize {
-                self.layer_sizes[0] as usize
-            }
-
-            /// Number of output values.
-            pub fn n_outputs(&self) -> usize {
-                *self.layer_sizes.last().unwrap() as usize
-            }
-
-            /// Number of weight matrices (layers).
-            pub fn n_layers(&self) -> usize {
-                self.layer_sizes.len() - 1
-            }
-
-            /// Activation function used for hidden layers.
-            pub fn activation(&self) -> Activation {
-                self.activation
-            }
-        }
-    };
+#[derive(Debug, Clone)]
+pub struct Mlp {
+    weights: Box<[f32]>,
+    biases: Box<[f32]>,
+    ln_gamma: Option<Box<[f32]>>,
+    ln_beta: Option<Box<[f32]>>,
+    layer_sizes: Box<[u16]>,
+    activation: Activation,
+    scratch_a: Vec<f32>,
+    scratch_b: Vec<f32>,
 }
 
 #[cfg(feature = "alloc")]
-impl_mlp!(
-    MlpF32,
-    f32,
-    crate::dot::dot_f32,
-    crate::dot::dot4_f32,
-    crate::activation::activate_f32,
-    mlp_tiled_simd_f32,
-    layer_norm_simd_f32
-);
+impl Mlp {
+    /// Construct from pre-trained weights.
+    ///
+    /// `layer_sizes` defines the full topology: `[n_inputs, h1, h2, ..., n_outputs]`.
+    /// Minimum length 2 (input + output).
+    ///
+    /// Weight layout is row-major (output-major). For layer `l` connecting
+    /// `layer_sizes[l]` inputs to `layer_sizes[l+1]` outputs, the weight
+    /// matrix has `layer_sizes[l+1]` rows of `layer_sizes[l]` columns.
+    pub fn from_parts(
+        layer_sizes: &[usize],
+        weights: &[f32],
+        biases: &[f32],
+        activation: Activation,
+    ) -> Result<Self, LoadError> {
+        if layer_sizes.len() < 2 {
+            return Err(LoadError::Validation(
+                "layer_sizes must have at least 2 elements",
+            ));
+        }
+        for &sz in layer_sizes {
+            if sz == 0 {
+                return Err(LoadError::Validation("layer size must be > 0"));
+            }
+            if sz > u16::MAX as usize {
+                return Err(LoadError::Validation("layer size exceeds u16::MAX"));
+            }
+        }
+
+        let n_layers = layer_sizes.len() - 1;
+        let expected_weights: usize = (0..n_layers)
+            .map(|i| layer_sizes[i] * layer_sizes[i + 1])
+            .sum();
+        let expected_biases: usize = (0..n_layers).map(|i| layer_sizes[i + 1]).sum();
+
+        if weights.len() != expected_weights {
+            return Err(LoadError::Validation("weights length mismatch"));
+        }
+        if biases.len() != expected_biases {
+            return Err(LoadError::Validation("biases length mismatch"));
+        }
+
+        for &w in weights {
+            if !w.is_finite() {
+                return Err(LoadError::Validation("non-finite weight"));
+            }
+        }
+        for &b in biases {
+            if !b.is_finite() {
+                return Err(LoadError::Validation("non-finite bias"));
+            }
+        }
+
+        #[cfg(not(any(feature = "std", feature = "libm")))]
+        match activation {
+            Activation::Tanh
+            | Activation::Sigmoid
+            | Activation::Elu(_)
+            | Activation::Gelu
+            | Activation::Swish => {
+                return Err(LoadError::Validation(
+                    "Tanh/Sigmoid/Elu/Gelu/Swish require std or libm feature",
+                ));
+            }
+            _ => {}
+        }
+
+        let layer_sizes_u16: Box<[u16]> = layer_sizes
+            .iter()
+            .map(|&s| s as u16)
+            .collect::<Vec<u16>>()
+            .into_boxed_slice();
+
+        let max_dim = layer_sizes.iter().copied().max().unwrap();
+
+        Ok(Self {
+            weights: weights.into(),
+            biases: biases.into(),
+            ln_gamma: None,
+            ln_beta: None,
+            layer_sizes: layer_sizes_u16,
+            activation,
+            scratch_a: alloc::vec![0.0_f32; max_dim],
+            scratch_b: alloc::vec![0.0_f32; max_dim],
+        })
+    }
+
+    /// Construct from pre-trained weights with LayerNorm parameters.
+    ///
+    /// Same as [`from_parts`](Self::from_parts), but with per-hidden-layer
+    /// LayerNorm gamma and beta packed contiguously. The packed layout
+    /// matches bias layout for hidden layers: `[gamma_layer0, gamma_layer1, ...]`.
+    ///
+    /// Total length of `ln_gamma` and `ln_beta` must equal the sum of
+    /// all hidden layer sizes (i.e. total biases minus output size).
+    ///
+    /// LayerNorm uses eps=1e-5 (PyTorch default).
+    #[cfg(any(feature = "std", feature = "libm"))]
+    pub fn from_parts_with_layer_norm(
+        layer_sizes: &[usize],
+        weights: &[f32],
+        biases: &[f32],
+        ln_gamma: &[f32],
+        ln_beta: &[f32],
+        activation: Activation,
+    ) -> Result<Self, LoadError> {
+        let mut mlp = Self::from_parts(layer_sizes, weights, biases, activation)?;
+
+        let n_layers = layer_sizes.len() - 1;
+        let expected_ln: usize = (0..n_layers.saturating_sub(1))
+            .map(|i| layer_sizes[i + 1])
+            .sum();
+
+        if ln_gamma.len() != expected_ln {
+            return Err(LoadError::Validation("ln_gamma length mismatch"));
+        }
+        if ln_beta.len() != expected_ln {
+            return Err(LoadError::Validation("ln_beta length mismatch"));
+        }
+        for &g in ln_gamma {
+            if !g.is_finite() {
+                return Err(LoadError::Validation("non-finite ln_gamma"));
+            }
+        }
+        for &b in ln_beta {
+            if !b.is_finite() {
+                return Err(LoadError::Validation("non-finite ln_beta"));
+            }
+        }
+
+        mlp.ln_gamma = Some(ln_gamma.into());
+        mlp.ln_beta = Some(ln_beta.into());
+        Ok(mlp)
+    }
+
+    /// Single-output prediction.
+    ///
+    /// NaN inputs propagate through the computation.
+    /// Panics if `n_outputs() != 1`.
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
+        assert_eq!(
+            self.n_outputs(),
+            1,
+            "predict() requires n_outputs == 1, use predict_into()"
+        );
+        let mut out = [0.0_f32];
+        self.predict_into(input, &mut out);
+        out[0]
+    }
+
+    /// General prediction (multi-output).
+    ///
+    /// NaN inputs propagate through the computation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `input.len() != self.n_inputs()` or
+    /// `output.len() != self.n_outputs()`.
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        assert_eq!(input.len(), self.n_inputs());
+        assert_eq!(output.len(), self.n_outputs());
+
+        let n_layers = self.layer_sizes.len() - 1;
+
+        self.scratch_a[..input.len()].copy_from_slice(input);
+        let mut src_is_a = true;
+        let mut w_offset = 0usize;
+        let mut b_offset = 0usize;
+
+        for layer in 0..n_layers {
+            let in_size = self.layer_sizes[layer] as usize;
+            let out_size = self.layer_sizes[layer + 1] as usize;
+            let is_last = layer == n_layers - 1;
+            let apply_ln = !is_last && self.ln_gamma.is_some();
+            let out_size_4 = out_size & !3;
+
+            #[cfg(all(
+                target_arch = "x86_64",
+                any(
+                    target_feature = "avx512f",
+                    all(target_feature = "avx2", target_feature = "fma"),
+                )
+            ))]
+            let mut j = {
+                let apply_activation = !is_last && !apply_ln;
+                if is_last {
+                    let src = if src_is_a {
+                        &self.scratch_a[..in_size]
+                    } else {
+                        &self.scratch_b[..in_size]
+                    };
+                    mlp_tiled_simd_f32(
+                        &self.weights[w_offset..],
+                        &self.biases[b_offset..],
+                        src,
+                        output,
+                        in_size,
+                        out_size_4,
+                        self.activation,
+                        false,
+                    )
+                } else if src_is_a {
+                    mlp_tiled_simd_f32(
+                        &self.weights[w_offset..],
+                        &self.biases[b_offset..],
+                        &self.scratch_a[..in_size],
+                        &mut self.scratch_b,
+                        in_size,
+                        out_size_4,
+                        self.activation,
+                        apply_activation,
+                    )
+                } else {
+                    mlp_tiled_simd_f32(
+                        &self.weights[w_offset..],
+                        &self.biases[b_offset..],
+                        &self.scratch_b[..in_size],
+                        &mut self.scratch_a,
+                        in_size,
+                        out_size_4,
+                        self.activation,
+                        apply_activation,
+                    )
+                }
+            };
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                any(
+                    target_feature = "avx512f",
+                    all(target_feature = "avx2", target_feature = "fma"),
+                )
+            )))]
+            let mut j = 0usize;
+
+            while j < out_size_4 {
+                let rows = &self.weights[w_offset + j * in_size..w_offset + (j + 4) * in_size];
+                let src = if src_is_a {
+                    &self.scratch_a[..in_size]
+                } else {
+                    &self.scratch_b[..in_size]
+                };
+                let dots = dot4_f32(rows, src);
+                for k in 0..4 {
+                    let mut sum = self.biases[b_offset + j + k] + dots[k];
+                    if !is_last && !apply_ln {
+                        sum = activate_f32(sum, self.activation);
+                    }
+                    if is_last {
+                        output[j + k] = sum;
+                    } else if src_is_a {
+                        self.scratch_b[j + k] = sum;
+                    } else {
+                        self.scratch_a[j + k] = sum;
+                    }
+                }
+                j += 4;
+            }
+            while j < out_size {
+                let row = &self.weights[w_offset + j * in_size..w_offset + (j + 1) * in_size];
+                let src = if src_is_a {
+                    &self.scratch_a[..in_size]
+                } else {
+                    &self.scratch_b[..in_size]
+                };
+                let mut sum = self.biases[b_offset + j] + dot_f32(row, src);
+                if !is_last && !apply_ln {
+                    sum = activate_f32(sum, self.activation);
+                }
+                if is_last {
+                    output[j] = sum;
+                } else if src_is_a {
+                    self.scratch_b[j] = sum;
+                } else {
+                    self.scratch_a[j] = sum;
+                }
+                j += 1;
+            }
+
+            #[cfg(any(feature = "std", feature = "libm"))]
+            if apply_ln {
+                let ln_g = self.ln_gamma.as_ref().unwrap();
+                let ln_b = self.ln_beta.as_ref().unwrap();
+
+                let dst = if src_is_a {
+                    &mut self.scratch_b[..out_size]
+                } else {
+                    &mut self.scratch_a[..out_size]
+                };
+
+                #[cfg(all(
+                    target_arch = "x86_64",
+                    any(
+                        target_feature = "avx512f",
+                        all(target_feature = "avx2", target_feature = "fma"),
+                    )
+                ))]
+                let simd_done = layer_norm_simd_f32(
+                    dst,
+                    &ln_g[b_offset..b_offset + out_size],
+                    &ln_b[b_offset..b_offset + out_size],
+                    self.activation,
+                );
+                #[cfg(not(all(
+                    target_arch = "x86_64",
+                    any(
+                        target_feature = "avx512f",
+                        all(target_feature = "avx2", target_feature = "fma"),
+                    )
+                )))]
+                let simd_done = false;
+
+                if !simd_done {
+                    let mut mean_acc = 0.0_f64;
+                    for v in dst.iter() {
+                        mean_acc += *v as f64;
+                    }
+                    let mean = mean_acc / out_size as f64;
+                    let mut var_acc = 0.0_f64;
+                    for v in dst.iter() {
+                        let d = *v as f64 - mean;
+                        var_acc = d.mul_add(d, var_acc);
+                    }
+                    let inv_std = 1.0_f64 / sqrt_f64(var_acc / out_size as f64 + 1e-5);
+
+                    for (k, v) in dst.iter_mut().enumerate() {
+                        let normalized = (*v as f64 - mean) * inv_std;
+                        let ln_val = (ln_g[b_offset + k] as f64)
+                            .mul_add(normalized, ln_b[b_offset + k] as f64);
+                        *v = activate_f32(ln_val as f32, self.activation);
+                    }
+                }
+            }
+
+            w_offset += in_size * out_size;
+            b_offset += out_size;
+            src_is_a = !src_is_a;
+        }
+    }
+
+    /// Number of input features.
+    pub fn n_inputs(&self) -> usize {
+        self.layer_sizes[0] as usize
+    }
+
+    /// Number of output values.
+    pub fn n_outputs(&self) -> usize {
+        *self.layer_sizes.last().unwrap() as usize
+    }
+
+    /// Number of weight matrices (layers).
+    pub fn n_layers(&self) -> usize {
+        self.layer_sizes.len() - 1
+    }
+
+    /// Activation function used for hidden layers.
+    pub fn activation(&self) -> Activation {
+        self.activation
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -630,7 +626,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     fn single_neuron_no_hidden() {
         // 1 input → 1 output, w=2.0, b=0.5 → 2*x + 0.5
-        let mut model = MlpF32::from_parts(&[1, 1], &[2.0], &[0.5], Activation::Relu).unwrap();
+        let mut model = Mlp::from_parts(&[1, 1], &[2.0], &[0.5], Activation::Relu).unwrap();
         assert!((model.predict(&[3.0]) - 6.5).abs() < 1e-5);
     }
 
@@ -645,8 +641,7 @@ mod tests {
         //   o0 = 1.0*h0 + 1.0*h1 + 0.0
         let weights = vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
         let biases = vec![0.0, 0.0, 0.0];
-        let mut model =
-            MlpF32::from_parts(&[2, 2, 1], &weights, &biases, Activation::Relu).unwrap();
+        let mut model = Mlp::from_parts(&[2, 2, 1], &weights, &biases, Activation::Relu).unwrap();
         assert!((model.predict(&[3.0, 4.0]) - 7.0).abs() < 1e-5);
     }
 
@@ -657,7 +652,7 @@ mod tests {
         // h0 = relu(1.0*x + (-5.0)) → relu(x - 5)
         // o0 = 1.0 * h0 + 0.0
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[-5.0, 0.0], Activation::Relu).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[-5.0, 0.0], Activation::Relu).unwrap();
         assert!((model.predict(&[3.0]) - 0.0).abs() < 1e-5); // relu(3 - 5) = 0
         assert!((model.predict(&[7.0]) - 2.0).abs() < 1e-5); // relu(7 - 5) = 2
     }
@@ -668,7 +663,7 @@ mod tests {
         // 1 input → 1 hidden (leaky_relu 0.1) → 1 output
         // h0 = leaky_relu(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
-        let mut model = MlpF32::from_parts(
+        let mut model = Mlp::from_parts(
             &[1, 1, 1],
             &[1.0, 1.0],
             &[0.0, 0.0],
@@ -687,7 +682,7 @@ mod tests {
         // h0 = tanh(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Tanh).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Tanh).unwrap();
         let expected = 2.0_f32.tanh();
         assert!((model.predict(&[2.0]) - expected).abs() < 1e-5);
     }
@@ -700,7 +695,7 @@ mod tests {
         // h0 = sigmoid(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Sigmoid).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Sigmoid).unwrap();
         let expected = 1.0 / (1.0 + (-2.0_f32).exp());
         assert!((model.predict(&[2.0]) - expected).abs() < 1e-5);
     }
@@ -747,7 +742,7 @@ mod tests {
         biases.extend_from_slice(&b2);
 
         let mut model =
-            MlpF32::from_parts(&[3, 4, 2, 1], &weights, &biases, Activation::Relu).unwrap();
+            Mlp::from_parts(&[3, 4, 2, 1], &weights, &biases, Activation::Relu).unwrap();
 
         // x = [1, 2, 3]
         // h = [1, 2, 3, 6], g = [1+2, 3+6] = [3, 9], o = 3+9 = 12
@@ -762,7 +757,7 @@ mod tests {
         // Output: o = 1.0*h + (-10.0)
         // If activation applied to output, negative output would be clipped.
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, -10.0], Activation::Relu).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, -10.0], Activation::Relu).unwrap();
         // x=5 → h=relu(5)=5 → o=5-10=-5 (NOT relu'd)
         assert!((model.predict(&[5.0]) - (-5.0)).abs() < 1e-5);
     }
@@ -771,7 +766,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[should_panic]
     fn wrong_input_panics() {
-        let mut model = MlpF32::from_parts(&[2, 1], &[1.0, 1.0], &[0.0], Activation::Relu).unwrap();
+        let mut model = Mlp::from_parts(&[2, 1], &[1.0, 1.0], &[0.0], Activation::Relu).unwrap();
         model.predict(&[1.0]); // expects 2 inputs
     }
 
@@ -779,10 +774,10 @@ mod tests {
     #[cfg(feature = "alloc")]
     fn from_parts_validates_sizes() {
         // Wrong weight count
-        let err = MlpF32::from_parts(&[2, 3, 1], &[1.0; 5], &[0.0; 4], Activation::Relu);
+        let err = Mlp::from_parts(&[2, 3, 1], &[1.0; 5], &[0.0; 4], Activation::Relu);
         assert!(err.is_err());
         // Wrong bias count
-        let err = MlpF32::from_parts(&[2, 3, 1], &[1.0; 9], &[0.0; 3], Activation::Relu);
+        let err = Mlp::from_parts(&[2, 3, 1], &[1.0; 9], &[0.0; 3], Activation::Relu);
         assert!(err.is_err());
     }
 
@@ -790,13 +785,13 @@ mod tests {
     #[cfg(feature = "alloc")]
     fn from_parts_validates_layer_sizes() {
         // Empty
-        let err = MlpF32::from_parts(&[], &[], &[], Activation::Relu);
+        let err = Mlp::from_parts(&[], &[], &[], Activation::Relu);
         assert!(err.is_err());
         // Single element
-        let err = MlpF32::from_parts(&[5], &[], &[], Activation::Relu);
+        let err = Mlp::from_parts(&[5], &[], &[], Activation::Relu);
         assert!(err.is_err());
         // Zero-sized layer
-        let err = MlpF32::from_parts(&[2, 0, 1], &[], &[], Activation::Relu);
+        let err = Mlp::from_parts(&[2, 0, 1], &[], &[], Activation::Relu);
         assert!(err.is_err());
     }
 
@@ -806,7 +801,7 @@ mod tests {
         // 1 input → 1 hidden (relu) → 1 output
         // NaN goes through relu hidden layer — must come out as NaN
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Relu).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Relu).unwrap();
         assert!(model.predict(&[f32::NAN]).is_nan());
     }
 
@@ -839,8 +834,7 @@ mod tests {
         biases.extend_from_slice(&b0);
         biases.extend_from_slice(&b1);
 
-        let mut model =
-            MlpF32::from_parts(&[2, 4, 3], &weights, &biases, Activation::Relu).unwrap();
+        let mut model = Mlp::from_parts(&[2, 4, 3], &weights, &biases, Activation::Relu).unwrap();
         assert_eq!(model.n_outputs(), 3);
 
         let mut out = [0.0_f32; 3];
@@ -854,8 +848,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[should_panic]
     fn predict_panics_multi_output() {
-        let mut model =
-            MlpF32::from_parts(&[2, 3], &[1.0; 6], &[0.0; 3], Activation::Relu).unwrap();
+        let mut model = Mlp::from_parts(&[2, 3], &[1.0; 6], &[0.0; 3], Activation::Relu).unwrap();
         model.predict(&[1.0, 2.0]); // n_outputs=3, should panic
     }
 
@@ -863,7 +856,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[should_panic]
     fn predict_into_wrong_output_len() {
-        let mut model = MlpF32::from_parts(&[1, 1], &[1.0], &[0.0], Activation::Relu).unwrap();
+        let mut model = Mlp::from_parts(&[1, 1], &[1.0], &[0.0], Activation::Relu).unwrap();
         let mut out = [0.0_f32; 2];
         model.predict_into(&[1.0], &mut out);
     }
@@ -875,7 +868,7 @@ mod tests {
         // h0 = identity(1.0*x + 0.0) = x (no clipping)
         // o0 = 1.0*h0 + 0.0
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Identity).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Identity).unwrap();
         assert!((model.predict(&[5.0]) - 5.0).abs() < 1e-5);
         assert!((model.predict(&[-3.0]) - (-3.0)).abs() < 1e-5);
     }
@@ -888,7 +881,7 @@ mod tests {
         // h0 = elu(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Elu(1.0)).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Elu(1.0)).unwrap();
         // Positive: passthrough
         assert!((model.predict(&[2.0]) - 2.0).abs() < 1e-5);
         // Negative: alpha * (exp(x) - 1)
@@ -902,7 +895,7 @@ mod tests {
     fn gelu_activation() {
         // 1 input → 1 hidden (gelu) → 1 output
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Gelu).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Gelu).unwrap();
         // GELU(1.0) ≈ 0.8411920 (tanh approximation)
         let x = 1.0_f32;
         let expected =
@@ -918,7 +911,7 @@ mod tests {
     fn swish_activation() {
         // 1 input → 1 hidden (swish) → 1 output
         let mut model =
-            MlpF32::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Swish).unwrap();
+            Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Swish).unwrap();
         // Swish(2.0) = 2.0 * sigmoid(2.0) = 2.0 / (1 + exp(-2))
         let expected = 2.0 / (1.0 + (-2.0_f32).exp());
         assert!((model.predict(&[2.0]) - expected).abs() < 1e-5);
@@ -947,7 +940,7 @@ mod tests {
         let ln_gamma: Vec<f32> = vec![1.0; 4];
         let ln_beta: Vec<f32> = vec![0.0; 4];
 
-        let mut model = MlpF32::from_parts_with_layer_norm(
+        let mut model = Mlp::from_parts_with_layer_norm(
             &[2, 4, 1],
             &weights,
             &biases,
@@ -994,7 +987,7 @@ mod tests {
         let ln_gamma: Vec<f32> = vec![2.0, 2.0];
         let ln_beta: Vec<f32> = vec![0.5, 0.5];
 
-        let mut model = MlpF32::from_parts_with_layer_norm(
+        let mut model = Mlp::from_parts_with_layer_norm(
             &[1, 2, 1],
             &weights,
             &biases,
@@ -1032,7 +1025,7 @@ mod tests {
     #[cfg(any(feature = "std", feature = "libm"))]
     fn layer_norm_validation() {
         // Wrong ln_gamma length
-        let err = MlpF32::from_parts_with_layer_norm(
+        let err = Mlp::from_parts_with_layer_norm(
             &[2, 4, 1],
             &[1.0; 12],
             &[0.0; 5],
@@ -1043,7 +1036,7 @@ mod tests {
         assert!(err.is_err());
 
         // Wrong ln_beta length
-        let err = MlpF32::from_parts_with_layer_norm(
+        let err = Mlp::from_parts_with_layer_norm(
             &[2, 4, 1],
             &[1.0; 12],
             &[0.0; 5],

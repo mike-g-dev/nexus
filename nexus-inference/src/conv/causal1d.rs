@@ -95,7 +95,7 @@ pub(super) fn conv_tiled_simd(
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::{Activation, Causal1dConvF32};
+/// use nexus_inference::{Activation, Causal1dConv};
 ///
 /// // 2 input channels, kernel 3, 4 filters, 1 output
 /// let w_conv = vec![0.1_f32; 4 * 3 * 2];
@@ -103,7 +103,7 @@ pub(super) fn conv_tiled_simd(
 /// let w_out = vec![0.1_f32; 1 * 4];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut conv = Causal1dConvF32::from_parts(
+/// let mut conv = Causal1dConv::from_parts(
 ///     2, 3, 4, 1,
 ///     &w_conv, &b_conv,
 ///     &w_out, &b_out,
@@ -117,7 +117,7 @@ pub(super) fn conv_tiled_simd(
 /// assert!(conv.is_primed());
 /// ```
 #[derive(Debug, Clone)]
-pub struct Causal1dConvF32 {
+pub struct Causal1dConv {
     w_conv: Box<[f32]>,
     b_conv: Box<[f32]>,
     w_out: Box<[f32]>,
@@ -134,7 +134,7 @@ pub struct Causal1dConvF32 {
     activation: Activation,
 }
 
-impl Causal1dConvF32 {
+impl Causal1dConv {
     /// Construct from pre-trained weights.
     ///
     /// - `input_ch`: number of input channels per timestep.
@@ -372,12 +372,12 @@ mod tests {
         filters: usize,
         output: usize,
         w_val: f32,
-    ) -> Causal1dConvF32 {
+    ) -> Causal1dConv {
         let w_conv = vec![w_val; filters * kernel * input_ch];
         let b_conv = vec![0.0_f32; filters];
         let w_out = vec![w_val; output * filters];
         let b_out = vec![0.0_f32; output];
-        Causal1dConvF32::from_parts(
+        Causal1dConv::from_parts(
             input_ch,
             kernel,
             filters,
@@ -415,7 +415,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32]; // pass-through
         let b_out = [0.0_f32];
-        let mut conv = Causal1dConvF32::from_parts(
+        let mut conv = Causal1dConv::from_parts(
             1,
             3,
             1,
@@ -457,7 +457,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32];
         let b_out = [0.0_f32];
-        let mut conv = Causal1dConvF32::from_parts(
+        let mut conv = Causal1dConv::from_parts(
             2,
             2,
             1,
@@ -488,7 +488,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32];
         let b_out = [0.0_f32];
-        let mut conv = Causal1dConvF32::from_parts(
+        let mut conv = Causal1dConv::from_parts(
             1,
             1,
             1,
@@ -559,13 +559,13 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = Causal1dConvF32::from_parts(0, 3, 4, 1, &[], &[], &[], &[], Activation::Relu);
+        let r = Causal1dConv::from_parts(0, 3, 4, 1, &[], &[], &[], &[], Activation::Relu);
         assert!(r.is_err());
     }
 
     #[test]
     fn validation_rejects_weight_mismatch() {
-        let r = Causal1dConvF32::from_parts(
+        let r = Causal1dConv::from_parts(
             2,
             3,
             4,
@@ -583,7 +583,7 @@ mod tests {
     fn validation_rejects_non_finite() {
         let mut w = vec![0.1_f32; 4];
         w[2] = f32::NAN;
-        let r = Causal1dConvF32::from_parts(
+        let r = Causal1dConv::from_parts(
             1,
             2,
             2,

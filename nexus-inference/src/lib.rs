@@ -12,20 +12,20 @@
 //! # Stateless (single prediction)
 //!
 //! - [`Gbdt`] — Gradient-boosted decision tree ensemble
-//! - [`MlpF32`] — Feedforward neural network (multi-layer perceptron)
-//! - [`LutF32`] — Lookup table predictor (discretized features)
-//! - [`BnnF32`] — Binary neural network (XNOR+popcount inference)
-//! - [`QuantizedMlpI8`] — Int8-quantized MLP (i8 matmul, f32 activations)
+//! - [`Mlp`] — Feedforward neural network (multi-layer perceptron)
+//! - [`Lut`] — Lookup table predictor (discretized features)
+//! - [`Bnn`] — Binary neural network (XNOR+popcount inference)
+//! - [`QuantizedMlp`] — Int8-quantized MLP (i8 matmul, f32 activations)
 //!
 //! # Stateful (streaming temporal)
 //!
-//! - [`TinyLstmF32`] — Single-layer LSTM
-//! - [`TinyGruF32`] — Single-layer GRU, ~75% of LSTM cost
-//! - [`StackedLstmF32`] — Multi-layer LSTM (PyTorch `nn.LSTM(num_layers=N)`)
-//! - [`StackedGruF32`] — Multi-layer GRU (PyTorch `nn.GRU(num_layers=N)`)
-//! - [`LinearSsmF32`] — Linear state-space model (S4/S4D), no transcendentals
-//! - [`Causal1dConvF32`] — Causal 1D convolution over a sliding window
-//! - [`TinyTcnF32`] — Temporal convolutional network (dilated causal conv stack)
+//! - [`TinyLstm`] — Single-layer LSTM
+//! - [`TinyGru`] — Single-layer GRU, ~75% of LSTM cost
+//! - [`StackedLstm`] — Multi-layer LSTM (PyTorch `nn.LSTM(num_layers=N)`)
+//! - [`StackedGru`] — Multi-layer GRU (PyTorch `nn.GRU(num_layers=N)`)
+//! - [`LinearSsm`] — Linear state-space model (S4/S4D), no transcendentals
+//! - [`Causal1dConv`] — Causal 1D convolution over a sliding window
+//! - [`TinyTcn`] — Temporal convolutional network (dilated causal conv stack)
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -59,19 +59,19 @@ mod loader;
 #[cfg(feature = "alloc")]
 pub use activation::Activation;
 #[cfg(feature = "alloc")]
-pub use bnn::BnnF32;
+pub use bnn::Bnn;
 #[cfg(feature = "alloc")]
-pub use conv::{Causal1dConvF32, TinyTcnF32};
+pub use conv::{Causal1dConv, TinyTcn};
 pub use error::LoadError;
 #[cfg(feature = "alloc")]
 pub use gbdt::Gbdt;
 #[cfg(feature = "alloc")]
-pub use lut::LutF32;
+pub use lut::Lut;
 #[cfg(feature = "alloc")]
-pub use mlp::MlpF32;
+pub use mlp::Mlp;
 #[cfg(feature = "alloc")]
-pub use quantized_mlp::QuantizedMlpI8;
+pub use quantized_mlp::QuantizedMlp;
 #[cfg(any(feature = "std", feature = "libm"))]
-pub use rnn::{StackedGruF32, StackedLstmF32, TinyGruF32, TinyLstmF32};
+pub use rnn::{StackedGru, StackedLstm, TinyGru, TinyLstm};
 #[cfg(feature = "alloc")]
-pub use ssm::LinearSsmF32;
+pub use ssm::LinearSsm;

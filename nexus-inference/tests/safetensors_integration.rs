@@ -79,7 +79,7 @@ fn run_stacked_lstm_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut lstm = StackedLstmF32::from_safetensors(
+    let mut lstm = StackedLstm::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -107,7 +107,7 @@ fn run_stacked_gru_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut gru = StackedGruF32::from_safetensors(
+    let mut gru = StackedGru::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -135,7 +135,7 @@ fn run_lstm_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut lstm = TinyLstmF32::from_safetensors(
+    let mut lstm = TinyLstm::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -160,7 +160,7 @@ fn run_gru_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut gru = TinyGruF32::from_safetensors(
+    let mut gru = TinyGru::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -185,7 +185,7 @@ fn run_mlp_f32_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut mlp = MlpF32::from_safetensors(
+    let mut mlp = Mlp::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),
@@ -210,7 +210,7 @@ fn run_conv1d_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut conv = Causal1dConvF32::from_safetensors(
+    let mut conv = Causal1dConv::from_safetensors(
         &data,
         exp["conv_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -386,7 +386,7 @@ fn run_ssm_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut ssm = LinearSsmF32::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
+    let mut ssm = LinearSsm::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -513,7 +513,7 @@ fn run_bnn_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut bnn = BnnF32::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
+    let mut bnn = Bnn::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -558,7 +558,7 @@ fn run_tcn_test(name: &str) {
     let tol = exp["tolerance"].as_f64().unwrap();
     let residual = exp["residual"].as_bool().unwrap();
 
-    let mut tcn = TinyTcnF32::from_safetensors(
+    let mut tcn = TinyTcn::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),
@@ -608,7 +608,7 @@ fn run_quantized_mlp_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut qmlp = QuantizedMlpI8::from_safetensors(
+    let mut qmlp = QuantizedMlp::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),

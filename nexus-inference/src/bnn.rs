@@ -228,7 +228,7 @@ struct BinaryLayer {
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::BnnF32;
+/// use nexus_inference::Bnn;
 ///
 /// let h = 64;
 /// let w_input = vec![0.1_f32; h * 2];
@@ -236,14 +236,14 @@ struct BinaryLayer {
 /// let w_output = vec![0.1_f32; 1 * h];
 /// let b_output = vec![0.0_f32; 1];
 ///
-/// let mut bnn = BnnF32::from_parts(
+/// let mut bnn = Bnn::from_parts(
 ///     &w_input, &b_input, &[], &[], &w_output, &b_output, 1,
 /// ).unwrap();
 ///
 /// let output = bnn.predict(&[1.0, 1.0]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct BnnF32 {
+pub struct Bnn {
     w_input: Box<[f32]>,
     b_input: Box<[f32]>,
     binary_layers: Box<[BinaryLayer]>,
@@ -265,7 +265,7 @@ pub struct BnnF32 {
     output_size: u16,
 }
 
-impl BnnF32 {
+impl Bnn {
     /// Construct from pre-packed binary weights.
     ///
     /// - `w_input`: fp32 input-to-hidden weights, `[H, I]` row-major.
@@ -587,8 +587,8 @@ mod tests {
         w_output: &[f32],
         b_output: &[f32],
         output_size: usize,
-    ) -> BnnF32 {
-        BnnF32::from_parts(w_input, b_input, &[], &[], w_output, b_output, output_size).unwrap()
+    ) -> Bnn {
+        Bnn::from_parts(w_input, b_input, &[], &[], w_output, b_output, output_size).unwrap()
     }
 
     #[test]
@@ -672,7 +672,7 @@ mod tests {
         // 64 >= 32 → all bits = 1 → unpack = all +1.0
         let bin_weights = vec![u64::MAX; H * WPR];
         let bin_biases = vec![0.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let mut bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -694,7 +694,7 @@ mod tests {
         // threshold = 32, 0 < 32 → all bits = 0 → all -1.0
         let bin_weights = vec![0_u64; H * WPR];
         let bin_biases = vec![0.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let mut bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -715,7 +715,7 @@ mod tests {
         // 0 >= 0 → all activate → all +1.0
         let bin_weights = vec![0_u64; H * WPR];
         let bin_biases = vec![200.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let mut bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -736,7 +736,7 @@ mod tests {
         // 64 < 132 → all suppressed → all -1.0
         let bin_weights = vec![u64::MAX; H * WPR];
         let bin_biases = vec![-200.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let mut bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -757,7 +757,7 @@ mod tests {
         // Result same as no binary layers with all-positive input
         let bin_weights = vec![u64::MAX; H * WPR];
         let bin_biases = vec![0.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let mut bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice(), bin_weights.as_slice()],
@@ -833,7 +833,7 @@ mod tests {
     #[test]
     fn rejects_non_multiple_of_64() {
         assert!(
-            BnnF32::from_parts(
+            Bnn::from_parts(
                 &vec![0.1_f32; 32 * 2],
                 &vec![0.0_f32; 32],
                 &[],
@@ -848,14 +848,14 @@ mod tests {
 
     #[test]
     fn rejects_empty() {
-        assert!(BnnF32::from_parts(&[], &[], &[], &[], &[], &[], 1).is_err());
+        assert!(Bnn::from_parts(&[], &[], &[], &[], &[], &[], 1).is_err());
     }
 
     #[test]
     fn rejects_mismatched_binary_layers() {
         let bin_w = vec![0_u64; H * WPR];
         assert!(
-            BnnF32::from_parts(
+            Bnn::from_parts(
                 &vec![0.1_f32; H * 2],
                 &vec![0.0_f32; H],
                 &[bin_w.as_slice()],
@@ -871,7 +871,7 @@ mod tests {
     #[test]
     fn rejects_non_finite() {
         assert!(
-            BnnF32::from_parts(
+            Bnn::from_parts(
                 &vec![f32::NAN; H * 2],
                 &vec![0.0_f32; H],
                 &[],

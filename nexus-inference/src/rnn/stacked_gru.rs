@@ -19,7 +19,7 @@ use crate::dot::{matvec_bias_f32, matvec_f32};
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::StackedGruF32;
+/// use nexus_inference::StackedGru;
 ///
 /// let input_size = 4;
 /// let hidden_size = 8;
@@ -39,7 +39,7 @@ use crate::dot::{matvec_bias_f32, matvec_f32};
 /// let w_out = vec![0.1_f32; 1 * hidden_size];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut gru = StackedGruF32::from_parts(
+/// let mut gru = StackedGru::from_parts(
 ///     input_size, hidden_size, 1,
 ///     &[&wih_l0, &wih_l1],
 ///     &[&whh_l0, &whh_l1],
@@ -51,7 +51,7 @@ use crate::dot::{matvec_bias_f32, matvec_f32};
 /// let output = gru.step(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct StackedGruF32 {
+pub struct StackedGru {
     layers: Box<[GruLayer]>,
     w_out: Box<[f32]>,
     b_out: Box<[f32]>,
@@ -147,7 +147,7 @@ impl GruLayer {
     }
 }
 
-impl StackedGruF32 {
+impl StackedGru {
     /// Construct from pre-trained per-layer weights.
     ///
     /// Each slice in `layers_weight_ih`, `layers_weight_hh`,
@@ -334,7 +334,7 @@ mod tests {
         output: usize,
         num_layers: usize,
         val: f32,
-    ) -> StackedGruF32 {
+    ) -> StackedGru {
         let gc = 3 * hidden;
         let wih_l0 = vec![val; gc * input];
         let whh_l0 = vec![val; gc * hidden];
@@ -363,7 +363,7 @@ mod tests {
         let w_out = vec![val; output * hidden];
         let b_out = vec![0.0_f32; output];
 
-        StackedGruF32::from_parts(
+        StackedGru::from_parts(
             input,
             hidden,
             output,
@@ -391,7 +391,7 @@ mod tests {
         let w_out = vec![0.2_f32; output_size * hidden_size];
         let b_out = vec![0.1_f32; output_size];
 
-        let mut tiny = crate::TinyGruF32::from_parts(
+        let mut tiny = crate::TinyGru::from_parts(
             input_size,
             hidden_size,
             output_size,
@@ -404,7 +404,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut stacked = StackedGruF32::from_parts(
+        let mut stacked = StackedGru::from_parts(
             input_size,
             hidden_size,
             output_size,
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_layers() {
-        let r = StackedGruF32::from_parts(2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1]);
+        let r = StackedGru::from_parts(2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1]);
         assert!(r.is_err());
     }
 
@@ -521,7 +521,7 @@ mod tests {
         let whh = vec![0.1_f32; gc * 4];
         let bih = vec![0.0_f32; gc];
         let bhh = vec![0.0_f32; gc];
-        let r = StackedGruF32::from_parts(
+        let r = StackedGru::from_parts(
             2,
             4,
             1,
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = StackedGruF32::from_parts(0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[]);
+        let r = StackedGru::from_parts(0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[]);
         assert!(r.is_err());
     }
 

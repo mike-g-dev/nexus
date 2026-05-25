@@ -36,7 +36,7 @@ struct TcnConvLayer {
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::{Activation, TinyTcnF32};
+/// use nexus_inference::{Activation, TinyTcn};
 ///
 /// let filters = 4;
 /// let kernel_size = 3;
@@ -50,7 +50,7 @@ struct TcnConvLayer {
 /// let w_out = vec![0.1_f32; 1 * filters];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut tcn = TinyTcnF32::from_parts(
+/// let mut tcn = TinyTcn::from_parts(
 ///     2, filters, kernel_size, 1, false,
 ///     &[&w0, &w1], &[&b0, &b1],
 ///     &w_out, &b_out,
@@ -60,7 +60,7 @@ struct TcnConvLayer {
 /// let output = tcn.step(&[0.5, 1.0]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct TinyTcnF32 {
+pub struct TinyTcn {
     layers: Box<[TcnConvLayer]>,
     w_out: Box<[f32]>,
     b_out: Box<[f32]>,
@@ -76,7 +76,7 @@ pub struct TinyTcnF32 {
     activation: Activation,
 }
 
-impl TinyTcnF32 {
+impl TinyTcn {
     /// Construct from pre-trained per-layer weights.
     ///
     /// - `input_size`: features per timestep.
@@ -452,7 +452,7 @@ mod tests {
         output: usize,
         residual: bool,
         w_val: f32,
-    ) -> TinyTcnF32 {
+    ) -> TinyTcn {
         let mut w_convs = Vec::new();
         let mut b_convs = Vec::new();
 
@@ -468,7 +468,7 @@ mod tests {
         let w_out = vec![w_val; output * filters];
         let b_out = vec![0.0_f32; output];
 
-        TinyTcnF32::from_parts(
+        TinyTcn::from_parts(
             input_size,
             filters,
             kernel,
@@ -491,7 +491,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32]; // pass-through
         let b_out = [0.0_f32];
-        let mut tcn = TinyTcnF32::from_parts(
+        let mut tcn = TinyTcn::from_parts(
             1,
             1,
             2,
@@ -647,7 +647,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32];
         let b_out = [0.0_f32];
-        let mut tcn = TinyTcnF32::from_parts(
+        let mut tcn = TinyTcn::from_parts(
             1,
             1,
             1,
@@ -682,7 +682,7 @@ mod tests {
         let b1 = [0.0_f32];
         let w_out = [1.0_f32];
         let b_out = [0.0_f32];
-        let mut tcn = TinyTcnF32::from_parts(
+        let mut tcn = TinyTcn::from_parts(
             1,
             1,
             3,
@@ -729,7 +729,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_layers() {
-        let r: Result<TinyTcnF32, _> = TinyTcnF32::from_parts(
+        let r: Result<TinyTcn, _> = TinyTcn::from_parts(
             1,
             4,
             3,
@@ -748,7 +748,7 @@ mod tests {
     fn validation_rejects_zero_size() {
         let w = [0.0_f32; 4];
         let b = [0.0_f32; 4];
-        let r = TinyTcnF32::from_parts(
+        let r = TinyTcn::from_parts(
             0,
             4,
             2,
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_weight_mismatch() {
-        let r = TinyTcnF32::from_parts(
+        let r = TinyTcn::from_parts(
             2,
             4,
             3,
@@ -784,7 +784,7 @@ mod tests {
     fn validation_rejects_non_finite() {
         let mut w = vec![0.1_f32; 8]; // 2*2*2
         w[3] = f32::NAN;
-        let r = TinyTcnF32::from_parts(
+        let r = TinyTcn::from_parts(
             2,
             2,
             2,
@@ -803,7 +803,7 @@ mod tests {
     fn validation_rejects_mismatched_layer_counts() {
         let w0 = [0.0_f32; 8]; // 2*2*2
         let b0 = [0.0_f32; 2];
-        let r = TinyTcnF32::from_parts(
+        let r = TinyTcn::from_parts(
             2,
             2,
             2,

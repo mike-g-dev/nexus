@@ -18,7 +18,7 @@ use crate::dot::matvec_bias_f32;
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::StackedLstmF32;
+/// use nexus_inference::StackedLstm;
 ///
 /// let input_size = 4;
 /// let hidden_size = 8;
@@ -40,7 +40,7 @@ use crate::dot::matvec_bias_f32;
 /// let w_out = vec![0.1_f32; 1 * hidden_size];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut lstm = StackedLstmF32::from_parts(
+/// let mut lstm = StackedLstm::from_parts(
 ///     input_size, hidden_size, 1,
 ///     &[&wih_l0, &wih_l1],
 ///     &[&whh_l0, &whh_l1],
@@ -52,7 +52,7 @@ use crate::dot::matvec_bias_f32;
 /// let output = lstm.step(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct StackedLstmF32 {
+pub struct StackedLstm {
     layers: Box<[LstmLayer]>,
     w_out: Box<[f32]>,
     b_out: Box<[f32]>,
@@ -150,7 +150,7 @@ impl LstmLayer {
     }
 }
 
-impl StackedLstmF32 {
+impl StackedLstm {
     /// Construct from pre-trained per-layer weights.
     ///
     /// Each slice in `layers_weight_ih`, `layers_weight_hh`,
@@ -347,7 +347,7 @@ mod tests {
         output: usize,
         num_layers: usize,
         val: f32,
-    ) -> StackedLstmF32 {
+    ) -> StackedLstm {
         let gc = 4 * hidden;
         let wih_l0 = vec![val; gc * input];
         let whh_l0 = vec![val; gc * hidden];
@@ -376,7 +376,7 @@ mod tests {
         let w_out = vec![val; output * hidden];
         let b_out = vec![0.0_f32; output];
 
-        StackedLstmF32::from_parts(
+        StackedLstm::from_parts(
             input,
             hidden,
             output,
@@ -404,7 +404,7 @@ mod tests {
         let w_out = vec![0.2_f32; output_size * hidden_size];
         let b_out = vec![0.1_f32; output_size];
 
-        let mut tiny = crate::TinyLstmF32::from_parts(
+        let mut tiny = crate::TinyLstm::from_parts(
             input_size,
             hidden_size,
             output_size,
@@ -417,7 +417,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut stacked = StackedLstmF32::from_parts(
+        let mut stacked = StackedLstm::from_parts(
             input_size,
             hidden_size,
             output_size,
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_layers() {
-        let r = StackedLstmF32::from_parts(2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1]);
+        let r = StackedLstm::from_parts(2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1]);
         assert!(r.is_err());
     }
 
@@ -537,7 +537,7 @@ mod tests {
         let whh = vec![0.1_f32; gc * 4];
         let bih = vec![0.0_f32; gc];
         let bhh = vec![0.0_f32; gc];
-        let r = StackedLstmF32::from_parts(
+        let r = StackedLstm::from_parts(
             2,
             4,
             1,
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = StackedLstmF32::from_parts(0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[]);
+        let r = StackedLstm::from_parts(0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[]);
         assert!(r.is_err());
     }
 

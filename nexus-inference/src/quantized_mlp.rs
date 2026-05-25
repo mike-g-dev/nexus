@@ -36,7 +36,7 @@ struct QuantLayer {
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::{Activation, QuantizedMlpI8};
+/// use nexus_inference::{Activation, QuantizedMlp};
 ///
 /// // 2-input, 4-hidden, 1-output with symmetric quantization
 /// let w0 = vec![10_i8; 4 * 2];  // layer 0: [4, 2]
@@ -44,7 +44,7 @@ struct QuantLayer {
 /// let w1 = vec![5_i8; 1 * 4];   // layer 1: [1, 4]
 /// let b1 = vec![0.0_f32; 1];
 ///
-/// let mut model = QuantizedMlpI8::from_parts(
+/// let mut model = QuantizedMlp::from_parts(
 ///     &[&w0, &w1],
 ///     &[&b0, &b1],
 ///     &[0.01, 0.01],  // weight scales
@@ -58,7 +58,7 @@ struct QuantLayer {
 /// ```
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
-pub struct QuantizedMlpI8 {
+pub struct QuantizedMlp {
     layers: Box<[QuantLayer]>,
     scratch_f32: Box<[f32]>,
     scratch_i8: Box<[i8]>,
@@ -284,7 +284,7 @@ fn quantize_f32_to_i8(src: &[f32], dst: &mut [i8], inv_scale: f32, zero_point: i
 }
 
 #[cfg(feature = "alloc")]
-impl QuantizedMlpI8 {
+impl QuantizedMlp {
     /// Construct from pre-trained quantized weights.
     ///
     /// Each layer k has:
@@ -590,7 +590,7 @@ mod tests {
         // input=[3.0, 4.0] → quantized=[3, 4] → dot=7 → dequant=7*1*1+0=7.0
         let w = [1_i8, 1];
         let b = [0.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -614,7 +614,7 @@ mod tests {
         // real: 1.0*2.0 + 2.0*3.0 = 8.0
         let w = [10_i8, 20];
         let b = [0.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[0.1],
@@ -632,7 +632,7 @@ mod tests {
     fn bias_applied() {
         let w = [1_i8, 1];
         let b = [5.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -656,7 +656,7 @@ mod tests {
         let b0 = [0.0_f32, 0.0];
         let w1 = [1_i8, 1];
         let b1 = [0.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w0, &w1],
             &[&b0, &b1],
             &[1.0, 1.0],
@@ -684,7 +684,7 @@ mod tests {
         // expected: 1.0*2.0 + 2.0*3.0 = 8.0
         let w = [20_i8, 30];
         let b = [0.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[0.1],
@@ -707,7 +707,7 @@ mod tests {
         // dequant=7*1.0*1.0=7.0
         let w = [1_i8];
         let b = [0.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -725,7 +725,7 @@ mod tests {
     fn multi_output() {
         let w = [1_i8, 0, 0, 1];
         let b = [10.0_f32, 20.0];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -749,7 +749,7 @@ mod tests {
         let b0 = [0.0_f32, 0.0];
         let w1 = [5_i8, 5]; // real: 1.0, 1.0
         let b1 = [0.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w0, &w1],
             &[&b0, &b1],
             &[0.1, 0.2],
@@ -776,7 +776,7 @@ mod tests {
         let b0 = [0.0_f32; 3];
         let w1 = [0_i8; 1 * 3];
         let b1 = [0.0_f32; 1];
-        let m = QuantizedMlpI8::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w0, &w1],
             &[&b0, &b1],
             &[1.0, 1.0],
@@ -794,8 +794,8 @@ mod tests {
 
     #[test]
     fn validation_rejects_empty() {
-        let r: Result<QuantizedMlpI8, _> =
-            QuantizedMlpI8::from_parts(&[], &[], &[], &[], &[], &[], Activation::Relu);
+        let r: Result<QuantizedMlp, _> =
+            QuantizedMlp::from_parts(&[], &[], &[], &[], &[], &[], Activation::Relu);
         assert!(r.is_err());
     }
 
@@ -803,7 +803,7 @@ mod tests {
     fn validation_rejects_mismatched_arrays() {
         let w = [0_i8; 4];
         let b = [0.0_f32; 2];
-        let r = QuantizedMlpI8::from_parts(
+        let r = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0, 1.0], // 2 scales but only 1 layer
@@ -819,7 +819,7 @@ mod tests {
     fn validation_rejects_bad_scale() {
         let w = [0_i8; 4];
         let b = [0.0_f32; 2];
-        let r = QuantizedMlpI8::from_parts(
+        let r = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[-1.0], // negative scale
@@ -836,7 +836,7 @@ mod tests {
         let w = [0_i8; 4];
         let b = [f32::NAN, 0.0];
         let r =
-            QuantizedMlpI8::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu);
+            QuantizedMlp::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu);
         assert!(r.is_err());
     }
 
@@ -847,7 +847,7 @@ mod tests {
         let b0 = [0.0_f32; 3];
         let w1 = [0_i8; 1 * 4]; // wrong: in_size=4 != prev out_size=3
         let b1 = [0.0_f32; 1];
-        let r = QuantizedMlpI8::from_parts(
+        let r = QuantizedMlp::from_parts(
             &[&w0, &w1],
             &[&b0, &b1],
             &[1.0, 1.0],
@@ -865,7 +865,7 @@ mod tests {
         let w = [0_i8; 4];
         let b = [0.0_f32; 2];
         let mut m =
-            QuantizedMlpI8::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu)
+            QuantizedMlp::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu)
                 .unwrap();
         m.predict(&[1.0, 2.0]);
     }
@@ -876,7 +876,7 @@ mod tests {
         let w = [0_i8; 4];
         let b = [0.0_f32; 2];
         let mut m =
-            QuantizedMlpI8::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu)
+            QuantizedMlp::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu)
                 .unwrap();
         m.predict(&[1.0]); // expects 2 inputs
     }
@@ -886,7 +886,7 @@ mod tests {
         // Large input that would overflow i8 range after quantization
         let w = [1_i8];
         let b = [0.0_f32];
-        let mut m = QuantizedMlpI8::from_parts(
+        let mut m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],

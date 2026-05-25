@@ -14,10 +14,10 @@ mod avx512_gates;
 ))]
 mod avx2_gates;
 
-pub use gru::TinyGruF32;
-pub use lstm::TinyLstmF32;
-pub use stacked_gru::StackedGruF32;
-pub use stacked_lstm::StackedLstmF32;
+pub use gru::TinyGru;
+pub use lstm::TinyLstm;
+pub use stacked_gru::StackedGru;
+pub use stacked_lstm::StackedLstm;
 
 /// Padé [7,6] rational approximant for tanh.
 ///

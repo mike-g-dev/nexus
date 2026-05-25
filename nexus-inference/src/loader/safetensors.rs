@@ -156,7 +156,7 @@ fn sqrt_f64(x: f64) -> f64 {
 // ---- RNN loaders (require tanh/sigmoid from std or libm) ----
 
 #[cfg(any(feature = "std", feature = "libm"))]
-impl crate::TinyLstmF32 {
+impl crate::TinyLstm {
     /// Load from safetensors data.
     ///
     /// `rnn_prefix` resolves PyTorch `nn.LSTM` tensors:
@@ -178,7 +178,7 @@ impl crate::TinyLstmF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let lstm = TinyLstmF32::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
+    /// let lstm = TinyLstm::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -231,7 +231,7 @@ impl crate::TinyLstmF32 {
 }
 
 #[cfg(any(feature = "std", feature = "libm"))]
-impl crate::TinyGruF32 {
+impl crate::TinyGru {
     /// Load from safetensors data.
     ///
     /// `rnn_prefix` resolves PyTorch `nn.GRU` tensors:
@@ -252,7 +252,7 @@ impl crate::TinyGruF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let gru = TinyGruF32::from_safetensors(&bytes, "gru", "fc")?;
+    /// let gru = TinyGru::from_safetensors(&bytes, "gru", "fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -307,7 +307,7 @@ impl crate::TinyGruF32 {
 // ---- Stacked RNN loaders (require tanh/sigmoid from std or libm) ----
 
 #[cfg(any(feature = "std", feature = "libm"))]
-impl crate::StackedLstmF32 {
+impl crate::StackedLstm {
     /// Load from safetensors data.
     ///
     /// Auto-detects `num_layers` by scanning for `weight_ih_l0`,
@@ -333,7 +333,7 @@ impl crate::StackedLstmF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let lstm = StackedLstmF32::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
+    /// let lstm = StackedLstm::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -424,7 +424,7 @@ impl crate::StackedLstmF32 {
 }
 
 #[cfg(any(feature = "std", feature = "libm"))]
-impl crate::StackedGruF32 {
+impl crate::StackedGru {
     /// Load from safetensors data.
     ///
     /// Auto-detects `num_layers` by scanning for `weight_ih_l0`,
@@ -450,7 +450,7 @@ impl crate::StackedGruF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let gru = StackedGruF32::from_safetensors(&bytes, "encoder.gru", "encoder.fc")?;
+    /// let gru = StackedGru::from_safetensors(&bytes, "encoder.gru", "encoder.fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -629,7 +629,7 @@ macro_rules! impl_mlp_safetensors {
             ///
             /// ```ignore
             /// let bytes = std::fs::read("model.safetensors")?;
-            /// let mlp = MlpF32::from_safetensors(&bytes, "fc", Activation::Relu)?;
+            /// let mlp = Mlp::from_safetensors(&bytes, "fc", Activation::Relu)?;
             /// ```
             pub fn from_safetensors(
                 data: &[u8],
@@ -849,11 +849,11 @@ macro_rules! impl_mlp_safetensors {
     };
 }
 
-impl_mlp_safetensors!(MlpF32, f32, extract_f32_2d, extract_f32_1d);
+impl_mlp_safetensors!(Mlp, f32, extract_f32_2d, extract_f32_1d);
 
 // ---- Conv1d loader ----
 
-impl crate::Causal1dConvF32 {
+impl crate::Causal1dConv {
     /// Load from safetensors data.
     ///
     /// `conv_prefix` resolves PyTorch `nn.Conv1d` tensors:
@@ -877,7 +877,7 @@ impl crate::Causal1dConvF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let conv = Causal1dConvF32::from_safetensors(
+    /// let conv = Causal1dConv::from_safetensors(
     ///     &bytes, "conv", "fc", Activation::Relu,
     /// )?;
     /// ```
@@ -935,7 +935,7 @@ impl crate::Causal1dConvF32 {
 
 // ---- SSM loader ----
 
-impl crate::LinearSsmF32 {
+impl crate::LinearSsm {
     /// Load from safetensors data.
     ///
     /// Expected tensors under `prefix`:
@@ -953,7 +953,7 @@ impl crate::LinearSsmF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("ssm.safetensors")?;
-    /// let ssm = LinearSsmF32::from_safetensors(&bytes, "ssm")?;
+    /// let ssm = LinearSsm::from_safetensors(&bytes, "ssm")?;
     /// ```
     pub fn from_safetensors(data: &[u8], prefix: &str) -> Result<Self, LoadError> {
         let st = parse(data)?;
@@ -1038,7 +1038,7 @@ fn count_tcn_layers(st: &SafeTensors<'_>, prefix: &str) -> Result<usize, LoadErr
     Ok(n)
 }
 
-impl crate::TinyTcnF32 {
+impl crate::TinyTcn {
     /// Load from safetensors data.
     ///
     /// Tensor naming convention:
@@ -1065,7 +1065,7 @@ impl crate::TinyTcnF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("tcn.safetensors")?;
-    /// let tcn = TinyTcnF32::from_safetensors(
+    /// let tcn = TinyTcn::from_safetensors(
     ///     &bytes, "tcn", Activation::Relu, false,
     /// )?;
     /// ```
@@ -1204,7 +1204,7 @@ fn count_bnn_binary_layers(st: &SafeTensors<'_>, prefix: &str) -> Result<usize, 
     Ok(n)
 }
 
-impl crate::BnnF32 {
+impl crate::Bnn {
     /// Load from safetensors data.
     ///
     /// Tensor naming convention:
@@ -1230,7 +1230,7 @@ impl crate::BnnF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("bnn.safetensors")?;
-    /// let bnn = BnnF32::from_safetensors(&bytes, "bnn")?;
+    /// let bnn = Bnn::from_safetensors(&bytes, "bnn")?;
     /// ```
     pub fn from_safetensors(data: &[u8], prefix: &str) -> Result<Self, LoadError> {
         let st = parse(data)?;
@@ -1351,7 +1351,7 @@ fn count_quantized_mlp_layers(st: &SafeTensors<'_>, prefix: &str) -> Result<usiz
     Ok(n)
 }
 
-impl crate::QuantizedMlpI8 {
+impl crate::QuantizedMlp {
     /// Load from safetensors data.
     ///
     /// Tensor naming convention (per layer `k`):
@@ -1375,7 +1375,7 @@ impl crate::QuantizedMlpI8 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("quantized_mlp.safetensors")?;
-    /// let qmlp = QuantizedMlpI8::from_safetensors(&bytes, "qmlp", Activation::Relu)?;
+    /// let qmlp = QuantizedMlp::from_safetensors(&bytes, "qmlp", Activation::Relu)?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -1509,7 +1509,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let lstm = crate::TinyLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
+        let lstm = crate::TinyLstm::from_safetensors(&data, "lstm", "fc").unwrap();
         assert_eq!(lstm.input_size(), i);
         assert_eq!(lstm.hidden_size(), h);
         assert_eq!(lstm.output_size(), o);
@@ -1531,7 +1531,7 @@ mod tests {
         let bo = vec![0.1_f32; o];
 
         let mut reference =
-            crate::TinyLstmF32::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
+            crate::TinyLstm::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
 
         let wih_b = f32_bytes(&wih);
         let whh_b = f32_bytes(&whh);
@@ -1549,7 +1549,7 @@ mod tests {
             ("out.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::TinyLstmF32::from_safetensors(&data, "rnn", "out").unwrap();
+        let mut loaded = crate::TinyLstm::from_safetensors(&data, "rnn", "out").unwrap();
 
         let input = [0.5_f32, -0.3];
         let ref_out = reference.step(&input);
@@ -1593,7 +1593,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let gru = crate::TinyGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+        let gru = crate::TinyGru::from_safetensors(&data, "gru", "fc").unwrap();
         assert_eq!(gru.input_size(), i);
         assert_eq!(gru.hidden_size(), h);
         assert_eq!(gru.output_size(), o);
@@ -1615,7 +1615,7 @@ mod tests {
         let bo = vec![0.1_f32; o];
 
         let mut reference =
-            crate::TinyGruF32::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
+            crate::TinyGru::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
 
         let wih_b = f32_bytes(&wih);
         let whh_b = f32_bytes(&whh);
@@ -1633,7 +1633,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::TinyGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+        let mut loaded = crate::TinyGru::from_safetensors(&data, "gru", "fc").unwrap();
 
         let input = [0.5_f32, -0.3];
         let ref_out = reference.step(&input);
@@ -1667,7 +1667,7 @@ mod tests {
             ("fc.2.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mlp = crate::MlpF32::from_safetensors(&data, "fc", crate::Activation::Relu).unwrap();
+        let mlp = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu).unwrap();
         assert_eq!(mlp.n_inputs(), 2);
         assert_eq!(mlp.n_outputs(), 1);
         assert_eq!(mlp.n_layers(), 2);
@@ -1680,7 +1680,7 @@ mod tests {
         let w1: Vec<f32> = vec![1.0, 1.0, 0.0, 0.0];
         let b1: Vec<f32> = vec![0.0];
 
-        let mut reference = crate::MlpF32::from_parts(
+        let mut reference = crate::Mlp::from_parts(
             &[2, 4, 1],
             &[w0.as_slice(), w1.as_slice()].concat(),
             &[b0.as_slice(), b1.as_slice()].concat(),
@@ -1700,8 +1700,7 @@ mod tests {
             ("1.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut loaded =
-            crate::MlpF32::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
+        let mut loaded = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
 
         let input = [3.0_f32, 4.0];
         let ref_out = reference.predict(&input);
@@ -1748,7 +1747,7 @@ mod tests {
             ("fc.3.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut mlp = crate::MlpF32::from_safetensors(&data, "fc", crate::Activation::Relu)
+        let mut mlp = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu)
             .expect("should load with BN fusion");
 
         // Verify: input [3, 5]
@@ -1804,7 +1803,7 @@ mod tests {
             ("2.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut mlp = crate::MlpF32::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
+        let mut mlp = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
 
         // Input [3, 4]: Linear=[3,4], BN with gamma=1,beta=0:
         //   scale = 1/sqrt(1+1e-5) ≈ 1.0
@@ -1843,13 +1842,9 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[1], &bo_b)),
         ]);
 
-        let conv = crate::Causal1dConvF32::from_safetensors(
-            &data,
-            "conv",
-            "fc",
-            crate::Activation::Identity,
-        )
-        .unwrap();
+        let conv =
+            crate::Causal1dConv::from_safetensors(&data, "conv", "fc", crate::Activation::Identity)
+                .unwrap();
         assert_eq!(conv.input_ch(), 1);
         assert_eq!(conv.kernel_size(), 3);
         assert_eq!(conv.filters(), 2);
@@ -1888,16 +1883,12 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[1], &bo_b)),
         ]);
 
-        let mut conv = crate::Causal1dConvF32::from_safetensors(
-            &data,
-            "conv",
-            "fc",
-            crate::Activation::Identity,
-        )
-        .unwrap();
+        let mut conv =
+            crate::Causal1dConv::from_safetensors(&data, "conv", "fc", crate::Activation::Identity)
+                .unwrap();
 
         let w_conv_ours = [0.2_f32, 0.4, 0.1, 0.3];
-        let mut reference = crate::Causal1dConvF32::from_parts(
+        let mut reference = crate::Causal1dConv::from_parts(
             2,
             2,
             1,
@@ -1938,7 +1929,7 @@ mod tests {
             make_view(Dtype::F32, &[4, 1], &w_b),
         )]);
 
-        let err = crate::MlpF32::from_safetensors(&data, "fc", crate::Activation::Relu);
+        let err = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu);
         assert!(matches!(err, Err(LoadError::Parse(_))));
     }
 
@@ -1952,7 +1943,7 @@ mod tests {
             make_view(Dtype::F32, &[4, 2], &w_b),
         )]);
 
-        let err = crate::TinyLstmF32::from_safetensors(&data, "lstm", "fc");
+        let err = crate::TinyLstm::from_safetensors(&data, "lstm", "fc");
         match err {
             Err(LoadError::TensorNotFound(name)) => {
                 assert_eq!(name, "lstm.weight_hh_l0".to_string());
@@ -1963,11 +1954,8 @@ mod tests {
 
     #[test]
     fn invalid_safetensors() {
-        let err = crate::MlpF32::from_safetensors(
-            b"not valid safetensors",
-            "fc",
-            crate::Activation::Relu,
-        );
+        let err =
+            crate::Mlp::from_safetensors(b"not valid safetensors", "fc", crate::Activation::Relu);
         assert!(matches!(err, Err(LoadError::Parse(_))));
     }
 
@@ -2024,7 +2012,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let lstm = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
+        let lstm = crate::StackedLstm::from_safetensors(&data, "lstm", "fc").unwrap();
         assert_eq!(lstm.input_size(), i);
         assert_eq!(lstm.hidden_size(), h);
         assert_eq!(lstm.output_size(), o);
@@ -2050,7 +2038,7 @@ mod tests {
         let wo = vec![0.2_f32; o * h];
         let bo = vec![0.1_f32; o];
 
-        let mut reference = crate::StackedLstmF32::from_parts(
+        let mut reference = crate::StackedLstm::from_parts(
             i,
             h,
             o,
@@ -2099,7 +2087,7 @@ mod tests {
             ("out.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::StackedLstmF32::from_safetensors(&data, "rnn", "out").unwrap();
+        let mut loaded = crate::StackedLstm::from_safetensors(&data, "rnn", "out").unwrap();
 
         let input = [0.5_f32, -0.3];
         let ref_out = reference.step(&input);
@@ -2141,7 +2129,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let lstm = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
+        let lstm = crate::StackedLstm::from_safetensors(&data, "lstm", "fc").unwrap();
         assert_eq!(lstm.num_layers(), 1);
     }
 
@@ -2185,7 +2173,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let err = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc");
+        let err = crate::StackedLstm::from_safetensors(&data, "lstm", "fc");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2242,7 +2230,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let gru = crate::StackedGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+        let gru = crate::StackedGru::from_safetensors(&data, "gru", "fc").unwrap();
         assert_eq!(gru.input_size(), i);
         assert_eq!(gru.hidden_size(), h);
         assert_eq!(gru.output_size(), o);
@@ -2268,7 +2256,7 @@ mod tests {
         let wo = vec![0.2_f32; o * h];
         let bo = vec![0.1_f32; o];
 
-        let mut reference = crate::StackedGruF32::from_parts(
+        let mut reference = crate::StackedGru::from_parts(
             i,
             h,
             o,
@@ -2317,7 +2305,7 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::StackedGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+        let mut loaded = crate::StackedGru::from_safetensors(&data, "gru", "fc").unwrap();
 
         let input = [0.5_f32, -0.3];
         let ref_out = reference.step(&input);
@@ -2332,7 +2320,7 @@ mod tests {
     #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_missing_l0() {
         let data = serialize_tensors(vec![]);
-        let err = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc");
+        let err = crate::StackedLstm::from_safetensors(&data, "lstm", "fc");
         assert!(matches!(err, Err(LoadError::TensorNotFound(_))));
     }
 
@@ -2361,7 +2349,7 @@ mod tests {
             ("ssm.d", make_view(Dtype::F32, &[o, i], &d_b)),
         ]);
 
-        let ssm = crate::LinearSsmF32::from_safetensors(&data, "ssm").unwrap();
+        let ssm = crate::LinearSsm::from_safetensors(&data, "ssm").unwrap();
         assert_eq!(ssm.input_size(), i);
         assert_eq!(ssm.hidden_size(), h);
         assert_eq!(ssm.output_size(), o);
@@ -2387,7 +2375,7 @@ mod tests {
             ("m.c", make_view(Dtype::F32, &[o, h], &c_b)),
         ]);
 
-        let mut ssm = crate::LinearSsmF32::from_safetensors(&data, "m").unwrap();
+        let mut ssm = crate::LinearSsm::from_safetensors(&data, "m").unwrap();
         // h = [0,0]*0.5 + [5,5] = [5, 5]; y = 1*5 + 1*5 + 0 = 10
         let y = ssm.step(&[5.0]);
         assert!((y - 10.0).abs() < 1e-6);
@@ -2412,8 +2400,8 @@ mod tests {
             ("s.d", make_view(Dtype::F32, &[1, 2], &d_b)),
         ]);
 
-        let mut st = crate::LinearSsmF32::from_safetensors(&data, "s").unwrap();
-        let mut fp = crate::LinearSsmF32::from_parts(&a, &b, &c, &d, 1).unwrap();
+        let mut st = crate::LinearSsm::from_safetensors(&data, "s").unwrap();
+        let mut fp = crate::LinearSsm::from_parts(&a, &b, &c, &d, 1).unwrap();
 
         let input = [1.0_f32, 2.0];
         let y_st = st.step(&input);
@@ -2469,7 +2457,7 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let bnn = crate::BnnF32::from_safetensors(&data, "bnn").unwrap();
+        let bnn = crate::Bnn::from_safetensors(&data, "bnn").unwrap();
         assert_eq!(bnn.input_size(), i);
         assert_eq!(bnn.hidden_size(), h);
         assert_eq!(bnn.output_size(), o);
@@ -2502,7 +2490,7 @@ mod tests {
             ("net.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let bnn = crate::BnnF32::from_safetensors(&data, "net").unwrap();
+        let bnn = crate::Bnn::from_safetensors(&data, "net").unwrap();
         assert_eq!(bnn.num_binary_layers(), 0);
         assert_eq!(bnn.input_size(), i);
     }
@@ -2549,7 +2537,7 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let err = crate::BnnF32::from_safetensors(&data, "bnn");
+        let err = crate::Bnn::from_safetensors(&data, "bnn");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2583,7 +2571,7 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let err = crate::BnnF32::from_safetensors(&data, "bnn");
+        let err = crate::Bnn::from_safetensors(&data, "bnn");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2620,7 +2608,7 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let err = crate::BnnF32::from_safetensors(&data, "bnn");
+        let err = crate::Bnn::from_safetensors(&data, "bnn");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2659,7 +2647,7 @@ mod tests {
         let bw_refs: Vec<&[u64]> = vec![bin_w_u64.as_slice()];
         let bb_refs: Vec<&[f32]> = vec![bin_b.as_slice()];
         let mut fp =
-            crate::BnnF32::from_parts(&w_in, &b_in, &bw_refs, &bb_refs, &w_out, &b_out, o).unwrap();
+            crate::Bnn::from_parts(&w_in, &b_in, &bw_refs, &bb_refs, &w_out, &b_out, o).unwrap();
 
         // Build safetensors
         let w_in_b = f32_bytes(&w_in);
@@ -2678,7 +2666,7 @@ mod tests {
             ("b.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let mut st = crate::BnnF32::from_safetensors(&data, "b").unwrap();
+        let mut st = crate::Bnn::from_safetensors(&data, "b").unwrap();
 
         let input = [1.0_f32, -0.5];
         let y_st = st.predict(&input);
@@ -2712,7 +2700,7 @@ mod tests {
             ("t.output.bias", make_view(Dtype::F32, &[o], &bo)),
         ]);
 
-        let err = crate::TinyTcnF32::from_safetensors(&data, "t", crate::Activation::Relu, false);
+        let err = crate::TinyTcn::from_safetensors(&data, "t", crate::Activation::Relu, false);
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2749,8 +2737,8 @@ mod tests {
             ),
         ]);
 
-        let qmlp = crate::QuantizedMlpI8::from_safetensors(&data, "q", crate::Activation::Identity)
-            .unwrap();
+        let qmlp =
+            crate::QuantizedMlp::from_safetensors(&data, "q", crate::Activation::Identity).unwrap();
         assert_eq!(qmlp.input_size(), 3);
         assert_eq!(qmlp.output_size(), 2);
     }
@@ -2784,7 +2772,7 @@ mod tests {
             ("q.layer_2.weight", make_view(Dtype::I8, &[2, 2], &orphan_w)),
         ]);
 
-        let err = crate::QuantizedMlpI8::from_safetensors(&data, "q", crate::Activation::Relu);
+        let err = crate::QuantizedMlp::from_safetensors(&data, "q", crate::Activation::Relu);
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 }

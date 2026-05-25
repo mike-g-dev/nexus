@@ -32,7 +32,7 @@ use super::{sigmoid_f32, tanh_f32};
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::TinyGruF32;
+/// use nexus_inference::TinyGru;
 ///
 /// let weight_ih = vec![0.1_f32; 3 * 8 * 4];
 /// let weight_hh = vec![0.1_f32; 3 * 8 * 8];
@@ -41,7 +41,7 @@ use super::{sigmoid_f32, tanh_f32};
 /// let w_out = vec![0.1_f32; 1 * 8];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut gru = TinyGruF32::from_parts(
+/// let mut gru = TinyGru::from_parts(
 ///     4, 8, 1,
 ///     &weight_ih, &weight_hh,
 ///     &bias_ih, &bias_hh,
@@ -51,7 +51,7 @@ use super::{sigmoid_f32, tanh_f32};
 /// let output = gru.step(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct TinyGruF32 {
+pub struct TinyGru {
     weight_ih: Box<[f32]>,
     weight_hh: Box<[f32]>,
     bias_ih: Box<[f32]>,
@@ -66,7 +66,7 @@ pub struct TinyGruF32 {
     output_size: u16,
 }
 
-impl TinyGruF32 {
+impl TinyGru {
     /// Construct from pre-trained weights.
     ///
     /// Parameters map to PyTorch's `nn.GRU` + `nn.Linear`:
@@ -269,7 +269,7 @@ mod tests {
         w_hh_val: f32,
         b_val: f32,
         w_out_val: f32,
-    ) -> TinyGruF32 {
+    ) -> TinyGru {
         let gate_count = 3 * hidden;
         let weight_ih = vec![w_ih_val; gate_count * input];
         let weight_hh = vec![w_hh_val; gate_count * hidden];
@@ -277,7 +277,7 @@ mod tests {
         let bias_hh = vec![0.0_f32; gate_count];
         let w_out = vec![w_out_val; output * hidden];
         let b_out = vec![0.0_f32; output];
-        TinyGruF32::from_parts(
+        TinyGru::from_parts(
             input, hidden, output, &weight_ih, &weight_hh, &bias_ih, &bias_hh, &w_out, &b_out,
         )
         .unwrap()
@@ -376,7 +376,7 @@ mod tests {
         for k in h..2 * h {
             bias_z[k] = 5.0;
         }
-        let mut gru_z = TinyGruF32::from_parts(
+        let mut gru_z = TinyGru::from_parts(
             i,
             h,
             1,
@@ -420,13 +420,13 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = TinyGruF32::from_parts(0, 2, 1, &[], &[], &[], &[], &[], &[]);
+        let r = TinyGru::from_parts(0, 2, 1, &[], &[], &[], &[], &[], &[]);
         assert!(r.is_err());
     }
 
     #[test]
     fn validation_rejects_weight_mismatch() {
-        let r = TinyGruF32::from_parts(
+        let r = TinyGru::from_parts(
             2, 2, 1, &[0.0; 11], // wrong: should be 3*2*2 = 12
             &[0.0; 12], &[0.0; 6], &[0.0; 6], &[0.0; 2], &[0.0; 1],
         );
@@ -437,7 +437,7 @@ mod tests {
     fn validation_rejects_non_finite() {
         let mut w = vec![0.1_f32; 12];
         w[5] = f32::INFINITY;
-        let r = TinyGruF32::from_parts(
+        let r = TinyGru::from_parts(
             2, 2, 1, &w, &[0.0; 12], &[0.0; 6], &[0.0; 6], &[0.0; 2], &[0.0; 1],
         );
         assert!(r.is_err());

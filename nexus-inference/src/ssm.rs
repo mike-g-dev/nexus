@@ -30,21 +30,21 @@ use crate::dot::{dot_f32, matvec_f32};
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::LinearSsmF32;
+/// use nexus_inference::LinearSsm;
 ///
 /// let a_diag = vec![0.9_f32; 4];
 /// let b = vec![0.1_f32; 4 * 2];
 /// let c = vec![0.1_f32; 1 * 4];
 /// let d = vec![0.0_f32; 1 * 2];
 ///
-/// let mut ssm = LinearSsmF32::from_parts(
+/// let mut ssm = LinearSsm::from_parts(
 ///     &a_diag, &b, &c, &d, 1,
 /// ).unwrap();
 ///
 /// let output = ssm.step(&[0.5, 1.0]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct LinearSsmF32 {
+pub struct LinearSsm {
     a_diag: Box<[f32]>,
     b: Box<[f32]>,
     c: Box<[f32]>,
@@ -56,7 +56,7 @@ pub struct LinearSsmF32 {
     output_size: u16,
 }
 
-impl LinearSsmF32 {
+impl LinearSsm {
     /// Construct from pre-discretized parameters.
     ///
     /// - `a_diag`: diagonal of A, `[H]`.
@@ -197,14 +197,14 @@ impl LinearSsmF32 {
 mod tests {
     use super::*;
 
-    fn ssm_1x2x1() -> LinearSsmF32 {
+    fn ssm_1x2x1() -> LinearSsm {
         // I=2, H=2, O=1
         // A = diag(0.9, 0.8)
         // B = [[0.1, 0.2],
         //      [0.3, 0.4]]  (H=2, I=2)
         // C = [[0.5, 0.6]]  (O=1, H=2)
         // D = [[0.01, 0.02]] (O=1, I=2)
-        LinearSsmF32::from_parts(
+        LinearSsm::from_parts(
             &[0.9, 0.8],
             &[0.1, 0.2, 0.3, 0.4],
             &[0.5, 0.6],
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn zero_d_means_no_skip() {
-        let mut ssm = LinearSsmF32::from_parts(
+        let mut ssm = LinearSsm::from_parts(
             &[0.9, 0.8],
             &[0.1, 0.2, 0.3, 0.4],
             &[0.5, 0.6],
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn multi_output() {
         // I=1, H=2, O=2
-        let mut ssm = LinearSsmF32::from_parts(
+        let mut ssm = LinearSsm::from_parts(
             &[0.5, 0.5],
             &[1.0, 1.0],           // B: H=2, I=1
             &[1.0, 0.0, 0.0, 1.0], // C: O=2, H=2 (identity)
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn state_decays_without_input() {
-        let mut ssm = LinearSsmF32::from_parts(
+        let mut ssm = LinearSsm::from_parts(
             &[0.5], // fast decay
             &[1.0], // I=1, H=1
             &[1.0], // O=1, H=1 (identity)
@@ -311,13 +311,13 @@ mod tests {
 
     #[test]
     fn rejects_empty() {
-        assert!(LinearSsmF32::from_parts(&[], &[1.0], &[1.0], &[0.0], 1).is_err());
+        assert!(LinearSsm::from_parts(&[], &[1.0], &[1.0], &[0.0], 1).is_err());
     }
 
     #[test]
     fn rejects_mismatched_c() {
         assert!(
-            LinearSsmF32::from_parts(
+            LinearSsm::from_parts(
                 &[0.9],
                 &[0.1],      // H=1, I=1
                 &[0.5, 0.6], // expects O*H=1, got 2
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn rejects_non_finite() {
-        assert!(LinearSsmF32::from_parts(&[f32::NAN], &[0.1], &[0.5], &[0.0], 1,).is_err());
+        assert!(LinearSsm::from_parts(&[f32::NAN], &[0.1], &[0.5], &[0.0], 1,).is_err());
     }
 
     #[test]
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "step() requires output_size == 1")]
     fn step_multi_output_panics() {
-        let mut ssm = LinearSsmF32::from_parts(
+        let mut ssm = LinearSsm::from_parts(
             &[0.5, 0.5],
             &[1.0, 1.0],
             &[1.0, 0.0, 0.0, 1.0],
