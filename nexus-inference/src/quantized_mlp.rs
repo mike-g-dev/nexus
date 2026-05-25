@@ -69,6 +69,7 @@ pub struct QuantizedMlpI8 {
     activation: Activation,
 }
 
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
 #[inline]
 fn dot_i8_i32(a: &[i8], b: &[i8]) -> i32 {
     debug_assert_eq!(a.len(), b.len());
@@ -89,6 +90,7 @@ fn dot_i8_i32(a: &[i8], b: &[i8]) -> i32 {
     (s0 + s2) + (s1 + s3)
 }
 
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
 #[inline]
 fn dot4_i8_i32(rows: &[i8], input: &[i8]) -> [i32; 4] {
     let n = input.len();
@@ -100,7 +102,12 @@ fn dot4_i8_i32(rows: &[i8], input: &[i8]) -> [i32; 4] {
     ]
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2",))]
+// `_mm256_maddubs_epi16` saturates its i16 pairwise sums. With the XOR trick
+// (i8→u8 via +128), two adjacent large products can exceed i16 range. This is
+// accepted — matches FBGEMM/oneDNN/TVM behavior. Quantized inference is
+// inherently approximate; the saturation delta is negligible vs quantization
+// error for well-calibrated models (PyTorch torch.ao.quantization output).
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 #[inline(never)]
 fn matvec_i8_i32_simd(
     weights: &[i8],
@@ -152,9 +159,10 @@ fn matvec_i8_i32_simd(
             let sum32 = _mm_add_epi32(sum64, hi32);
             let mut dot = _mm_cvtsi128_si32(sum32);
 
-            // Scalar remainder
+            // Scalar remainder — must match SIMD path: multiply (input+128) * weight
+            // so the 128*row_sum correction in predict_into applies uniformly.
             while i < in_size {
-                dot += row[i] as i32 * input[i] as i32;
+                dot += (input[i] as i32 + 128) * row[i] as i32;
                 i += 1;
             }
 
@@ -371,8 +379,6 @@ impl QuantizedMlpI8 {
             );
 
             // Step 2: Integer matmul → i32 accumulation
-            let out_4 = out_size & !3;
-
             #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
             {
                 matvec_i8_i32_simd(
@@ -385,6 +391,7 @@ impl QuantizedMlpI8 {
             }
             #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
             {
+                let out_4 = out_size & !3;
                 let mut j = 0;
                 while j < out_4 {
                     let rows = &self.layers[layer_idx].w_i8[j * in_size..(j + 4) * in_size];

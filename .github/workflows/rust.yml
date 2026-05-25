@@ -34,6 +34,16 @@ jobs:
     - name: Test nexus-async-net (nexus, no tls)
       run: cargo test -p nexus-async-net --no-default-features --features nexus --lib --verbose
 
+  test-avx2:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@1.94.0
+    - name: Test nexus-inference (AVX2 SIMD path)
+      run: |
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+avx2" \
+          cargo test -p nexus-inference --target x86_64-unknown-linux-gnu --verbose
+
   verify-pytorch:
     runs-on: ubuntu-latest
     steps:
@@ -48,8 +58,13 @@ jobs:
         pip install safetensors packaging numpy
     - name: Generate fixtures from PyTorch
       run: python nexus-inference/tests/fixtures/generate_all.py
-    - name: Verify Rust matches PyTorch
+    - name: Verify Rust matches PyTorch (scalar)
       run: cargo test -p nexus-inference --features safetensors --test safetensors_integration --verbose
+    - name: Verify Rust matches PyTorch (AVX2)
+      run: |
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+avx2" \
+          cargo test -p nexus-inference --features safetensors --test safetensors_integration \
+          --target x86_64-unknown-linux-gnu --verbose
 
   verify-lightgbm:
     runs-on: ubuntu-latest
