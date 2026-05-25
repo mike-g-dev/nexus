@@ -49,61 +49,7 @@ fn parse_outputs(v: &serde_json::Value) -> Vec<f64> {
         .collect()
 }
 
-fn run_test_f64(name: &str) {
-    let model_bytes = load_model_txt(name);
-    let exp = load_expected(name);
-    let tol = exp["tolerance"].as_f64().unwrap();
-    let expected_n_features = exp["n_features"].as_u64().unwrap() as usize;
-    let expected_n_trees = exp["n_trees"].as_u64().unwrap() as usize;
-    let has_nan = exp
-        .get("has_nan")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let model = GbdtF64::from_lightgbm(&model_bytes).unwrap();
-    assert_eq!(
-        model.n_features(),
-        expected_n_features,
-        "{name}: n_features mismatch"
-    );
-    assert_eq!(
-        model.n_trees(),
-        expected_n_trees,
-        "{name}: n_trees mismatch"
-    );
-
-    let inputs = parse_inputs(&exp);
-    let outputs = parse_outputs(&exp);
-    assert_eq!(
-        inputs.len(),
-        outputs.len(),
-        "{name}: input/output count mismatch"
-    );
-
-    for (i, (inp, &expected)) in inputs.iter().zip(outputs.iter()).enumerate() {
-        let actual = if has_nan {
-            model.predict_nan_aware(inp)
-        } else {
-            model.predict(inp)
-        };
-        let err = (actual - expected).abs();
-        assert!(
-            err < tol,
-            "{name} f64 input {i}: got {actual}, expected {expected}, err={err}",
-        );
-
-        if !has_nan {
-            let nan_aware = model.predict_nan_aware(inp);
-            let err2 = (nan_aware - expected).abs();
-            assert!(
-                err2 < tol,
-                "{name} f64 input {i} (nan_aware): got {nan_aware}, expected {expected}, err={err2}",
-            );
-        }
-    }
-}
-
-fn run_test_f32(name: &str) {
+fn run_test(name: &str) {
     let model_bytes = load_model_txt(name);
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap().max(1e-4);
@@ -114,7 +60,7 @@ fn run_test_f32(name: &str) {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let model = GbdtF32::from_lightgbm(&model_bytes).unwrap();
+    let model = Gbdt::from_lightgbm(&model_bytes).unwrap();
     assert_eq!(
         model.n_features(),
         expected_n_features,
@@ -152,99 +98,54 @@ fn run_test_f32(name: &str) {
 // ---- regression ----
 
 #[test]
-fn regression_small_f64() {
-    run_test_f64("regression_small");
+fn regression_small() {
+    run_test("regression_small");
 }
 
 #[test]
-fn regression_small_f32() {
-    run_test_f32("regression_small");
+fn regression_deep() {
+    run_test("regression_deep");
 }
 
 #[test]
-fn regression_deep_f64() {
-    run_test_f64("regression_deep");
-}
-
-#[test]
-fn regression_deep_f32() {
-    run_test_f32("regression_deep");
-}
-
-#[test]
-fn regression_large_f64() {
-    run_test_f64("regression_large");
-}
-
-#[test]
-fn regression_large_f32() {
-    run_test_f32("regression_large");
+fn regression_large() {
+    run_test("regression_large");
 }
 
 // ---- binary classification (raw logit) ----
 
 #[test]
-fn binary_small_f64() {
-    run_test_f64("binary_small");
+fn binary_small() {
+    run_test("binary_small");
 }
 
 #[test]
-fn binary_small_f32() {
-    run_test_f32("binary_small");
-}
-
-#[test]
-fn binary_deep_f64() {
-    run_test_f64("binary_deep");
-}
-
-#[test]
-fn binary_deep_f32() {
-    run_test_f32("binary_deep");
+fn binary_deep() {
+    run_test("binary_deep");
 }
 
 // ---- NaN routing ----
 
 #[test]
-fn nan_regression_f64() {
-    run_test_f64("nan_regression");
-}
-
-#[test]
-fn nan_regression_f32() {
-    run_test_f32("nan_regression");
+fn nan_regression() {
+    run_test("nan_regression");
 }
 
 // ---- edge cases ----
 
 #[test]
-fn stump_f64() {
-    run_test_f64("stump");
+fn stump() {
+    run_test("stump");
 }
 
 #[test]
-fn stump_f32() {
-    run_test_f32("stump");
-}
-
-#[test]
-fn many_features_f64() {
-    run_test_f64("many_features");
-}
-
-#[test]
-fn many_features_f32() {
-    run_test_f32("many_features");
+fn many_features() {
+    run_test("many_features");
 }
 
 // ---- alternative objectives ----
 
 #[test]
-fn huber_f64() {
-    run_test_f64("huber");
-}
-
-#[test]
-fn huber_f32() {
-    run_test_f32("huber");
+fn huber() {
+    run_test("huber");
 }

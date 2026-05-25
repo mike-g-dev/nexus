@@ -16,16 +16,19 @@ only stack and pre-allocated memory.
 
 ## Model Types
 
-### Gradient-Boosted Decision Trees — `GbdtF64` / `GbdtF32`
+### Gradient-Boosted Decision Trees — `Gbdt`
 
 Ensemble of decision trees. Each tree partitions features by threshold
 comparisons, traversing to a leaf value. The final prediction is the sum
 of all leaf values plus a base score.
 
-16-byte nodes in false-branch-next (depth-first) layout — the right
-child is always `idx + 1`, so ~50% of traversals are sequential memory
-access served by the hardware prefetcher. NaN-aware routing matches
-LightGBM semantics. Partial ensemble evaluation via `predict_n`.
+8-byte nodes in false-branch-next (depth-first) layout — branchless
+traversal via `select_unpredictable` (single cmov per tree level).
+The right child is always `idx + 1`, so ~50% of traversals are
+sequential memory access served by the hardware prefetcher. NaN-aware
+routing matches LightGBM semantics. Partial ensemble evaluation via
+`predict_n`. Deterministic latency: p90/p50 < 1.04x regardless of
+input data.
 
 **Best for:** Tabular features with clear names and semantics —
 microstructure metrics (book imbalance, spread, queue depth), windowed
@@ -34,9 +37,9 @@ feature interactions, missing values, and heterogeneous scales natively.
 They don't need feature normalization and are interpretable through
 feature importance.
 
-**Guidance:** Use `GbdtF64` when loading LightGBM models (LightGBM
-trains in f64 natively). `GbdtF32` is available when memory or
-throughput matters more than precision. For temporal patterns, encode
+**Guidance:** Train in f64 (LightGBM default), deploy with `Gbdt`
+which infers in f32. This matches industry standard: full precision for
+training, reduced precision for inference. For temporal patterns, encode
 time through multi-timescale windowed features (e.g., VPIN at 1s, 10s,
 60s windows) rather than expecting the tree to learn temporal
 dependencies — GBDTs see each sample independently.

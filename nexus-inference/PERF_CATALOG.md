@@ -72,10 +72,29 @@ lever.
 
 ## GBDT (`src/gbdt.rs`)
 
-### False-branch-next node layout
+### 8-byte branchless node
 
-- Compact 16-byte `Node` struct (`repr(C)`): feature_idx (u16), left (u16),
-  flags (u16), value (f64). The `right` child field is **absent**.
+- Compact 8-byte `Node` struct (`repr(C)`): value (f32), feature_idx (u16),
+  left (u16). The `right` child field is **absent**.
+- `feature_idx` packs: bit 15 = leaf flag, bit 14 = default_left (NaN
+  routing), bits 13:0 = feature index (max 16383 features).
+- Power-of-2 stride: pointer arithmetic is `LEA [base + 8*idx]` — a shift,
+  not a multiply.
+- 2x cache density vs the previous 16-byte node (100-tree depth-6 model:
+  50 KB working set, fits L2).
+
+### Branchless traversal via `select_unpredictable`
+
+- `core::hint::select_unpredictable(go_left, left_idx, right_idx)` forces
+  cmov emission. Single cmov per tree level in the non-NaN path; 3 cmovs
+  per level in the NaN-aware path.
+- Distribution is nearly flat: p90/p50 < 1.04x for random features.
+  Input-dependent timing variation is eliminated.
+- NaN boolean collapse: `(feat <= threshold) | (is_nan & default_left)`
+  avoids the 3-arm `partial_cmp` match.
+
+### False-branch-next layout
+
 - DFS right-first tree reordering: the false/right child is always at
   `idx + 1`. Eliminates a stored index per node and makes ~50% of
   decisions (the false path) sequential — served from L1 by the hardware
@@ -83,13 +102,19 @@ lever.
 - `reorder_and_compact()` converts from `RawNode` (explicit left/right)
   to this layout during model construction.
 
-### 12-byte packed layout (rejected)
+### Rejected approaches
 
-- Benchmarked `repr(C, packed)` at 12 bytes per node (no padding after
-  `flags`). The 25% smaller working set doesn't shift the L2-vs-L3 cache
-  tier for any tested configuration, and the non-power-of-2 stride (×12 vs
-  ×16) plus unaligned access overhead **regressed L2-resident cases by
-  ~25%**. 16-byte aligned is the measured optimum.
+- **16-byte node with f64 value**: Required `as f32` cast on hot path and
+  prevented single-register cmov for value selection. Replaced by f32-only
+  8-byte node.
+- **12-byte packed layout**: Non-power-of-2 stride (×12) requires imul,
+  regressed L2-resident cases by ~25%.
+- **Two-level unroll (load both children as u64)**: Bloated loop body,
+  increased register pressure, prevented OoO iteration overlap. Regressed
+  p50 by 27% and destroyed distribution tightness (p90/p50: 1.02 → 1.38).
+- **Array-index `[a, b][bool as usize]`**: LLVM converts back to branches
+  when an indirect memory load is present.
+- **XOR mask arithmetic**: Same issue — LLVM sees through it.
 
 ### predict_n — partial ensemble
 

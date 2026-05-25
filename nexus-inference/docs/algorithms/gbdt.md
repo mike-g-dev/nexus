@@ -6,11 +6,11 @@ values across all trees.
 
 | Property | Value |
 |----------|-------|
-| Prediction cost | ~4.7 cycles/node (unchecked), ~6 cycles/node (NaN-aware) |
-| Memory | 16 bytes/node + 4 bytes/tree offset |
-| Types | `GbdtF64`, `GbdtF32` |
+| Prediction cost | ~5 cycles/node (branchless cmov), ~8 cycles/node (NaN-aware) |
+| Memory | 8 bytes/node + 4 bytes/tree offset |
+| Type | `Gbdt` |
 | Construction | `from_parts()` (raw nodes) or `from_lightgbm()` (text format) |
-| Output | Single scalar (raw ensemble score) |
+| Output | Single scalar (raw ensemble score, f32) |
 
 ## What It Does
 
@@ -56,18 +56,22 @@ prefetcher serves from L1.
                           B.left = 6 (G)    false branch: idx+1 = 5 (F)
 ```
 
-Compact 16-byte `repr(C)` nodes:
-- `feature_idx: u16` (LEAF_SENTINEL = 0xFFFF for leaves)
+Compact 8-byte `repr(C)` nodes:
+- `value: f32` (threshold for splits, prediction for leaves)
+- `feature_idx: u16` (bit 15 = leaf flag, bit 14 = default_left, bits 13:0 = feature index)
 - `left: u16` (only stored for left/true branch)
-- `flags: u16` (bit 0 = default_left for NaN routing)
-- `value: f64` (threshold for splits, prediction for leaves)
+
+The 8-byte power-of-2 stride means pointer arithmetic is a shift (LEA
+with scale 8), not a multiply. Traversal uses `select_unpredictable` to
+produce a single cmov per tree level — fully branchless, deterministic
+latency regardless of input data.
 
 ## NaN Handling
 
 | Method | NaN behavior | Cost |
 |--------|-------------|------|
-| `predict` | NaN routes right (`NaN <= threshold` is false) | ~4.7 cycles/node |
-| `predict_nan_aware` | Routes NaN via learned default direction | ~6 cycles/node |
+| `predict` | NaN routes right (`NaN <= threshold` is false) | ~5 cycles/node |
+| `predict_nan_aware` | Routes NaN via learned default direction (3 cmovs) | ~8 cycles/node |
 
 GBDT is unique among the three model types: it can *handle* NaN
 rather than just propagating it. The training framework (LightGBM)
@@ -100,19 +104,19 @@ For classification models:
 ## Code Example
 
 ```rust
-use nexus_inference::GbdtF64;
+use nexus_inference::Gbdt;
 
 // Load from LightGBM text format
-let model = GbdtF64::from_lightgbm(model_bytes).unwrap();
+let model = Gbdt::from_lightgbm(model_bytes).unwrap();
 
-let features = vec![0.5, 1.2, -0.3, 0.8];
+let features = vec![0.5_f32, 1.2, -0.3, 0.8];
 let score = model.predict(&features);
 
 // NaN-aware routing (when features may contain NaN)
 let score = model.predict_nan_aware(&features);
 
 // Buffer form
-let mut output = [0.0_f64];
+let mut output = [0.0_f32];
 model.predict_into(&features, &mut output);
 ```
 
@@ -127,8 +131,8 @@ model.predict_into(&features, &mut output);
 
 Typical configurations:
 
-| Trees | Depth | Nodes/tree | Total nodes | Approx. latency |
-|-------|-------|-----------|-------------|----------------|
-| 50 | 6 | 63 | 3,150 | ~220 ns |
-| 100 | 6 | 63 | 6,300 | ~410 ns |
-| 200 | 8 | 255 | 51,000 | ~2.2 us |
+| Trees | Depth | Nodes/tree | Total nodes | Working set | Approx. latency |
+|-------|-------|-----------|-------------|-------------|----------------|
+| 50 | 6 | 63 | 3,150 | 25 KB | ~280 ns |
+| 100 | 6 | 63 | 6,300 | 50 KB | ~560 ns |
+| 200 | 8 | 255 | 51,000 | 400 KB | ~2.5 us |

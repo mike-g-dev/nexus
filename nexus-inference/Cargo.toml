@@ -11,7 +11,7 @@ keywords = ["inference", "machine-learning", "gbdt", "lightgbm", "trading"]
 categories = ["algorithms", "science"]
 
 [features]
-default = ["std", "safetensors"]
+default = ["std", "safetensors", "loader-lightgbm"]
 std = ["alloc"]
 alloc = []
 libm = ["alloc", "dep:libm"]
@@ -37,3 +37,7 @@ workspace = true
 [[bench]]
 name = "temporal_bench"
 harness = false
+
+[[example]]
+name = "gbdt_tail"
+required-features = ["loader-lightgbm"]

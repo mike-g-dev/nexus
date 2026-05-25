@@ -11,7 +11,7 @@
 //!
 //! # Stateless (single prediction)
 //!
-//! - [`GbdtF64`] / [`GbdtF32`] — Gradient-boosted decision tree ensemble
+//! - [`Gbdt`] — Gradient-boosted decision tree ensemble
 //! - [`MlpF64`] / [`MlpF32`] — Feedforward neural network (multi-layer perceptron)
 //! - [`LutF64`] / [`LutF32`] — Lookup table predictor (discretized features)
 //! - [`BnnF32`] — Binary neural network (XNOR+popcount inference)
@@ -64,7 +64,7 @@ pub use bnn::BnnF32;
 pub use conv::{Causal1dConvF32, TinyTcnF32};
 pub use error::LoadError;
 #[cfg(feature = "alloc")]
-pub use gbdt::{GbdtF32, GbdtF64};
+pub use gbdt::Gbdt;
 #[cfg(feature = "alloc")]
 pub use lut::{LutF32, LutF64};
 #[cfg(feature = "alloc")]

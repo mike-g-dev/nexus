@@ -11,7 +11,7 @@
 use alloc::{vec, vec::Vec};
 
 use crate::error::LoadError;
-use crate::gbdt::{GbdtF32, GbdtF64, LEAF_SENTINEL, RawNode};
+use crate::gbdt::{FEATURE_MASK, Gbdt, LEAF_SENTINEL, RawNode};
 
 struct TreeBlock {
     num_leaves: usize,
@@ -125,8 +125,8 @@ fn convert_tree(block: &TreeBlock, n_features: usize) -> Result<Vec<RawNode>, Lo
     let num_internal = block.num_leaves - 1;
     let total_nodes = 2 * block.num_leaves - 1;
 
-    if n_features > LEAF_SENTINEL as usize {
-        return Err(LoadError::Validation("n_features exceeds u16 limit"));
+    if n_features > FEATURE_MASK as usize + 1 {
+        return Err(LoadError::Validation("n_features exceeds 14-bit limit"));
     }
     if total_nodes > u16::MAX as usize + 1 {
         return Err(LoadError::Validation("tree too large for u16 node indices"));
@@ -340,21 +340,7 @@ fn parse_u8_array(s: &str) -> Result<Vec<u8>, LoadError> {
         .collect()
 }
 
-impl GbdtF64 {
-    /// Load from LightGBM text model format.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LoadError::Parse`] if the file format is malformed.
-    /// Returns [`LoadError::Validation`] if the model uses unsupported
-    /// features (categorical splits, multi-class).
-    pub fn from_lightgbm(bytes: &[u8]) -> Result<Self, LoadError> {
-        let (trees, n_features, base_score) = parse_model(bytes)?;
-        Ok(Self::from_parts(trees, n_features, base_score))
-    }
-}
-
-impl GbdtF32 {
+impl Gbdt {
     /// Load from LightGBM text model format.
     ///
     /// # Errors
@@ -406,17 +392,14 @@ end of trees
 
     #[test]
     fn parse_minimal_model() {
-        let model = GbdtF64::from_lightgbm(MINIMAL_MODEL.as_bytes()).unwrap();
+        let model = Gbdt::from_lightgbm(MINIMAL_MODEL.as_bytes()).unwrap();
         assert_eq!(model.n_trees(), 1);
         assert_eq!(model.n_features(), 3);
-        assert_eq!(model.base_score(), 0.5);
+        assert_eq!(model.base_score(), 0.5_f32);
 
-        // f[0]=3 <= 5 → left, f[1]=1 <= 2.5 → left → leaf 0 = -0.3
-        assert!((model.predict(&[3.0, 1.0, 0.0]) - (0.5 + -0.3)).abs() < 1e-12);
-        // f[0]=3 <= 5 → left, f[1]=4 > 2.5 → right → leaf 1 = 0.2
-        assert!((model.predict(&[3.0, 4.0, 0.0]) - (0.5 + 0.2)).abs() < 1e-12);
-        // f[0]=7 > 5 → right → leaf 2 = 0.7
-        assert!((model.predict(&[7.0, 0.0, 0.0]) - (0.5 + 0.7)).abs() < 1e-12);
+        assert!((model.predict(&[3.0_f32, 1.0, 0.0]) - (0.5_f32 + -0.3)).abs() < 1e-5);
+        assert!((model.predict(&[3.0_f32, 4.0, 0.0]) - (0.5_f32 + 0.2)).abs() < 1e-5);
+        assert!((model.predict(&[7.0_f32, 0.0, 0.0]) - (0.5_f32 + 0.7)).abs() < 1e-5);
     }
 
     const TWO_TREE_MODEL: &str = "\
@@ -452,14 +435,12 @@ end of trees
 
     #[test]
     fn parse_multi_tree() {
-        let model = GbdtF64::from_lightgbm(TWO_TREE_MODEL.as_bytes()).unwrap();
+        let model = Gbdt::from_lightgbm(TWO_TREE_MODEL.as_bytes()).unwrap();
         assert_eq!(model.n_trees(), 2);
         assert_eq!(model.n_features(), 2);
 
-        // tree0: f[0]=3 <= 5 → -1.0; tree1: f[1]=1 <= 3 → -0.5 → total = -1.5
-        assert!((model.predict(&[3.0, 1.0]) - -1.5).abs() < 1e-12);
-        // tree0: f[0]=7 > 5 → 1.0; tree1: f[1]=5 > 3 → 0.5 → total = 1.5
-        assert!((model.predict(&[7.0, 5.0]) - 1.5).abs() < 1e-12);
+        assert!((model.predict(&[3.0_f32, 1.0]) - -1.5_f32).abs() < 1e-5);
+        assert!((model.predict(&[7.0_f32, 5.0]) - 1.5_f32).abs() < 1e-5);
     }
 
     #[test]
@@ -485,9 +466,8 @@ leaf_value=-1.0 1.0
 
 end of trees
 ";
-        let model = GbdtF64::from_lightgbm(model_text.as_bytes()).unwrap();
-        // NaN should go left (default_left flag set)
-        assert_eq!(model.predict_nan_aware(&[f64::NAN]), -1.0);
+        let model = Gbdt::from_lightgbm(model_text.as_bytes()).unwrap();
+        assert_eq!(model.predict_nan_aware(&[f32::NAN]), -1.0_f32);
     }
 
     #[test]
@@ -511,7 +491,7 @@ leaf_value=-1.0 1.0
 
 end of trees
 ";
-        let err = GbdtF64::from_lightgbm(model_text.as_bytes()).unwrap_err();
+        let err = Gbdt::from_lightgbm(model_text.as_bytes()).unwrap_err();
         assert_eq!(
             err,
             LoadError::Validation("categorical splits not supported")
@@ -529,13 +509,13 @@ average_output=0.0
 
 end of trees
 ";
-        let err = GbdtF64::from_lightgbm(model_text.as_bytes()).unwrap_err();
+        let err = Gbdt::from_lightgbm(model_text.as_bytes()).unwrap_err();
         assert_eq!(err, LoadError::Validation("multi-class not supported"));
     }
 
     #[test]
     fn parse_rejects_malformed() {
-        let err = GbdtF64::from_lightgbm(b"garbage input").unwrap_err();
+        let err = Gbdt::from_lightgbm(b"garbage input").unwrap_err();
         assert!(matches!(
             err,
             LoadError::Parse(_) | LoadError::Validation(_)
@@ -563,7 +543,7 @@ leaf_value=-1.0 1.0
 
 end of trees
 ";
-        let err = GbdtF64::from_lightgbm(model_text.as_bytes()).unwrap_err();
+        let err = Gbdt::from_lightgbm(model_text.as_bytes()).unwrap_err();
         assert_eq!(
             err,
             LoadError::Validation("split_feature index exceeds n_features")
@@ -608,40 +588,19 @@ end of trees
 
     #[test]
     fn round_trip_prediction() {
-        let model = GbdtF64::from_lightgbm(ROUND_TRIP_MODEL.as_bytes()).unwrap();
+        let model = Gbdt::from_lightgbm(ROUND_TRIP_MODEL.as_bytes()).unwrap();
         assert_eq!(model.n_trees(), 2);
         assert_eq!(model.n_features(), 3);
-        assert_eq!(model.base_score(), 4.28);
+        assert!((model.base_score() - 4.28_f32).abs() < 1e-5);
 
-        // Test vector 1: f = [1.0, 2.0, 4.0]
-        // Tree 0: f[1]=2 <= 4.5 → left(node1), f[0]=1 <= 3 → left → leaf0 = -2.1
-        // Tree 1: f[1]=2 <= 5 → left(node1), f[2]=4 > 3.5 → right → leaf1 = 0.6
-        // total = 4.28 + (-2.1) + 0.6 = 2.78
-        let p1 = model.predict(&[1.0, 2.0, 4.0]);
-        assert!((p1 - 2.78).abs() < 1e-12, "expected 2.78, got {p1}");
+        let p1 = model.predict(&[1.0_f32, 2.0, 4.0]);
+        assert!((p1 - 2.78_f32).abs() < 1e-4, "expected 2.78, got {p1}");
 
-        // Test vector 2: f = [5.0, 7.0, 2.0]
-        // Tree 0: f[1]=7 > 4.5 → right(node2), f[2]=2 <= 6 → left → leaf2 = 1.3
-        // Tree 1: f[1]=7 > 5 → right(node2), f[0]=5 <= 7 → left → leaf2 = 0.9
-        // total = 4.28 + 1.3 + 0.9 = 6.48
-        let p2 = model.predict(&[5.0, 7.0, 2.0]);
-        assert!((p2 - 6.48).abs() < 1e-12, "expected 6.48, got {p2}");
+        let p2 = model.predict(&[5.0_f32, 7.0, 2.0]);
+        assert!((p2 - 6.48_f32).abs() < 1e-4, "expected 6.48, got {p2}");
 
-        // Test vector 3: f = [8.0, 8.0, 8.0]
-        // Tree 0: f[1]=8 > 4.5 → right(node2), f[2]=8 > 6 → right → leaf3 = -0.5
-        // Tree 1: f[1]=8 > 5 → right(node2), f[0]=8 > 7 → right → leaf3 = -0.3
-        // total = 4.28 + (-0.5) + (-0.3) = 3.48
-        let p3 = model.predict(&[8.0, 8.0, 8.0]);
-        assert!((p3 - 3.48).abs() < 1e-12, "expected 3.48, got {p3}");
-    }
-
-    #[test]
-    fn f32_loader() {
-        let model = GbdtF32::from_lightgbm(MINIMAL_MODEL.as_bytes()).unwrap();
-        assert_eq!(model.n_trees(), 1);
-        assert_eq!(model.n_features(), 3);
-        let p = model.predict(&[3.0_f32, 1.0_f32, 0.0_f32]);
-        assert!((p - (0.5_f32 + -0.3_f32)).abs() < 1e-5);
+        let p3 = model.predict(&[8.0_f32, 8.0, 8.0]);
+        assert!((p3 - 3.48_f32).abs() < 1e-4, "expected 3.48, got {p3}");
     }
 
     #[test]
@@ -666,7 +625,7 @@ leaf_value=-1.0 1.0
 
 end of trees
 ";
-        let err = GbdtF64::from_lightgbm(model_text.as_bytes()).unwrap_err();
+        let err = Gbdt::from_lightgbm(model_text.as_bytes()).unwrap_err();
         assert_eq!(err, LoadError::Validation("linear trees not supported"));
     }
 }
