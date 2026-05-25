@@ -88,10 +88,10 @@ pub(super) fn conv_tiled_simd(
 ///     Activation::Relu,
 /// ).unwrap();
 ///
-/// let output = conv.step(&[0.5, 1.0]);
+/// let output = conv.predict(&[0.5, 1.0]);
 /// assert!(!conv.is_primed()); // needs 3 steps to fill kernel buffer
-/// conv.step(&[0.2, 0.3]);
-/// conv.step(&[0.1, 0.4]);
+/// conv.predict(&[0.2, 0.3]);
+/// conv.predict(&[0.1, 0.4]);
 /// assert!(conv.is_primed());
 /// ```
 #[derive(Debug, Clone)]
@@ -189,13 +189,13 @@ impl Causal1dConv {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_ch`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
             "step() requires output_size == 1, use step_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -205,7 +205,7 @@ impl Causal1dConv {
     ///
     /// Panics if `input.len() != input_ch` or
     /// `output.len() != output_size`.
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let ch = self.input_ch as usize;
         let k_size = self.kernel_size as usize;
         let n_filters = self.filters as usize;
@@ -326,6 +326,19 @@ impl Causal1dConv {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl crate::Model for Causal1dConv {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        Causal1dConv::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        Causal1dConv::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        Causal1dConv::n_outputs(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,13 +373,13 @@ mod tests {
         let mut conv = make_conv(1, 3, 1, 1, 1.0);
         assert!(!conv.is_primed());
 
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
         assert!(!conv.is_primed()); // 1 of 3
 
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
         assert!(!conv.is_primed()); // 2 of 3
 
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
         assert!(conv.is_primed()); // 3 of 3
     }
 
@@ -393,22 +406,22 @@ mod tests {
         .unwrap();
 
         // Step 1: buffer = [1, 0, 0] (zero-padded)
-        let out1 = conv.step(&[1.0]);
+        let out1 = conv.predict(&[1.0]);
         // k=0: w[0]*buf[current]=0.5*1=0.5, k=1: w[1]*buf[prev]=0.3*0=0, k=2: w[2]*0=0
         assert!((out1 - 0.5).abs() < 1e-6, "step1: {out1}");
 
         // Step 2: buffer = [1, 2, 0]
-        let out2 = conv.step(&[2.0]);
+        let out2 = conv.predict(&[2.0]);
         // k=0: 0.5*2=1.0, k=1: 0.3*1=0.3, k=2: 0.1*0=0
         assert!((out2 - 1.3).abs() < 1e-6, "step2: {out2}");
 
         // Step 3: buffer = [1, 2, 3], primed
-        let out3 = conv.step(&[3.0]);
+        let out3 = conv.predict(&[3.0]);
         // k=0: 0.5*3=1.5, k=1: 0.3*2=0.6, k=2: 0.1*1=0.1
         assert!((out3 - 2.2).abs() < 1e-6, "step3: {out3}");
 
         // Step 4: buffer overwrites oldest → [4, 2, 3]
-        let out4 = conv.step(&[4.0]);
+        let out4 = conv.predict(&[4.0]);
         // k=0: 0.5*4=2.0, k=1: 0.3*3=0.9, k=2: 0.1*2=0.2
         assert!((out4 - 3.1).abs() < 1e-6, "step4: {out4}");
     }
@@ -435,12 +448,12 @@ mod tests {
         .unwrap();
 
         // Step 1: x=[1, 2], buffer=[[1,2],[0,0]]
-        let out1 = conv.step(&[1.0, 2.0]);
+        let out1 = conv.predict(&[1.0, 2.0]);
         // k=0: 0.1*1+0.2*2=0.5, k=1: 0.3*0+0.4*0=0
         assert!((out1 - 0.5).abs() < 1e-6, "step1: {out1}");
 
         // Step 2: x=[3, 4], buffer=[[1,2],[3,4]]
-        let out2 = conv.step(&[3.0, 4.0]);
+        let out2 = conv.predict(&[3.0, 4.0]);
         // k=0: 0.1*3+0.2*4=1.1, k=1: 0.3*1+0.4*2=1.1
         assert!((out2 - 2.2).abs() < 1e-6, "step2: {out2}");
     }
@@ -465,11 +478,11 @@ mod tests {
         )
         .unwrap();
 
-        let out = conv.step(&[5.0]);
+        let out = conv.predict(&[5.0]);
         // conv = -1*5 = -5, relu(-5) = 0, output = 1*0 = 0
         assert!((out - 0.0).abs() < 1e-6, "{out}");
 
-        let out2 = conv.step(&[-3.0]);
+        let out2 = conv.predict(&[-3.0]);
         // conv = -1*(-3) = 3, relu(3) = 3, output = 1*3 = 3
         assert!((out2 - 3.0).abs() < 1e-6, "{out2}");
     }
@@ -477,8 +490,8 @@ mod tests {
     #[test]
     fn reset_clears_buffer() {
         let mut conv = make_conv(1, 3, 1, 1, 0.5);
-        conv.step(&[1.0]);
-        conv.step(&[2.0]);
+        conv.predict(&[1.0]);
+        conv.predict(&[2.0]);
         assert!(!conv.is_primed());
 
         conv.reset();
@@ -486,8 +499,8 @@ mod tests {
 
         // After reset, same input should produce same output as fresh
         let mut fresh = make_conv(1, 3, 1, 1, 0.5);
-        let out_reset = conv.step(&[1.0]);
-        let out_fresh = fresh.step(&[1.0]);
+        let out_reset = conv.predict(&[1.0]);
+        let out_fresh = fresh.predict(&[1.0]);
         assert!(
             (out_reset - out_fresh).abs() < 1e-6,
             "reset={out_reset}, fresh={out_fresh}"
@@ -498,7 +511,7 @@ mod tests {
     fn multi_filter_multi_output() {
         let mut conv = make_conv(1, 2, 4, 2, 0.1);
         let mut out = [0.0_f32; 2];
-        conv.step_into(&[1.0], &mut out);
+        conv.predict_into(&[1.0], &mut out);
         // All filters have same weights, so filter outputs are equal.
         // All output neurons have same weights, so outputs are equal.
         assert!((out[0] - out[1]).abs() < 1e-6);
@@ -507,7 +520,7 @@ mod tests {
     #[test]
     fn nan_propagates() {
         let mut conv = make_conv(1, 2, 1, 1, 0.1);
-        let out = conv.step(&[f32::NAN]);
+        let out = conv.predict(&[f32::NAN]);
         assert!(out.is_nan());
     }
 
@@ -563,15 +576,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut conv = make_conv(1, 2, 2, 3, 0.1);
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
     }
 
     #[test]
     #[should_panic]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut conv = make_conv(2, 2, 1, 1, 0.1);
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
     }
 }

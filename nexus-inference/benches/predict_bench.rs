@@ -450,28 +450,28 @@ fn bench_tcn(c: &mut Criterion) {
     let mut m = make_tcn(4, 16, 3, 2, 1, false);
     // Prime the model
     for _ in 0..10 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("TCN I=4 F=16 K=3 L=2", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     // 4→16, K=3, 4 layers, residual
     let mut m = make_tcn(4, 16, 3, 4, 1, true);
     for _ in 0..40 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("TCN I=4 F=16 K=3 L=4 res", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     // 4→32, K=3, 3 layers
     let mut m = make_tcn(4, 32, 3, 3, 1, false);
     for _ in 0..20 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("TCN I=4 F=32 K=3 L=3", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     let input_8 = vec![0.5_f32; 8];
@@ -479,10 +479,10 @@ fn bench_tcn(c: &mut Criterion) {
     // 8→16, K=3, 4 layers, residual
     let mut m = make_tcn(8, 16, 3, 4, 1, true);
     for _ in 0..40 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("TCN I=8 F=16 K=3 L=4 res", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 }
 

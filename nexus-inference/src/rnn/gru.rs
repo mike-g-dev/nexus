@@ -48,7 +48,7 @@ use super::{sigmoid_f32, tanh_f32};
 ///     &w_out, &b_out,
 /// ).unwrap();
 ///
-/// let output = gru.step(&[0.5, 1.2, -0.3, 0.8]);
+/// let output = gru.predict(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
 pub struct TinyGru {
@@ -157,13 +157,13 @@ impl TinyGru {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
             "step() requires output_size == 1, use step_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -182,7 +182,7 @@ impl TinyGru {
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
     #[allow(clippy::many_single_char_names)]
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let in_sz = self.input_size as usize;
         let hi = self.hidden_size as usize;
         let gate_count = 3 * hi;
@@ -256,6 +256,19 @@ impl TinyGru {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl crate::Model for TinyGru {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        TinyGru::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        TinyGru::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        TinyGru::n_outputs(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{sigmoid_f32, tanh_f32};
@@ -286,7 +299,7 @@ mod tests {
     #[test]
     fn basic_forward_pass() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out = gru.step(&[1.0, 0.0]);
+        let out = gru.predict(&[1.0, 0.0]);
 
         // h_0 = [0, 0], x = [1, 0]
         // ih = W_ih @ x: each row dot [1, 0] = 0.1
@@ -308,15 +321,15 @@ mod tests {
     #[test]
     fn state_carries_between_steps() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out1 = gru.step(&[1.0, 0.0]);
-        let out2 = gru.step(&[1.0, 0.0]);
+        let out1 = gru.predict(&[1.0, 0.0]);
+        let out2 = gru.predict(&[1.0, 0.0]);
         assert!((out1 - out2).abs() > 1e-6);
     }
 
     #[test]
     fn reset_clears_state() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        gru.step(&[1.0, 0.5]);
+        gru.predict(&[1.0, 0.5]);
         assert!(gru.hidden_state().iter().any(|&v| v != 0.0));
         gru.reset();
         assert!(gru.hidden_state().iter().all(|&v| v == 0.0));
@@ -325,11 +338,11 @@ mod tests {
     #[test]
     fn reset_reproduces_first_output() {
         let mut gru = make_gru(2, 4, 1, 0.1, 0.2, 0.0, 0.1);
-        let first = gru.step(&[1.0, -1.0]);
-        gru.step(&[0.5, 0.5]);
-        gru.step(&[0.0, 1.0]);
+        let first = gru.predict(&[1.0, -1.0]);
+        gru.predict(&[0.5, 0.5]);
+        gru.predict(&[0.0, 1.0]);
         gru.reset();
-        let after_reset = gru.step(&[1.0, -1.0]);
+        let after_reset = gru.predict(&[1.0, -1.0]);
         assert!(
             (first - after_reset).abs() < 1e-6,
             "first={first}, after_reset={after_reset}"
@@ -340,7 +353,7 @@ mod tests {
     fn multi_output() {
         let mut gru = make_gru(2, 4, 3, 0.1, 0.1, 0.0, 0.1);
         let mut out = [0.0_f32; 3];
-        gru.step_into(&[1.0, 0.5], &mut out);
+        gru.predict_into(&[1.0, 0.5], &mut out);
         assert!((out[0] - out[1]).abs() < 1e-6);
         assert!((out[1] - out[2]).abs() < 1e-6);
     }
@@ -348,7 +361,7 @@ mod tests {
     #[test]
     fn nan_propagates() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out = gru.step(&[f32::NAN, 1.0]);
+        let out = gru.predict(&[f32::NAN, 1.0]);
         assert!(out.is_nan());
     }
 
@@ -392,12 +405,12 @@ mod tests {
         let mut gru_normal = make_gru(i, h, 1, 0.1, 0.1, 0.0, 0.1);
 
         // Inject state via a step, then feed zeros
-        gru_z.step(&[1.0, 1.0]);
-        gru_normal.step(&[1.0, 1.0]);
+        gru_z.predict(&[1.0, 1.0]);
+        gru_normal.predict(&[1.0, 1.0]);
 
         for _ in 0..10 {
-            gru_z.step(&[0.0, 0.0]);
-            gru_normal.step(&[0.0, 0.0]);
+            gru_z.predict(&[0.0, 0.0]);
+            gru_normal.predict(&[0.0, 0.0]);
         }
 
         // z-biased model should retain more hidden state
@@ -445,15 +458,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut gru = make_gru(2, 2, 3, 0.1, 0.1, 0.0, 0.1);
-        gru.step(&[1.0, 0.0]);
+        gru.predict(&[1.0, 0.0]);
     }
 
     #[test]
     #[should_panic(expected = "input length")]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        gru.step(&[1.0]);
+        gru.predict(&[1.0]);
     }
 }

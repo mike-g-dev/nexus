@@ -27,6 +27,8 @@
 //! - [`Causal1dConv`] — Causal 1D convolution over a sliding window
 //! - [`TinyTcn`] — Temporal convolutional network (dilated causal conv stack)
 
+use core::cell::UnsafeCell;
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
@@ -75,3 +77,66 @@ pub use quantized_mlp::QuantizedMlp;
 pub use rnn::{StackedGru, StackedLstm, TinyGru, TinyLstm};
 #[cfg(feature = "alloc")]
 pub use ssm::LinearSsm;
+
+/// Inference model with mutable access.
+///
+/// All model types implement this trait. Stateful models (LSTM, GRU, Conv, SSM)
+/// carry hidden state between calls. Stateless models (GBDT, MLP, LUT) produce
+/// the same output for the same input regardless of call history.
+///
+/// Use `&mut dyn Model` for dynamic dispatch over mixed model types.
+pub trait Model {
+    /// Single-output prediction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `n_outputs() != 1` or input length doesn't match.
+    fn predict(&mut self, input: &[f32]) -> f32;
+
+    /// Multi-output prediction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if input or output length doesn't match.
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]);
+
+    /// Number of output values.
+    fn n_outputs(&self) -> usize;
+}
+
+/// Marker: output depends only on input, not call history.
+///
+/// Stateless models (GBDT, MLP, LUT, BNN, QuantizedMLP) also provide
+/// inherent `predict(&self)` methods for use without exclusive access.
+pub trait StatelessModel: Model {}
+
+/// Interior-mutable scratch buffer for stateless models.
+///
+/// Wraps `UnsafeCell` so that `predict(&self)` can mutate scratch memory
+/// without requiring `&mut self`. The type is `!Sync` (cannot be shared
+/// across threads), matching the intended single-threaded usage.
+#[derive(Debug)]
+pub(crate) struct Scratch<T>(UnsafeCell<T>);
+
+impl<T: Clone> Clone for Scratch<T> {
+    fn clone(&self) -> Self {
+        // SAFETY: clone is not called during predict (single-threaded, not reentrant).
+        Self(UnsafeCell::new(unsafe { &*self.0.get() }.clone()))
+    }
+}
+
+impl<T> Scratch<T> {
+    pub(crate) fn new(val: T) -> Self {
+        Self(UnsafeCell::new(val))
+    }
+
+    /// # Safety
+    ///
+    /// Caller must ensure no other mutable or shared references to the
+    /// inner value exist for the duration of the returned borrow.
+    #[inline(always)]
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) unsafe fn get_mut(&self) -> &mut T {
+        unsafe { &mut *self.0.get() }
+    }
+}

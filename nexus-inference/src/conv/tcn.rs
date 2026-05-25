@@ -57,7 +57,7 @@ struct TcnConvLayer {
 ///     Activation::Relu,
 /// ).unwrap();
 ///
-/// let output = tcn.step(&[0.5, 1.0]);
+/// let output = tcn.predict(&[0.5, 1.0]);
 /// ```
 #[derive(Debug, Clone)]
 pub struct TinyTcn {
@@ -206,13 +206,13 @@ impl TinyTcn {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
             "step() requires output_size == 1, use step_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -222,7 +222,7 @@ impl TinyTcn {
     ///
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let k_size = self.kernel_size as usize;
         let n_filters = self.filters as usize;
         let n_layers = self.layers.len();
@@ -426,6 +426,19 @@ fn conv_from_buffer(
     layer.write_idx = if next >= buf_len { 0 } else { next as u16 };
 }
 
+#[cfg(feature = "alloc")]
+impl crate::Model for TinyTcn {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        TinyTcn::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        TinyTcn::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        TinyTcn::n_outputs(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,15 +505,15 @@ mod tests {
         .unwrap();
 
         // Step 1: buffer=[1, 0], lin=[1, 0], out = 0.5*1 + 0.3*0 = 0.5
-        let o1 = tcn.step(&[1.0]);
+        let o1 = tcn.predict(&[1.0]);
         assert!((o1 - 0.5).abs() < 1e-6, "step1: {o1}");
 
         // Step 2: buffer=[1, 2], lin=[2, 1], out = 0.5*2 + 0.3*1 = 1.3
-        let o2 = tcn.step(&[2.0]);
+        let o2 = tcn.predict(&[2.0]);
         assert!((o2 - 1.3).abs() < 1e-6, "step2: {o2}");
 
         // Step 3: buffer=[3, 2], lin=[3, 2], out = 0.5*3 + 0.3*2 = 2.1
-        let o3 = tcn.step(&[3.0]);
+        let o3 = tcn.predict(&[3.0]);
         assert!((o3 - 2.1).abs() < 1e-6, "step3: {o3}");
     }
 
@@ -510,8 +523,8 @@ mod tests {
         let mut two = make_tcn(2, 4, 3, 2, 1, false, 0.1);
 
         let input = [1.0_f32, 0.5];
-        let o1 = one.step(&input);
-        let o2 = two.step(&input);
+        let o1 = one.predict(&input);
+        let o2 = two.predict(&input);
         assert!(
             (o1 - o2).abs() > 1e-6,
             "single and double should differ: {o1} vs {o2}"
@@ -524,8 +537,8 @@ mod tests {
         let mut with_res = make_tcn(4, 4, 2, 2, 1, true, 0.1);
 
         let input = [1.0_f32, 0.5, -0.3, 0.8];
-        let o1 = no_res.step(&input);
-        let o2 = with_res.step(&input);
+        let o1 = no_res.predict(&input);
+        let o2 = with_res.predict(&input);
         assert!(
             (o1 - o2).abs() > 1e-6,
             "residual should change output: {o1} vs {o2}"
@@ -539,8 +552,8 @@ mod tests {
         let mut tcn_no = make_tcn(4, 4, 2, 1, 1, false, 0.1);
 
         let input = [1.0_f32, 2.0, 3.0, 4.0];
-        let o_res = tcn.step(&input);
-        let o_no = tcn_no.step(&input);
+        let o_res = tcn.predict(&input);
+        let o_no = tcn_no.predict(&input);
         assert!(
             (o_res - o_no).abs() > 1e-6,
             "layer0 residual when dims match: {o_res} vs {o_no}"
@@ -555,8 +568,8 @@ mod tests {
         let mut tcn_no = make_tcn(2, 4, 2, 1, 1, false, 0.1);
 
         let input = [1.0_f32, 0.5];
-        let o1 = tcn_res.step(&input);
-        let o2 = tcn_no.step(&input);
+        let o1 = tcn_res.predict(&input);
+        let o2 = tcn_no.predict(&input);
         assert!(
             (o1 - o2).abs() < 1e-6,
             "layer0 residual should be skipped when dims don't match: {o1} vs {o2}"
@@ -571,10 +584,10 @@ mod tests {
         assert!(!tcn.is_primed());
 
         for _ in 0..6 {
-            tcn.step(&[1.0]);
+            tcn.predict(&[1.0]);
             assert!(!tcn.is_primed());
         }
-        tcn.step(&[1.0]);
+        tcn.predict(&[1.0]);
         assert!(tcn.is_primed()); // step 7
     }
 
@@ -594,12 +607,12 @@ mod tests {
     #[test]
     fn reset_reproduces_first_output() {
         let mut tcn = make_tcn(2, 4, 3, 2, 1, false, 0.1);
-        let first = tcn.step(&[1.0, -0.5]);
-        tcn.step(&[0.3, 0.8]);
-        tcn.step(&[0.0, 1.0]);
+        let first = tcn.predict(&[1.0, -0.5]);
+        tcn.predict(&[0.3, 0.8]);
+        tcn.predict(&[0.0, 1.0]);
         tcn.reset();
         assert!(!tcn.is_primed());
-        let after_reset = tcn.step(&[1.0, -0.5]);
+        let after_reset = tcn.predict(&[1.0, -0.5]);
         assert!(
             (first - after_reset).abs() < 1e-6,
             "first={first}, after_reset={after_reset}"
@@ -610,7 +623,7 @@ mod tests {
     fn multi_output() {
         let mut tcn = make_tcn(2, 4, 2, 2, 3, false, 0.1);
         let mut out = [0.0_f32; 3];
-        tcn.step_into(&[1.0, 0.5], &mut out);
+        tcn.predict_into(&[1.0, 0.5], &mut out);
         // All weights identical → all outputs equal
         assert!((out[0] - out[1]).abs() < 1e-6);
         assert!((out[1] - out[2]).abs() < 1e-6);
@@ -619,8 +632,8 @@ mod tests {
     #[test]
     fn state_carries_between_steps() {
         let mut tcn = make_tcn(2, 4, 3, 2, 1, false, 0.1);
-        let out1 = tcn.step(&[1.0, 0.5]);
-        let out2 = tcn.step(&[1.0, 0.5]);
+        let out1 = tcn.predict(&[1.0, 0.5]);
+        let out2 = tcn.predict(&[1.0, 0.5]);
         assert!(
             (out1 - out2).abs() > 1e-6,
             "state should carry: {out1} vs {out2}"
@@ -648,11 +661,11 @@ mod tests {
         .unwrap();
 
         // conv = -1 * 5 = -5, relu(-5) = 0
-        let out = tcn.step(&[5.0]);
+        let out = tcn.predict(&[5.0]);
         assert!((out - 0.0).abs() < 1e-6, "{out}");
 
         // conv = -1 * (-3) = 3, relu(3) = 3
-        let out2 = tcn.step(&[-3.0]);
+        let out2 = tcn.predict(&[-3.0]);
         assert!((out2 - 3.0).abs() < 1e-6, "{out2}");
     }
 
@@ -683,16 +696,16 @@ mod tests {
         .unwrap();
 
         // Feed known sequence, verify dilation picks up the right step
-        tcn.step(&[10.0]); // t=0
-        tcn.step(&[20.0]); // t=1
-        tcn.step(&[30.0]); // t=2
-        tcn.step(&[40.0]); // t=3
+        tcn.predict(&[10.0]); // t=0
+        tcn.predict(&[20.0]); // t=1
+        tcn.predict(&[30.0]); // t=2
+        tcn.predict(&[40.0]); // t=3
 
         // t=4: layer 0 passes 50.0 through (k0=1, current)
         // layer 1 k2=1 reads 2*2=4 steps back in its buffer
         // layer 1's buffer at t=4 has received: 10,20,30,40,50
         // k2 at dilation=2: position (wi+5-2*2)%5 = 4 steps back = 10.0
-        let o = tcn.step(&[50.0]);
+        let o = tcn.predict(&[50.0]);
         assert!(
             (o - 10.0).abs() < 1e-5,
             "dilation should reach 4 steps back: {o}"
@@ -806,15 +819,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut tcn = make_tcn(2, 4, 2, 1, 3, false, 0.1);
-        tcn.step(&[1.0, 0.0]);
+        tcn.predict(&[1.0, 0.0]);
     }
 
     #[test]
     #[should_panic]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut tcn = make_tcn(2, 4, 2, 1, 1, false, 0.1);
-        tcn.step(&[1.0]);
+        tcn.predict(&[1.0]);
     }
 }

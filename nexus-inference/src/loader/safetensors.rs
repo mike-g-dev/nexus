@@ -1541,8 +1541,8 @@ mod tests {
         let mut loaded = crate::TinyLstm::from_safetensors(&data, "rnn", "out").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -1625,8 +1625,8 @@ mod tests {
         let mut loaded = crate::TinyGru::from_safetensors(&data, "gru", "fc").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -1669,7 +1669,7 @@ mod tests {
         let w1: Vec<f32> = vec![1.0, 1.0, 0.0, 0.0];
         let b1: Vec<f32> = vec![0.0];
 
-        let mut reference = crate::Mlp::from_parts(
+        let reference = crate::Mlp::from_parts(
             &[2, 4, 1],
             &[w0.as_slice(), w1.as_slice()].concat(),
             &[b0.as_slice(), b1.as_slice()].concat(),
@@ -1689,7 +1689,7 @@ mod tests {
             ("1.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut loaded = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
+        let loaded = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
 
         let input = [3.0_f32, 4.0];
         let ref_out = reference.predict(&input);
@@ -1736,7 +1736,7 @@ mod tests {
             ("fc.3.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut mlp = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu)
+        let mlp = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu)
             .expect("should load with BN fusion");
 
         // Verify: input [3, 5]
@@ -1792,7 +1792,7 @@ mod tests {
             ("2.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut mlp = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
+        let mlp = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
 
         // Input [3, 4]: Linear=[3,4], BN with gamma=1,beta=0:
         //   scale = 1/sqrt(1+1e-5) ≈ 1.0
@@ -1891,16 +1891,16 @@ mod tests {
         .unwrap();
 
         let input = [1.0_f32, 2.0];
-        let ref_out = reference.step(&input);
-        let load_out = conv.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = conv.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-6,
             "ref={ref_out}, loaded={load_out}"
         );
 
         let input2 = [3.0_f32, 4.0];
-        let ref_out2 = reference.step(&input2);
-        let load_out2 = conv.step(&input2);
+        let ref_out2 = reference.predict(&input2);
+        let load_out2 = conv.predict(&input2);
         assert!(
             (ref_out2 - load_out2).abs() < 1e-6,
             "ref={ref_out2}, loaded={load_out2}"
@@ -2079,8 +2079,8 @@ mod tests {
         let mut loaded = crate::StackedLstm::from_safetensors(&data, "rnn", "out").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -2297,8 +2297,8 @@ mod tests {
         let mut loaded = crate::StackedGru::from_safetensors(&data, "gru", "fc").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -2366,7 +2366,7 @@ mod tests {
 
         let mut ssm = crate::LinearSsm::from_safetensors(&data, "m").unwrap();
         // h = [0,0]*0.5 + [5,5] = [5, 5]; y = 1*5 + 1*5 + 0 = 10
-        let y = ssm.step(&[5.0]);
+        let y = ssm.predict(&[5.0]);
         assert!((y - 10.0).abs() < 1e-6);
     }
 
@@ -2393,12 +2393,12 @@ mod tests {
         let mut fp = crate::LinearSsm::from_parts(&a, &b, &c, &d, 1).unwrap();
 
         let input = [1.0_f32, 2.0];
-        let y_st = st.step(&input);
-        let y_fp = fp.step(&input);
+        let y_st = st.predict(&input);
+        let y_fp = fp.predict(&input);
         assert!((y_st - y_fp).abs() < 1e-7, "step 1: st={y_st} fp={y_fp}");
 
-        let y_st2 = st.step(&input);
-        let y_fp2 = fp.step(&input);
+        let y_st2 = st.predict(&input);
+        let y_fp2 = fp.predict(&input);
         assert!(
             (y_st2 - y_fp2).abs() < 1e-7,
             "step 2: st={y_st2} fp={y_fp2}"
@@ -2635,7 +2635,7 @@ mod tests {
 
         let bw_refs: Vec<&[u64]> = vec![bin_w_u64.as_slice()];
         let bb_refs: Vec<&[f32]> = vec![bin_b.as_slice()];
-        let mut fp =
+        let fp =
             crate::Bnn::from_parts(&w_in, &b_in, &bw_refs, &bb_refs, &w_out, &b_out, o).unwrap();
 
         // Build safetensors
@@ -2655,7 +2655,7 @@ mod tests {
             ("b.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let mut st = crate::Bnn::from_safetensors(&data, "b").unwrap();
+        let st = crate::Bnn::from_safetensors(&data, "b").unwrap();
 
         let input = [1.0_f32, -0.5];
         let y_st = st.predict(&input);

@@ -1,7 +1,7 @@
 # GRU — Gated Recurrent Unit
 
 **Single-layer GRU for streaming temporal inference.** Three gates
-(reset, update, candidate) with hidden state carried between steps.
+(reset, update, candidate) with hidden state carried between calls.
 ~75% of LSTM compute for comparable quality on many tasks. Trained
 externally in PyTorch, loaded via `from_parts`.
 
@@ -103,8 +103,8 @@ let mut gru = TinyGru::from_parts(
 ).unwrap();
 
 // Process a sequence
-let score = gru.step(&[0.5, 1.2, -0.3, 0.8]);
-let score = gru.step(&[0.3, 0.9, -0.1, 1.1]);  // carries state
+let score = gru.predict(&[0.5, 1.2, -0.3, 0.8]);
+let score = gru.predict(&[0.3, 0.9, -0.1, 1.1]);  // carries state
 
 // Reset for new sequence
 gru.reset();
@@ -115,7 +115,7 @@ gru.reset();
 | Operation | Time | Space |
 |-----------|------|-------|
 | Construction | O(3*H*(I+H) + O*H) | Separate ih/hh matrices + state + scratch |
-| `step` | O(3*H*I + 3*H*H + O*H) | No allocation |
+| `predict` | O(3*H*I + 3*H*H + O*H) | No allocation |
 
 | Configuration | FMAs | Latency (AVX2+FMA) |
 |---------------|------|--------------------|

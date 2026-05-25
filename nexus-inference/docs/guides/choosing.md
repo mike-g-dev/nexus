@@ -67,7 +67,7 @@
 | **Gates** | 4 (sigmoid/tanh) | 3 (sigmoid/tanh) | None (configurable activation) |
 | **Output** | Single or multi | Single or multi | Single or multi |
 | **Model source** | PyTorch `nn.LSTM` | PyTorch `nn.GRU` | PyTorch `nn.Conv1d` |
-| **API** | `step` / `step_into` | `step` / `step_into` | `step` / `step_into` |
+| **API** | `predict` / `predict_into` | `predict` / `predict_into` | `predict` / `predict_into` |
 
 ## When to Combine Types
 
@@ -85,7 +85,7 @@ In trading systems, it's common to use multiple model types together:
 - **LSTM/GRU for regime detection** → temporal model outputs a regime
   score, GBDT or MLP conditions on it alongside snapshot features
 
-The `predict_into` and `step_into` APIs make composition straightforward
+The `predict_into` API makes composition straightforward
 — one model's output buffer feeds directly into the next model's input.
 
 ## Model Size Guidelines

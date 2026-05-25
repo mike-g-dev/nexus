@@ -96,7 +96,7 @@ fn run_stacked_lstm_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        lstm.step_into(inp, &mut out);
+        lstm.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -124,7 +124,7 @@ fn run_stacked_gru_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        gru.step_into(inp, &mut out);
+        gru.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -149,7 +149,7 @@ fn run_lstm_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        lstm.step_into(inp, &mut out);
+        lstm.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -174,7 +174,7 @@ fn run_gru_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        gru.step_into(inp, &mut out);
+        gru.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -186,7 +186,7 @@ fn run_mlp_f32_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut mlp = Mlp::from_safetensors(
+    let mlp = Mlp::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),
@@ -225,7 +225,7 @@ fn run_conv1d_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        conv.step_into(inp, &mut out);
+        conv.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -395,7 +395,7 @@ fn run_ssm_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        ssm.step_into(inp, &mut out);
+        ssm.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -514,7 +514,7 @@ fn run_bnn_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut bnn = Bnn::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
+    let bnn = Bnn::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -573,7 +573,7 @@ fn run_tcn_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        tcn.step_into(inp, &mut out);
+        tcn.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -609,7 +609,7 @@ fn run_quantized_mlp_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut qmlp = QuantizedMlp::from_safetensors(
+    let qmlp = QuantizedMlp::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),

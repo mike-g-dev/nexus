@@ -88,9 +88,9 @@ let mut lstm = TinyLstm::from_parts(
     &w_out, &b_out,
 ).unwrap();
 
-// Process a sequence — state carries between steps
-let score1 = lstm.step(&[0.5, 1.2, -0.3, 0.8]);
-let score2 = lstm.step(&[0.3, 0.9, -0.1, 1.1]);
+// Process a sequence — state carries between calls
+let score1 = lstm.predict(&[0.5, 1.2, -0.3, 0.8]);
+let score2 = lstm.predict(&[0.3, 0.9, -0.1, 1.1]);
 
 // Reset for a new sequence
 lstm.reset();
@@ -109,7 +109,7 @@ let mut gru = TinyGru::from_parts(
     &w_out, &b_out,
 ).unwrap();
 
-let score = gru.step(&[0.5, 1.2, -0.3, 0.8]);
+let score = gru.predict(&[0.5, 1.2, -0.3, 0.8]);
 ```
 
 ## Causal 1D Convolution — fixed-window temporal
@@ -125,11 +125,11 @@ let mut conv = Causal1dConv::from_parts(
     Activation::Relu,
 ).unwrap();
 
-let score = conv.step(&[0.5, 1.0, 0.2, 0.8]);
+let score = conv.predict(&[0.5, 1.0, 0.2, 0.8]);
 assert!(!conv.is_primed());  // needs 3 steps to fill kernel buffer
 
-conv.step(&[0.3, 0.9, 0.1, 1.1]);
-conv.step(&[0.1, 0.4, 0.6, 0.3]);
+conv.predict(&[0.3, 0.9, 0.1, 1.1]);
+conv.predict(&[0.1, 0.4, 0.6, 0.3]);
 assert!(conv.is_primed());   // buffer fully populated
 ```
 

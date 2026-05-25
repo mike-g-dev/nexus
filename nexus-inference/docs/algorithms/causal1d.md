@@ -77,9 +77,9 @@ let mut conv = Causal1dConv::from_parts(
 ).unwrap();
 
 assert!(!conv.is_primed());    // kernel_size=3, need 3 steps
-conv.step(&[0.5, 1.0]);
-conv.step(&[0.2, 0.3]);
-conv.step(&[0.1, 0.4]);
+conv.predict(&[0.5, 1.0]);
+conv.predict(&[0.2, 0.3]);
+conv.predict(&[0.1, 0.4]);
 assert!(conv.is_primed());     // buffer fully populated
 ```
 
@@ -131,7 +131,7 @@ let mut conv = Causal1dConv::from_parts(
 
 // Process a stream
 for frame in data_stream {
-    let score = conv.step(&frame);
+    let score = conv.predict(&frame);
     if conv.is_primed() {
         // Act on score — buffer is fully populated
     }
@@ -146,7 +146,7 @@ conv.reset();
 | Operation | Time | Space |
 |-----------|------|-------|
 | Construction | O(F*K*C + O*F) | Weights + buffer + scratch |
-| `step` | O(F*K*C + O*F) | No allocation |
+| `predict` | O(F*K*C + O*F) | No allocation |
 
 | Configuration | FMAs | Latency (AVX2+FMA) |
 |---------------|------|--------------------|

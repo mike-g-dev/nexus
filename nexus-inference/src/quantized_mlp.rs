@@ -8,6 +8,8 @@ use alloc::{boxed::Box, vec, vec::Vec};
 use crate::LoadError;
 #[cfg(feature = "alloc")]
 use crate::activation::{Activation, activate_f32};
+#[cfg(feature = "alloc")]
+use crate::Scratch;
 
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
@@ -60,9 +62,9 @@ struct QuantLayer {
 #[derive(Debug, Clone)]
 pub struct QuantizedMlp {
     layers: Box<[QuantLayer]>,
-    scratch_f32: Box<[f32]>,
-    scratch_i8: Box<[i8]>,
-    scratch_i32: Box<[i32]>,
+    scratch_f32: Scratch<Box<[f32]>>,
+    scratch_i8: Scratch<Box<[i8]>>,
+    scratch_i32: Scratch<Box<[i32]>>,
     input_size: u16,
     output_size: u16,
     activation: Activation,
@@ -420,9 +422,9 @@ impl QuantizedMlp {
 
         Ok(Self {
             layers: layers.into_boxed_slice(),
-            scratch_f32: vec![0.0_f32; max_dim].into_boxed_slice(),
-            scratch_i8: vec![0_i8; max_dim].into_boxed_slice(),
-            scratch_i32: vec![0_i32; max_dim].into_boxed_slice(),
+            scratch_f32: Scratch::new(vec![0.0_f32; max_dim].into_boxed_slice()),
+            scratch_i8: Scratch::new(vec![0_i8; max_dim].into_boxed_slice()),
+            scratch_i32: Scratch::new(vec![0_i32; max_dim].into_boxed_slice()),
             input_size,
             output_size,
             activation,
@@ -432,7 +434,7 @@ impl QuantizedMlp {
     /// Single-output prediction.
     ///
     /// Panics if `output_size != 1`.
-    pub fn predict(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
             "predict() requires output_size == 1, use predict_into()"
@@ -448,14 +450,19 @@ impl QuantizedMlp {
     ///
     /// Panics if `input.len() != n_inputs()` or
     /// `output.len() != n_outputs()`.
-    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), self.input_size as usize);
         assert_eq!(output.len(), self.output_size as usize);
+
+        // SAFETY: predict is not reentrant. Scratch is !Sync, preventing concurrent access.
+        let scratch_f32 = unsafe { self.scratch_f32.get_mut() };
+        let scratch_i8 = unsafe { self.scratch_i8.get_mut() };
+        let scratch_i32 = unsafe { self.scratch_i32.get_mut() };
 
         let n_layers = self.layers.len();
 
         // First layer reads from caller's input
-        self.scratch_f32[..input.len()].copy_from_slice(input);
+        scratch_f32[..input.len()].copy_from_slice(input);
 
         for layer_idx in 0..n_layers {
             let in_size = self.layers[layer_idx].in_size as usize;
@@ -469,8 +476,8 @@ impl QuantizedMlp {
 
             // Step 1: Quantize f32 → i8
             quantize_f32_to_i8(
-                &self.scratch_f32[..in_size],
-                &mut self.scratch_i8[..in_size],
+                &scratch_f32[..in_size],
+                &mut scratch_i8[..in_size],
                 inv_input_scale,
                 input_zp,
             );
@@ -480,8 +487,8 @@ impl QuantizedMlp {
             {
                 matvec_i8_i32_simd(
                     &self.layers[layer_idx].w_i8,
-                    &self.scratch_i8[..in_size],
-                    &mut self.scratch_i32[..out_size],
+                    &scratch_i8[..in_size],
+                    &mut scratch_i32[..out_size],
                     out_size,
                     in_size,
                 );
@@ -492,16 +499,16 @@ impl QuantizedMlp {
                 let mut j = 0;
                 while j < out_4 {
                     let rows = &self.layers[layer_idx].w_i8[j * in_size..(j + 4) * in_size];
-                    let dots = dot4_i8_i32(rows, &self.scratch_i8[..in_size]);
-                    self.scratch_i32[j] = dots[0];
-                    self.scratch_i32[j + 1] = dots[1];
-                    self.scratch_i32[j + 2] = dots[2];
-                    self.scratch_i32[j + 3] = dots[3];
+                    let dots = dot4_i8_i32(rows, &scratch_i8[..in_size]);
+                    scratch_i32[j] = dots[0];
+                    scratch_i32[j + 1] = dots[1];
+                    scratch_i32[j + 2] = dots[2];
+                    scratch_i32[j + 3] = dots[3];
                     j += 4;
                 }
                 while j < out_size {
                     let row = &self.layers[layer_idx].w_i8[j * in_size..(j + 1) * in_size];
-                    self.scratch_i32[j] = dot_i8_i32(row, &self.scratch_i8[..in_size]);
+                    scratch_i32[j] = dot_i8_i32(row, &scratch_i8[..in_size]);
                     j += 1;
                 }
             }
@@ -511,7 +518,7 @@ impl QuantizedMlp {
             let dst = if is_last {
                 &mut *output
             } else {
-                &mut self.scratch_f32[..out_size]
+                &mut scratch_f32[..out_size]
             };
 
             // Weight zero-point correction requires input_sum (input-dependent).
@@ -519,7 +526,7 @@ impl QuantizedMlp {
             let w_zp_correction = if w_zp != 0 {
                 let mut input_sum = 0_i32;
                 for i in 0..in_size {
-                    input_sum += self.scratch_i8[i] as i32;
+                    input_sum += scratch_i8[i] as i32;
                 }
                 w_zp * input_sum - (in_size as i32) * w_zp * (input_zp as i32)
             } else {
@@ -527,7 +534,7 @@ impl QuantizedMlp {
             };
 
             for j in 0..out_size {
-                let acc = self.scratch_i32[j] - w_zp_correction;
+                let acc = scratch_i32[j] - w_zp_correction;
 
                 // Dequantize: y = acc * combined_scale + bias_adjusted
                 // (bias_adjusted already includes 128*row_sum and input_zp*row_sum corrections)
@@ -565,6 +572,22 @@ impl QuantizedMlp {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl crate::Model for QuantizedMlp {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        QuantizedMlp::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        QuantizedMlp::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        QuantizedMlp::n_outputs(self)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl crate::StatelessModel for QuantizedMlp {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,7 +599,7 @@ mod tests {
         // input=[3.0, 4.0] → quantized=[3, 4] → dot=7 → dequant=7*1*1+0=7.0
         let w = [1_i8, 1];
         let b = [0.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -600,7 +623,7 @@ mod tests {
         // real: 1.0*2.0 + 2.0*3.0 = 8.0
         let w = [10_i8, 20];
         let b = [0.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[0.1],
@@ -618,7 +641,7 @@ mod tests {
     fn bias_applied() {
         let w = [1_i8, 1];
         let b = [5.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -642,7 +665,7 @@ mod tests {
         let b0 = [0.0_f32, 0.0];
         let w1 = [1_i8, 1];
         let b1 = [0.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w0, &w1],
             &[&b0, &b1],
             &[1.0, 1.0],
@@ -670,7 +693,7 @@ mod tests {
         // expected: 1.0*2.0 + 2.0*3.0 = 8.0
         let w = [20_i8, 30];
         let b = [0.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[0.1],
@@ -693,7 +716,7 @@ mod tests {
         // dequant=7*1.0*1.0=7.0
         let w = [1_i8];
         let b = [0.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -711,7 +734,7 @@ mod tests {
     fn multi_output() {
         let w = [1_i8, 0, 0, 1];
         let b = [10.0_f32, 20.0];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],
@@ -735,7 +758,7 @@ mod tests {
         let b0 = [0.0_f32, 0.0];
         let w1 = [5_i8, 5]; // real: 1.0, 1.0
         let b1 = [0.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w0, &w1],
             &[&b0, &b1],
             &[0.1, 0.2],
@@ -850,7 +873,7 @@ mod tests {
     fn predict_panics_multi_output() {
         let w = [0_i8; 4];
         let b = [0.0_f32; 2];
-        let mut m =
+        let m =
             QuantizedMlp::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu)
                 .unwrap();
         m.predict(&[1.0, 2.0]);
@@ -861,7 +884,7 @@ mod tests {
     fn predict_panics_wrong_input_len() {
         let w = [0_i8; 4];
         let b = [0.0_f32; 2];
-        let mut m =
+        let m =
             QuantizedMlp::from_parts(&[&w], &[&b], &[1.0], &[0], &[1.0], &[0], Activation::Relu)
                 .unwrap();
         m.predict(&[1.0]); // expects 2 inputs
@@ -872,7 +895,7 @@ mod tests {
         // Large input that would overflow i8 range after quantization
         let w = [1_i8];
         let b = [0.0_f32];
-        let mut m = QuantizedMlp::from_parts(
+        let m = QuantizedMlp::from_parts(
             &[&w],
             &[&b],
             &[1.0],

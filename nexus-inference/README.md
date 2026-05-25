@@ -11,7 +11,7 @@ construction.
 **Design point:** Models are trained in external frameworks (LightGBM,
 PyTorch), exported as safetensors files, loaded once at startup, and
 then called millions of times. Every type pre-allocates all scratch
-buffers at construction. The inference methods (`predict`, `step`) touch
+buffers at construction. The inference methods (`predict`, `predict`) touch
 only stack and pre-allocated memory.
 
 ## Model Types
@@ -139,7 +139,7 @@ counts. Out-of-range features are clamped; NaN maps to bin 0.
 
 Single-layer or multi-layer Long Short-Term Memory network. Four gates
 (input, forget, cell candidate, output) with hidden and cell state
-carried between `step` calls. Weight parameters map directly to
+carried between `predict` calls. Weight parameters map directly to
 PyTorch's `nn.LSTM` tensors — gate order is input, forget, cell
 candidate, output.
 
@@ -174,7 +174,7 @@ is typical — diminishing returns beyond that for small hidden sizes.
 ### GRU — `TinyGru` / `StackedGru`
 
 Single-layer or multi-layer Gated Recurrent Unit. Three gates (reset,
-update, candidate) with hidden state carried between `step` calls.
+update, candidate) with hidden state carried between `predict` calls.
 ~75% of LSTM compute — three gates instead of four, no separate cell
 state. Weight parameters map directly to PyTorch's `nn.GRU` tensors.
 Uses PyTorch's default formulation where reset is applied after the
@@ -255,8 +255,8 @@ let bytes = std::fs::read("lstm.safetensors").unwrap();
 let mut lstm = TinyLstm::from_safetensors(
     &bytes, "rnn", "fc",
 ).unwrap();
-let score = lstm.step(&input_frame);     // first timestep
-let score = lstm.step(&next_frame);      // carries hidden state forward
+let score = lstm.predict(&input_frame);     // first timestep
+let score = lstm.predict(&next_frame);      // carries hidden state forward
 lstm.reset();                            // clear for new sequence
 
 // Stacked LSTM: multi-layer model
@@ -265,7 +265,7 @@ let bytes = std::fs::read("stacked.safetensors").unwrap();
 let mut stacked = StackedLstm::from_safetensors(
     &bytes, "encoder.lstm", "encoder.fc",
 ).unwrap();
-let score = stacked.step(&input_frame);  // flows through all layers
+let score = stacked.predict(&input_frame);  // flows through all layers
 stacked.reset();                         // clears all layers
 ```
 

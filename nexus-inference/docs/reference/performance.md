@@ -20,7 +20,7 @@ runtime feature detection overhead.
 
 **Stateless types** (GBDT, MLP, LUT) compute output directly from
 input features. **Temporal types** (LSTM, GRU, Conv) carry hidden
-state between `step` calls — the state buffers are pre-allocated
+state between `predict` calls — the state buffers are pre-allocated
 at construction and mutated in place.
 
 ## GBDT

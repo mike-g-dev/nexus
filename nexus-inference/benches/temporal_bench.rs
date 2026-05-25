@@ -57,34 +57,34 @@ fn bench_lstm(c: &mut Criterion) {
 
     let mut m = make_lstm(4, 8, 1);
     for _ in 0..100 {
-        m.step(&input_4);
+        m.predict(&input_4);
     } // warm hidden state
     c.bench_function("LSTM 4→8→1", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     let mut m = make_lstm(8, 16, 1);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("LSTM 8→16→1", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_lstm(8, 32, 1);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("LSTM 8→32→1", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_lstm(16, 64, 1);
     for _ in 0..100 {
-        m.step(&input_16);
+        m.predict(&input_16);
     }
     c.bench_function("LSTM 16→64→1", |b| {
-        b.iter(|| m.step(black_box(&input_16)));
+        b.iter(|| m.predict(black_box(&input_16)));
     });
 }
 
@@ -163,18 +163,18 @@ fn bench_stacked_lstm(c: &mut Criterion) {
 
     let mut m = make_stacked_lstm(8, 32, 1, 2);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("LSTM 8→32→1 ×2L", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_stacked_lstm(8, 32, 1, 3);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("LSTM 8→32→1 ×3L", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 }
 
@@ -183,18 +183,18 @@ fn bench_stacked_gru(c: &mut Criterion) {
 
     let mut m = make_stacked_gru(8, 32, 1, 2);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("GRU 8→32→1 ×2L", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_stacked_gru(8, 32, 1, 3);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("GRU 8→32→1 ×3L", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 }
 
@@ -204,26 +204,26 @@ fn bench_gru(c: &mut Criterion) {
 
     let mut m = make_gru(8, 16, 1);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("GRU 8→16→1", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_gru(8, 32, 1);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("GRU 8→32→1", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_gru(16, 64, 1);
     for _ in 0..100 {
-        m.step(&input_16);
+        m.predict(&input_16);
     }
     c.bench_function("GRU 16→64→1", |b| {
-        b.iter(|| m.step(black_box(&input_16)));
+        b.iter(|| m.predict(black_box(&input_16)));
     });
 }
 
@@ -233,26 +233,26 @@ fn bench_conv(c: &mut Criterion) {
 
     let mut m = make_conv(4, 4, 8, 1);
     for _ in 0..10 {
-        m.step(&input_4);
+        m.predict(&input_4);
     } // prime buffer
     c.bench_function("Conv 4ch×4k×8f→1", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     let mut m = make_conv(4, 8, 16, 1);
     for _ in 0..10 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("Conv 4ch×8k×16f→1", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     let mut m = make_conv(8, 8, 32, 1);
     for _ in 0..10 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("Conv 8ch×8k×32f→1", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 }
 
@@ -271,34 +271,34 @@ fn bench_ssm(c: &mut Criterion) {
 
     let mut m = make_ssm(4, 8, 1);
     for _ in 0..100 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("SSM 4→8→1", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     let mut m = make_ssm(8, 16, 1);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("SSM 8→16→1", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_ssm(8, 32, 1);
     for _ in 0..100 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("SSM 8→32→1", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 
     let mut m = make_ssm(16, 64, 1);
     for _ in 0..100 {
-        m.step(&input_16);
+        m.predict(&input_16);
     }
     c.bench_function("SSM 16→64→1", |b| {
-        b.iter(|| m.step(black_box(&input_16)));
+        b.iter(|| m.predict(black_box(&input_16)));
     });
 }
 

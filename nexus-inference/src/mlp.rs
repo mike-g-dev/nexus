@@ -10,6 +10,8 @@ use crate::LoadError;
 use crate::activation::{Activation, activate_f32};
 #[cfg(feature = "alloc")]
 use crate::dot::{dot_f32, dot4_f32};
+#[cfg(feature = "alloc")]
+use crate::Scratch;
 
 /// Fast f32 inverse sqrt via bit manipulation + Newton-Raphson.
 /// Used by the scalar LayerNorm fallback on non-SIMD platforms.
@@ -211,7 +213,7 @@ unsafe fn hsum256_f32(v: core::arch::x86_64::__m256) -> f32 {
 /// ```
 /// use nexus_inference::{Mlp, Activation};
 ///
-/// let mut model = Mlp::from_parts(
+/// let model = Mlp::from_parts(
 ///     &[2, 3, 1],
 ///     &[0.1_f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
 ///     &[0.0_f32, 0.0, 0.0, 0.0],
@@ -228,8 +230,8 @@ pub struct Mlp {
     ln_beta: Option<Box<[f32]>>,
     layer_sizes: Box<[u16]>,
     activation: Activation,
-    scratch_a: Vec<f32>,
-    scratch_b: Vec<f32>,
+    scratch_a: Scratch<Vec<f32>>,
+    scratch_b: Scratch<Vec<f32>>,
 }
 
 #[cfg(feature = "alloc")]
@@ -301,8 +303,8 @@ impl Mlp {
             ln_beta: None,
             layer_sizes: layer_sizes_u16,
             activation,
-            scratch_a: alloc::vec![0.0_f32; max_dim],
-            scratch_b: alloc::vec![0.0_f32; max_dim],
+            scratch_a: Scratch::new(alloc::vec![0.0_f32; max_dim]),
+            scratch_b: Scratch::new(alloc::vec![0.0_f32; max_dim]),
         })
     }
 
@@ -357,7 +359,7 @@ impl Mlp {
     ///
     /// NaN inputs propagate through the computation.
     /// Panics if `n_outputs() != 1`.
-    pub fn predict(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&self, input: &[f32]) -> f32 {
         assert_eq!(
             self.n_outputs(),
             1,
@@ -376,13 +378,17 @@ impl Mlp {
     ///
     /// Panics if `input.len() != self.n_inputs()` or
     /// `output.len() != self.n_outputs()`.
-    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), self.n_inputs());
         assert_eq!(output.len(), self.n_outputs());
 
+        // SAFETY: predict is not reentrant. Scratch is !Sync, preventing concurrent access.
+        let scratch_a = unsafe { self.scratch_a.get_mut() };
+        let scratch_b = unsafe { self.scratch_b.get_mut() };
+
         let n_layers = self.layer_sizes.len() - 1;
 
-        self.scratch_a[..input.len()].copy_from_slice(input);
+        scratch_a[..input.len()].copy_from_slice(input);
         let mut src_is_a = true;
         let mut w_offset = 0usize;
         let mut b_offset = 0usize;
@@ -405,9 +411,9 @@ impl Mlp {
                 let apply_activation = !is_last && !apply_ln;
                 if is_last {
                     let src = if src_is_a {
-                        &self.scratch_a[..in_size]
+                        &scratch_a[..in_size]
                     } else {
-                        &self.scratch_b[..in_size]
+                        &scratch_b[..in_size]
                     };
                     mlp_tiled_simd_f32(
                         &self.weights[w_offset..],
@@ -423,8 +429,8 @@ impl Mlp {
                     mlp_tiled_simd_f32(
                         &self.weights[w_offset..],
                         &self.biases[b_offset..],
-                        &self.scratch_a[..in_size],
-                        &mut self.scratch_b,
+                        &scratch_a[..in_size],
+                        scratch_b,
                         in_size,
                         out_size_4,
                         self.activation,
@@ -434,8 +440,8 @@ impl Mlp {
                     mlp_tiled_simd_f32(
                         &self.weights[w_offset..],
                         &self.biases[b_offset..],
-                        &self.scratch_b[..in_size],
-                        &mut self.scratch_a,
+                        &scratch_b[..in_size],
+                        scratch_a,
                         in_size,
                         out_size_4,
                         self.activation,
@@ -455,9 +461,9 @@ impl Mlp {
             while j < out_size_4 {
                 let rows = &self.weights[w_offset + j * in_size..w_offset + (j + 4) * in_size];
                 let src = if src_is_a {
-                    &self.scratch_a[..in_size]
+                    &scratch_a[..in_size]
                 } else {
-                    &self.scratch_b[..in_size]
+                    &scratch_b[..in_size]
                 };
                 let dots = dot4_f32(rows, src);
                 for k in 0..4 {
@@ -468,9 +474,9 @@ impl Mlp {
                     if is_last {
                         output[j + k] = sum;
                     } else if src_is_a {
-                        self.scratch_b[j + k] = sum;
+                        scratch_b[j + k] = sum;
                     } else {
-                        self.scratch_a[j + k] = sum;
+                        scratch_a[j + k] = sum;
                     }
                 }
                 j += 4;
@@ -478,9 +484,9 @@ impl Mlp {
             while j < out_size {
                 let row = &self.weights[w_offset + j * in_size..w_offset + (j + 1) * in_size];
                 let src = if src_is_a {
-                    &self.scratch_a[..in_size]
+                    &scratch_a[..in_size]
                 } else {
-                    &self.scratch_b[..in_size]
+                    &scratch_b[..in_size]
                 };
                 let mut sum = self.biases[b_offset + j] + dot_f32(row, src);
                 if !is_last && !apply_ln {
@@ -489,9 +495,9 @@ impl Mlp {
                 if is_last {
                     output[j] = sum;
                 } else if src_is_a {
-                    self.scratch_b[j] = sum;
+                    scratch_b[j] = sum;
                 } else {
-                    self.scratch_a[j] = sum;
+                    scratch_a[j] = sum;
                 }
                 j += 1;
             }
@@ -501,9 +507,9 @@ impl Mlp {
                 let ln_b = self.ln_beta.as_ref().unwrap();
 
                 let dst = if src_is_a {
-                    &mut self.scratch_b[..out_size]
+                    &mut scratch_b[..out_size]
                 } else {
-                    &mut self.scratch_a[..out_size]
+                    &mut scratch_a[..out_size]
                 };
 
                 #[cfg(all(
@@ -576,6 +582,22 @@ impl Mlp {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl crate::Model for Mlp {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        Mlp::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        Mlp::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        Mlp::n_outputs(self)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl crate::StatelessModel for Mlp {}
+
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "alloc")]
@@ -587,7 +609,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     fn single_neuron_no_hidden() {
         // 1 input → 1 output, w=2.0, b=0.5 → 2*x + 0.5
-        let mut model = Mlp::from_parts(&[1, 1], &[2.0], &[0.5], Activation::Relu).unwrap();
+        let model = Mlp::from_parts(&[1, 1], &[2.0], &[0.5], Activation::Relu).unwrap();
         assert!((model.predict(&[3.0]) - 6.5).abs() < 1e-5);
     }
 
@@ -602,7 +624,7 @@ mod tests {
         //   o0 = 1.0*h0 + 1.0*h1 + 0.0
         let weights = vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
         let biases = vec![0.0, 0.0, 0.0];
-        let mut model = Mlp::from_parts(&[2, 2, 1], &weights, &biases, Activation::Relu).unwrap();
+        let model = Mlp::from_parts(&[2, 2, 1], &weights, &biases, Activation::Relu).unwrap();
         assert!((model.predict(&[3.0, 4.0]) - 7.0).abs() < 1e-5);
     }
 
@@ -612,7 +634,7 @@ mod tests {
         // 1 input → 1 hidden (relu) → 1 output
         // h0 = relu(1.0*x + (-5.0)) → relu(x - 5)
         // o0 = 1.0 * h0 + 0.0
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[-5.0, 0.0], Activation::Relu).unwrap();
         assert!((model.predict(&[3.0]) - 0.0).abs() < 1e-5); // relu(3 - 5) = 0
         assert!((model.predict(&[7.0]) - 2.0).abs() < 1e-5); // relu(7 - 5) = 2
@@ -624,7 +646,7 @@ mod tests {
         // 1 input → 1 hidden (leaky_relu 0.1) → 1 output
         // h0 = leaky_relu(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
-        let mut model = Mlp::from_parts(
+        let model = Mlp::from_parts(
             &[1, 1, 1],
             &[1.0, 1.0],
             &[0.0, 0.0],
@@ -641,7 +663,7 @@ mod tests {
         // 1 input → 1 hidden (tanh) → 1 output
         // h0 = tanh(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Tanh).unwrap();
         let expected = crate::activation::tanh_f32(2.0);
         assert!((model.predict(&[2.0]) - expected).abs() < 1e-5);
@@ -653,7 +675,7 @@ mod tests {
         // 1 input → 1 hidden (sigmoid) → 1 output
         // h0 = sigmoid(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Sigmoid).unwrap();
         let expected = crate::activation::sigmoid_f32(2.0);
         assert!((model.predict(&[2.0]) - expected).abs() < 1e-5);
@@ -700,8 +722,7 @@ mod tests {
         biases.extend_from_slice(&b1);
         biases.extend_from_slice(&b2);
 
-        let mut model =
-            Mlp::from_parts(&[3, 4, 2, 1], &weights, &biases, Activation::Relu).unwrap();
+        let model = Mlp::from_parts(&[3, 4, 2, 1], &weights, &biases, Activation::Relu).unwrap();
 
         // x = [1, 2, 3]
         // h = [1, 2, 3, 6], g = [1+2, 3+6] = [3, 9], o = 3+9 = 12
@@ -715,7 +736,7 @@ mod tests {
         // Hidden: h = relu(1.0*x + 0.0) = relu(x)
         // Output: o = 1.0*h + (-10.0)
         // If activation applied to output, negative output would be clipped.
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, -10.0], Activation::Relu).unwrap();
         // x=5 → h=relu(5)=5 → o=5-10=-5 (NOT relu'd)
         assert!((model.predict(&[5.0]) - (-5.0)).abs() < 1e-5);
@@ -725,7 +746,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[should_panic]
     fn wrong_input_panics() {
-        let mut model = Mlp::from_parts(&[2, 1], &[1.0, 1.0], &[0.0], Activation::Relu).unwrap();
+        let model = Mlp::from_parts(&[2, 1], &[1.0, 1.0], &[0.0], Activation::Relu).unwrap();
         model.predict(&[1.0]); // expects 2 inputs
     }
 
@@ -759,7 +780,7 @@ mod tests {
     fn nan_through_relu_propagates() {
         // 1 input → 1 hidden (relu) → 1 output
         // NaN goes through relu hidden layer — must come out as NaN
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Relu).unwrap();
         assert!(model.predict(&[f32::NAN]).is_nan());
     }
@@ -793,7 +814,7 @@ mod tests {
         biases.extend_from_slice(&b0);
         biases.extend_from_slice(&b1);
 
-        let mut model = Mlp::from_parts(&[2, 4, 3], &weights, &biases, Activation::Relu).unwrap();
+        let model = Mlp::from_parts(&[2, 4, 3], &weights, &biases, Activation::Relu).unwrap();
         assert_eq!(model.n_outputs(), 3);
 
         let mut out = [0.0_f32; 3];
@@ -807,7 +828,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[should_panic]
     fn predict_panics_multi_output() {
-        let mut model = Mlp::from_parts(&[2, 3], &[1.0; 6], &[0.0; 3], Activation::Relu).unwrap();
+        let model = Mlp::from_parts(&[2, 3], &[1.0; 6], &[0.0; 3], Activation::Relu).unwrap();
         model.predict(&[1.0, 2.0]); // n_outputs=3, should panic
     }
 
@@ -815,7 +836,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[should_panic]
     fn predict_into_wrong_output_len() {
-        let mut model = Mlp::from_parts(&[1, 1], &[1.0], &[0.0], Activation::Relu).unwrap();
+        let model = Mlp::from_parts(&[1, 1], &[1.0], &[0.0], Activation::Relu).unwrap();
         let mut out = [0.0_f32; 2];
         model.predict_into(&[1.0], &mut out);
     }
@@ -826,7 +847,7 @@ mod tests {
         // 1 input → 1 hidden (identity) → 1 output
         // h0 = identity(1.0*x + 0.0) = x (no clipping)
         // o0 = 1.0*h0 + 0.0
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Identity).unwrap();
         assert!((model.predict(&[5.0]) - 5.0).abs() < 1e-5);
         assert!((model.predict(&[-3.0]) - (-3.0)).abs() < 1e-5);
@@ -838,7 +859,7 @@ mod tests {
         // 1 input → 1 hidden (elu alpha=1.0) → 1 output
         // h0 = elu(1.0*x + 0.0)
         // o0 = 1.0*h0 + 0.0
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Elu(1.0)).unwrap();
         // Positive: passthrough
         assert!((model.predict(&[2.0]) - 2.0).abs() < 1e-5);
@@ -851,7 +872,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     fn gelu_activation() {
         // 1 input → 1 hidden (gelu) → 1 output
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Gelu).unwrap();
         // GELU(1.0) via our tanh approximation
         let x = 1.0_f32;
@@ -867,7 +888,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     fn swish_activation() {
         // 1 input → 1 hidden (swish) → 1 output
-        let mut model =
+        let model =
             Mlp::from_parts(&[1, 1, 1], &[1.0, 1.0], &[0.0, 0.0], Activation::Swish).unwrap();
         // Swish(2.0) = 2.0 * sigmoid(2.0)
         let expected = 2.0 * crate::activation::sigmoid_f32(2.0);
@@ -896,7 +917,7 @@ mod tests {
         let ln_gamma: Vec<f32> = vec![1.0; 4];
         let ln_beta: Vec<f32> = vec![0.0; 4];
 
-        let mut model = Mlp::from_parts_with_layer_norm(
+        let model = Mlp::from_parts_with_layer_norm(
             &[2, 4, 1],
             &weights,
             &biases,
@@ -942,7 +963,7 @@ mod tests {
         let ln_gamma: Vec<f32> = vec![2.0, 2.0];
         let ln_beta: Vec<f32> = vec![0.5, 0.5];
 
-        let mut model = Mlp::from_parts_with_layer_norm(
+        let model = Mlp::from_parts_with_layer_norm(
             &[1, 2, 1],
             &weights,
             &biases,

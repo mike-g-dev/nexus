@@ -48,7 +48,7 @@ use crate::dot::{matvec_bias_f32, matvec_f32};
 ///     &w_out, &b_out,
 /// ).unwrap();
 ///
-/// let output = gru.step(&[0.5, 1.2, -0.3, 0.8]);
+/// let output = gru.predict(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
 pub struct StackedGru {
@@ -232,13 +232,13 @@ impl StackedGru {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
             "step() requires output_size == 1, use step_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -254,7 +254,7 @@ impl StackedGru {
     ///
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let h = self.hidden_size as usize;
         let n = self.layers.len();
         assert_eq!(
@@ -321,6 +321,19 @@ impl StackedGru {
     /// Number of output values per timestep.
     pub fn n_outputs(&self) -> usize {
         self.output_size as usize
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl crate::Model for StackedGru {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        StackedGru::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        StackedGru::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        StackedGru::n_outputs(self)
     }
 }
 
@@ -422,8 +435,8 @@ mod tests {
         let input = [0.5_f32, -0.3, 1.2, 0.0];
         let mut tiny_out = [0.0_f32; 2];
         let mut stacked_out = [0.0_f32; 2];
-        tiny.step_into(&input, &mut tiny_out);
-        stacked.step_into(&input, &mut stacked_out);
+        tiny.predict_into(&input, &mut tiny_out);
+        stacked.predict_into(&input, &mut stacked_out);
 
         for i in 0..output_size {
             assert!(
@@ -441,8 +454,8 @@ mod tests {
         let mut double = make_stacked_gru(4, 8, 1, 2, 0.1);
 
         let input = [1.0_f32, 0.5, -0.3, 0.8];
-        let out1 = single.step(&input);
-        let out2 = double.step(&input);
+        let out1 = single.predict(&input);
+        let out2 = double.predict(&input);
 
         assert!(
             (out1 - out2).abs() > 1e-6,
@@ -453,15 +466,15 @@ mod tests {
     #[test]
     fn state_carries_between_steps() {
         let mut gru = make_stacked_gru(2, 4, 1, 2, 0.1);
-        let out1 = gru.step(&[1.0, 0.0]);
-        let out2 = gru.step(&[1.0, 0.0]);
+        let out1 = gru.predict(&[1.0, 0.0]);
+        let out2 = gru.predict(&[1.0, 0.0]);
         assert!((out1 - out2).abs() > 1e-6);
     }
 
     #[test]
     fn reset_clears_all_layers() {
         let mut gru = make_stacked_gru(2, 4, 1, 3, 0.1);
-        gru.step(&[1.0, 0.5]);
+        gru.predict(&[1.0, 0.5]);
 
         for k in 0..3 {
             assert!(gru.hidden_state(k).iter().any(|&v| v != 0.0));
@@ -477,11 +490,11 @@ mod tests {
     #[test]
     fn reset_reproduces_first_output() {
         let mut gru = make_stacked_gru(2, 4, 1, 2, 0.1);
-        let first = gru.step(&[1.0, -1.0]);
-        gru.step(&[0.5, 0.5]);
-        gru.step(&[0.0, 1.0]);
+        let first = gru.predict(&[1.0, -1.0]);
+        gru.predict(&[0.5, 0.5]);
+        gru.predict(&[0.0, 1.0]);
         gru.reset();
-        let after_reset = gru.step(&[1.0, -1.0]);
+        let after_reset = gru.predict(&[1.0, -1.0]);
         assert!(
             (first - after_reset).abs() < 1e-6,
             "first={first}, after_reset={after_reset}"
@@ -492,7 +505,7 @@ mod tests {
     fn multi_output() {
         let mut gru = make_stacked_gru(2, 4, 3, 2, 0.1);
         let mut out = [0.0_f32; 3];
-        gru.step_into(&[1.0, 0.5], &mut out);
+        gru.predict_into(&[1.0, 0.5], &mut out);
         assert!((out[0] - out[1]).abs() < 1e-6);
         assert!((out[1] - out[2]).abs() < 1e-6);
     }
@@ -543,15 +556,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut gru = make_stacked_gru(2, 4, 3, 2, 0.1);
-        gru.step(&[1.0, 0.0]);
+        gru.predict(&[1.0, 0.0]);
     }
 
     #[test]
     #[should_panic(expected = "input length")]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut gru = make_stacked_gru(2, 4, 1, 2, 0.1);
-        gru.step(&[1.0]);
+        gru.predict(&[1.0]);
     }
 }

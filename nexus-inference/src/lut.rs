@@ -152,6 +152,22 @@ impl Lut {
 }
 
 #[cfg(feature = "alloc")]
+impl crate::Model for Lut {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        Lut::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        Lut::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        Lut::n_outputs(self)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl crate::StatelessModel for Lut {}
+
+#[cfg(feature = "alloc")]
 fn checked_pow(base: usize, exp: usize) -> Option<usize> {
     let mut result = 1usize;
     for _ in 0..exp {

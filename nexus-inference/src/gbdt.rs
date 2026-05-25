@@ -320,6 +320,22 @@ impl Gbdt {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl crate::Model for Gbdt {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        Gbdt::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        Gbdt::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        Gbdt::n_outputs(self)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl crate::StatelessModel for Gbdt {}
+
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "alloc")]
