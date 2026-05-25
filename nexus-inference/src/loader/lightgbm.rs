@@ -125,7 +125,7 @@ fn convert_tree(block: &TreeBlock, n_features: usize) -> Result<Vec<RawNode>, Lo
     let num_internal = block.num_leaves - 1;
     let total_nodes = 2 * block.num_leaves - 1;
 
-    if n_features > FEATURE_MASK as usize {
+    if n_features > FEATURE_MASK as usize + 1 {
         return Err(LoadError::Validation("n_features exceeds 14-bit limit"));
     }
     if total_nodes > u16::MAX as usize + 1 {

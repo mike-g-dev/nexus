@@ -16,7 +16,7 @@ pub(crate) const LEAF_BIT: u16 = 0x8000;
 #[cfg(feature = "alloc")]
 const DEFAULT_LEFT_BIT: u16 = 0x4000;
 
-/// Mask for the actual feature index (bits 13:0). Max 16383 features.
+/// Mask for the actual feature index (bits 13:0). Up to 16384 features.
 #[cfg(feature = "alloc")]
 pub(crate) const FEATURE_MASK: u16 = 0x3FFF;
 
