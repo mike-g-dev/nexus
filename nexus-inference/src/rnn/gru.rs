@@ -231,7 +231,7 @@ impl TinyGru {
     }
 
     /// Reset hidden state to zeros.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         self.h.fill(0.0);
     }
 
@@ -241,17 +241,17 @@ impl TinyGru {
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Number of hidden units.
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 }
@@ -318,7 +318,7 @@ mod tests {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
         gru.step(&[1.0, 0.5]);
         assert!(gru.hidden_state().iter().any(|&v| v != 0.0));
-        gru.reset_state();
+        gru.reset();
         assert!(gru.hidden_state().iter().all(|&v| v == 0.0));
     }
 
@@ -328,7 +328,7 @@ mod tests {
         let first = gru.step(&[1.0, -1.0]);
         gru.step(&[0.5, 0.5]);
         gru.step(&[0.0, 1.0]);
-        gru.reset_state();
+        gru.reset();
         let after_reset = gru.step(&[1.0, -1.0]);
         assert!(
             (first - after_reset).abs() < 1e-6,
@@ -412,9 +412,9 @@ mod tests {
     #[test]
     fn accessors() {
         let gru = make_gru(4, 8, 2, 0.1, 0.1, 0.0, 0.1);
-        assert_eq!(gru.input_size(), 4);
-        assert_eq!(gru.hidden_size(), 8);
-        assert_eq!(gru.output_size(), 2);
+        assert_eq!(gru.n_inputs(), 4);
+        assert_eq!(gru.n_hidden(), 8);
+        assert_eq!(gru.n_outputs(), 2);
         assert_eq!(gru.hidden_state().len(), 8);
     }
 

@@ -178,17 +178,17 @@ impl LinearSsm {
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Hidden state dimension.
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of outputs per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 }
@@ -304,9 +304,9 @@ mod tests {
     #[test]
     fn accessors() {
         let ssm = ssm_1x2x1();
-        assert_eq!(ssm.input_size(), 2);
-        assert_eq!(ssm.hidden_size(), 2);
-        assert_eq!(ssm.output_size(), 1);
+        assert_eq!(ssm.n_inputs(), 2);
+        assert_eq!(ssm.n_hidden(), 2);
+        assert_eq!(ssm.n_outputs(), 1);
     }
 
     #[test]

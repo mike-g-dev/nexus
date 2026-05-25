@@ -446,8 +446,8 @@ impl QuantizedMlp {
     ///
     /// # Panics
     ///
-    /// Panics if `input.len() != input_size()` or
-    /// `output.len() != output_size()`.
+    /// Panics if `input.len() != n_inputs()` or
+    /// `output.len() != n_outputs()`.
     pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         assert_eq!(input.len(), self.input_size as usize);
         assert_eq!(output.len(), self.output_size as usize);
@@ -545,17 +545,17 @@ impl QuantizedMlp {
     }
 
     /// Number of input features.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Number of output values.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 
     /// Number of layers (weight matrices).
-    pub fn num_layers(&self) -> usize {
+    pub fn n_layers(&self) -> usize {
         self.layers.len()
     }
 
@@ -772,9 +772,9 @@ mod tests {
             Activation::Relu,
         )
         .unwrap();
-        assert_eq!(m.input_size(), 2);
-        assert_eq!(m.output_size(), 1);
-        assert_eq!(m.num_layers(), 2);
+        assert_eq!(m.n_inputs(), 2);
+        assert_eq!(m.n_outputs(), 1);
+        assert_eq!(m.n_layers(), 2);
         assert!(matches!(m.activation(), Activation::Relu));
     }
 

@@ -93,7 +93,7 @@ let score1 = lstm.step(&[0.5, 1.2, -0.3, 0.8]);
 let score2 = lstm.step(&[0.3, 0.9, -0.1, 1.1]);
 
 // Reset for a new sequence
-lstm.reset_state();
+lstm.reset();
 ```
 
 ## GRU — lighter temporal inference

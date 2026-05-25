@@ -276,7 +276,7 @@ impl TinyTcn {
     }
 
     /// Reset all circular buffers and step counter.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         for layer in &mut *self.layers {
             layer.buffer.fill(0.0);
             layer.write_idx = 0;
@@ -300,12 +300,12 @@ impl TinyTcn {
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Number of convolution filters (channels per layer).
-    pub fn filters(&self) -> usize {
+    pub fn n_filters(&self) -> usize {
         self.filters as usize
     }
 
@@ -315,12 +315,12 @@ impl TinyTcn {
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 
     /// Number of dilated conv layers.
-    pub fn num_layers(&self) -> usize {
+    pub fn n_layers(&self) -> usize {
         self.layers.len()
     }
 
@@ -597,7 +597,7 @@ mod tests {
         let first = tcn.step(&[1.0, -0.5]);
         tcn.step(&[0.3, 0.8]);
         tcn.step(&[0.0, 1.0]);
-        tcn.reset_state();
+        tcn.reset();
         assert!(!tcn.is_primed());
         let after_reset = tcn.step(&[1.0, -0.5]);
         assert!(
@@ -702,11 +702,11 @@ mod tests {
     #[test]
     fn accessors() {
         let tcn = make_tcn(3, 8, 4, 3, 2, true, 0.1);
-        assert_eq!(tcn.input_size(), 3);
-        assert_eq!(tcn.filters(), 8);
+        assert_eq!(tcn.n_inputs(), 3);
+        assert_eq!(tcn.n_filters(), 8);
         assert_eq!(tcn.kernel_size(), 4);
-        assert_eq!(tcn.output_size(), 2);
-        assert_eq!(tcn.num_layers(), 3);
+        assert_eq!(tcn.n_outputs(), 2);
+        assert_eq!(tcn.n_layers(), 3);
         assert!(tcn.residual());
         assert!(matches!(tcn.activation(), Activation::Identity));
         // RF = 1 + 3*(8-1) = 22

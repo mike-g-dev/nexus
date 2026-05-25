@@ -138,7 +138,7 @@ for frame in data_stream {
 }
 
 // Reset for new sequence
-conv.reset_state();
+conv.reset();
 ```
 
 ## Complexity

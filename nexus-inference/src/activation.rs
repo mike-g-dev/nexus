@@ -2,7 +2,7 @@
 ///
 /// Applied element-wise. All variants are available regardless of
 /// feature flags — no `std` or `libm` required.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Activation {
     /// max(0, x)
     Relu,
@@ -68,11 +68,15 @@ pub(crate) fn exp_f32(x: f32) -> f32 {
     let r = n.mul_add(-LN2, x);
 
     // Degree-5 Horner polynomial for exp(r) on [-ln2/2, ln2/2]
-    let exp_r = r.mul_add(
-        r.mul_add(r.mul_add(r.mul_add(0.008_333_334, 0.041_666_668), 0.166_666_7), 0.5),
-        1.0,
-    )
-    .mul_add(r, 1.0);
+    let exp_r = r
+        .mul_add(
+            r.mul_add(
+                r.mul_add(r.mul_add(0.008_333_334, 0.041_666_668), 0.166_666_7),
+                0.5,
+            ),
+            1.0,
+        )
+        .mul_add(r, 1.0);
 
     // Reconstruct: exp(x) = 2^n * exp(r)
     let bits = ((n as i32 + 127) as u32) << 23;
@@ -185,7 +189,10 @@ pub(crate) mod simd {
             let x2 = _mm256_mul_ps(x, x);
             let inner = _mm256_mul_ps(_mm256_fmadd_ps(coeff, _mm256_mul_ps(x2, x), x), scale);
             let t = tanh_8wide(inner);
-            _mm256_mul_ps(_mm256_mul_ps(half, x), _mm256_add_ps(_mm256_set1_ps(1.0), t))
+            _mm256_mul_ps(
+                _mm256_mul_ps(half, x),
+                _mm256_add_ps(_mm256_set1_ps(1.0), t),
+            )
         }
     }
 

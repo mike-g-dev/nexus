@@ -65,7 +65,7 @@ with full f32 precision (~1.2e-7 relative error). On AVX2 targets,
 
 NaN inputs propagate through the computation — sigmoid(NaN) = NaN,
 tanh(NaN) = NaN, and arithmetic with NaN produces NaN. The hidden
-and cell state will become NaN and remain so until `reset_state()`.
+and cell state will become NaN and remain so until `reset()`.
 This matches the standard ML convention (caller responsibility).
 
 ## State Management
@@ -79,7 +79,7 @@ let s2 = lstm.step(&frame_2);   // carries h and c from previous step
 let s3 = lstm.step(&frame_3);   // accumulates temporal context
 
 // Start a new sequence
-lstm.reset_state();              // clears h and c to zero
+lstm.reset();              // clears h and c to zero
 let s1 = lstm.step(&new_frame);  // fresh start
 ```
 

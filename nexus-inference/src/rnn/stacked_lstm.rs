@@ -291,7 +291,7 @@ impl StackedLstm {
     }
 
     /// Reset all layers' hidden and cell state to zeros.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         for layer in &mut *self.layers {
             layer.h.fill(0.0);
             layer.c.fill(0.0);
@@ -302,7 +302,7 @@ impl StackedLstm {
     ///
     /// # Panics
     ///
-    /// Panics if `layer >= num_layers()`.
+    /// Panics if `layer >= n_layers()`.
     pub fn hidden_state(&self, layer: usize) -> &[f32] {
         &self.layers[layer].h
     }
@@ -311,28 +311,28 @@ impl StackedLstm {
     ///
     /// # Panics
     ///
-    /// Panics if `layer >= num_layers()`.
+    /// Panics if `layer >= n_layers()`.
     pub fn cell_state(&self, layer: usize) -> &[f32] {
         &self.layers[layer].c
     }
 
     /// Number of stacked LSTM layers.
-    pub fn num_layers(&self) -> usize {
+    pub fn n_layers(&self) -> usize {
         self.layers.len()
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Number of hidden units (same for all layers).
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 }
@@ -430,7 +430,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(stacked.num_layers(), 1);
+        assert_eq!(stacked.n_layers(), 1);
 
         let input = [0.5_f32, -0.3, 1.2, 0.0];
         let mut tiny_out = [0.0_f32; 2];
@@ -481,7 +481,7 @@ mod tests {
             assert!(lstm.cell_state(k).iter().any(|&v| v != 0.0));
         }
 
-        lstm.reset_state();
+        lstm.reset();
 
         for k in 0..3 {
             assert!(lstm.hidden_state(k).iter().all(|&v| v == 0.0));
@@ -495,7 +495,7 @@ mod tests {
         let first = lstm.step(&[1.0, -1.0]);
         lstm.step(&[0.5, 0.5]);
         lstm.step(&[0.0, 1.0]);
-        lstm.reset_state();
+        lstm.reset();
         let after_reset = lstm.step(&[1.0, -1.0]);
         assert!(
             (first - after_reset).abs() < 1e-6,
@@ -515,10 +515,10 @@ mod tests {
     #[test]
     fn accessors() {
         let lstm = make_stacked_lstm(4, 8, 2, 3, 0.1);
-        assert_eq!(lstm.input_size(), 4);
-        assert_eq!(lstm.hidden_size(), 8);
-        assert_eq!(lstm.output_size(), 2);
-        assert_eq!(lstm.num_layers(), 3);
+        assert_eq!(lstm.n_inputs(), 4);
+        assert_eq!(lstm.n_hidden(), 8);
+        assert_eq!(lstm.n_outputs(), 2);
+        assert_eq!(lstm.n_layers(), 3);
         assert_eq!(lstm.hidden_state(0).len(), 8);
         assert_eq!(lstm.hidden_state(2).len(), 8);
         assert_eq!(lstm.cell_state(1).len(), 8);

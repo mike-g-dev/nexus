@@ -1499,9 +1499,9 @@ mod tests {
         ]);
 
         let lstm = crate::TinyLstm::from_safetensors(&data, "lstm", "fc").unwrap();
-        assert_eq!(lstm.input_size(), i);
-        assert_eq!(lstm.hidden_size(), h);
-        assert_eq!(lstm.output_size(), o);
+        assert_eq!(lstm.n_inputs(), i);
+        assert_eq!(lstm.n_hidden(), h);
+        assert_eq!(lstm.n_outputs(), o);
     }
 
     #[test]
@@ -1583,9 +1583,9 @@ mod tests {
         ]);
 
         let gru = crate::TinyGru::from_safetensors(&data, "gru", "fc").unwrap();
-        assert_eq!(gru.input_size(), i);
-        assert_eq!(gru.hidden_size(), h);
-        assert_eq!(gru.output_size(), o);
+        assert_eq!(gru.n_inputs(), i);
+        assert_eq!(gru.n_hidden(), h);
+        assert_eq!(gru.n_outputs(), o);
     }
 
     #[test]
@@ -1834,10 +1834,10 @@ mod tests {
         let conv =
             crate::Causal1dConv::from_safetensors(&data, "conv", "fc", crate::Activation::Identity)
                 .unwrap();
-        assert_eq!(conv.input_ch(), 1);
+        assert_eq!(conv.n_inputs(), 1);
         assert_eq!(conv.kernel_size(), 3);
-        assert_eq!(conv.filters(), 2);
-        assert_eq!(conv.output_size(), 1);
+        assert_eq!(conv.n_filters(), 2);
+        assert_eq!(conv.n_outputs(), 1);
     }
 
     #[test]
@@ -2002,10 +2002,10 @@ mod tests {
         ]);
 
         let lstm = crate::StackedLstm::from_safetensors(&data, "lstm", "fc").unwrap();
-        assert_eq!(lstm.input_size(), i);
-        assert_eq!(lstm.hidden_size(), h);
-        assert_eq!(lstm.output_size(), o);
-        assert_eq!(lstm.num_layers(), 2);
+        assert_eq!(lstm.n_inputs(), i);
+        assert_eq!(lstm.n_hidden(), h);
+        assert_eq!(lstm.n_outputs(), o);
+        assert_eq!(lstm.n_layers(), 2);
     }
 
     #[test]
@@ -2119,7 +2119,7 @@ mod tests {
         ]);
 
         let lstm = crate::StackedLstm::from_safetensors(&data, "lstm", "fc").unwrap();
-        assert_eq!(lstm.num_layers(), 1);
+        assert_eq!(lstm.n_layers(), 1);
     }
 
     #[test]
@@ -2220,10 +2220,10 @@ mod tests {
         ]);
 
         let gru = crate::StackedGru::from_safetensors(&data, "gru", "fc").unwrap();
-        assert_eq!(gru.input_size(), i);
-        assert_eq!(gru.hidden_size(), h);
-        assert_eq!(gru.output_size(), o);
-        assert_eq!(gru.num_layers(), 2);
+        assert_eq!(gru.n_inputs(), i);
+        assert_eq!(gru.n_hidden(), h);
+        assert_eq!(gru.n_outputs(), o);
+        assert_eq!(gru.n_layers(), 2);
     }
 
     #[test]
@@ -2339,9 +2339,9 @@ mod tests {
         ]);
 
         let ssm = crate::LinearSsm::from_safetensors(&data, "ssm").unwrap();
-        assert_eq!(ssm.input_size(), i);
-        assert_eq!(ssm.hidden_size(), h);
-        assert_eq!(ssm.output_size(), o);
+        assert_eq!(ssm.n_inputs(), i);
+        assert_eq!(ssm.n_hidden(), h);
+        assert_eq!(ssm.n_outputs(), o);
     }
 
     #[test]
@@ -2447,10 +2447,10 @@ mod tests {
         ]);
 
         let bnn = crate::Bnn::from_safetensors(&data, "bnn").unwrap();
-        assert_eq!(bnn.input_size(), i);
-        assert_eq!(bnn.hidden_size(), h);
-        assert_eq!(bnn.output_size(), o);
-        assert_eq!(bnn.num_binary_layers(), 1);
+        assert_eq!(bnn.n_inputs(), i);
+        assert_eq!(bnn.n_hidden(), h);
+        assert_eq!(bnn.n_outputs(), o);
+        assert_eq!(bnn.n_layers(), 1);
     }
 
     #[test]
@@ -2480,8 +2480,8 @@ mod tests {
         ]);
 
         let bnn = crate::Bnn::from_safetensors(&data, "net").unwrap();
-        assert_eq!(bnn.num_binary_layers(), 0);
-        assert_eq!(bnn.input_size(), i);
+        assert_eq!(bnn.n_layers(), 0);
+        assert_eq!(bnn.n_inputs(), i);
     }
 
     #[test]
@@ -2728,8 +2728,8 @@ mod tests {
 
         let qmlp =
             crate::QuantizedMlp::from_safetensors(&data, "q", crate::Activation::Identity).unwrap();
-        assert_eq!(qmlp.input_size(), 3);
-        assert_eq!(qmlp.output_size(), 2);
+        assert_eq!(qmlp.n_inputs(), 3);
+        assert_eq!(qmlp.n_outputs(), 2);
     }
 
     #[test]

@@ -74,7 +74,7 @@ for 8 hidden units at a time.
 ## NaN Handling
 
 Same as LSTM — NaN propagates through all gates and into the hidden
-state. Call `reset_state()` to recover.
+state. Call `reset()` to recover.
 
 ## When to Use It
 
@@ -107,7 +107,7 @@ let score = gru.step(&[0.5, 1.2, -0.3, 0.8]);
 let score = gru.step(&[0.3, 0.9, -0.1, 1.1]);  // carries state
 
 // Reset for new sequence
-gru.reset_state();
+gru.reset();
 ```
 
 ## Complexity

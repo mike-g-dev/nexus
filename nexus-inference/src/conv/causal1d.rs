@@ -286,7 +286,7 @@ impl Causal1dConv {
     }
 
     /// Reset circular buffer and step counter.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         self.buffer.fill(0.0);
         self.write_idx = 0;
         self.step_count = 0;
@@ -301,7 +301,7 @@ impl Causal1dConv {
     }
 
     /// Number of input channels per timestep.
-    pub fn input_ch(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_ch as usize
     }
 
@@ -311,12 +311,12 @@ impl Causal1dConv {
     }
 
     /// Number of convolution filters.
-    pub fn filters(&self) -> usize {
+    pub fn n_filters(&self) -> usize {
         self.filters as usize
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 
@@ -481,7 +481,7 @@ mod tests {
         conv.step(&[2.0]);
         assert!(!conv.is_primed());
 
-        conv.reset_state();
+        conv.reset();
         assert!(!conv.is_primed());
 
         // After reset, same input should produce same output as fresh
@@ -514,10 +514,10 @@ mod tests {
     #[test]
     fn accessors() {
         let conv = make_conv(3, 5, 8, 2, 0.1);
-        assert_eq!(conv.input_ch(), 3);
+        assert_eq!(conv.n_inputs(), 3);
         assert_eq!(conv.kernel_size(), 5);
-        assert_eq!(conv.filters(), 8);
-        assert_eq!(conv.output_size(), 2);
+        assert_eq!(conv.n_filters(), 8);
+        assert_eq!(conv.n_outputs(), 2);
         assert!(matches!(conv.activation(), Activation::Identity));
     }
 

@@ -257,7 +257,7 @@ let mut lstm = TinyLstm::from_safetensors(
 ).unwrap();
 let score = lstm.step(&input_frame);     // first timestep
 let score = lstm.step(&next_frame);      // carries hidden state forward
-lstm.reset_state();                      // clear for new sequence
+lstm.reset();                            // clear for new sequence
 
 // Stacked LSTM: multi-layer model
 // Auto-detects num_layers from weight_ih_l0, weight_ih_l1, ...
@@ -266,7 +266,7 @@ let mut stacked = StackedLstm::from_safetensors(
     &bytes, "encoder.lstm", "encoder.fc",
 ).unwrap();
 let score = stacked.step(&input_frame);  // flows through all layers
-stacked.reset_state();                   // clears all layers
+stacked.reset();                         // clears all layers
 ```
 
 All model types also provide `from_parts` constructors for manual weight

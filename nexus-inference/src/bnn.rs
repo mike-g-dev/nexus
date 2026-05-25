@@ -539,22 +539,22 @@ impl Bnn {
     }
 
     /// Number of input features.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Hidden layer width (all layers same size, multiple of 64).
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of outputs.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 
     /// Number of binary hidden layers.
-    pub fn num_binary_layers(&self) -> usize {
+    pub fn n_layers(&self) -> usize {
         self.binary_layers.len()
     }
 }
@@ -824,10 +824,10 @@ mod tests {
             &vec![0.0_f32; 2],
             2,
         );
-        assert_eq!(bnn.input_size(), 4);
-        assert_eq!(bnn.hidden_size(), 64);
-        assert_eq!(bnn.output_size(), 2);
-        assert_eq!(bnn.num_binary_layers(), 0);
+        assert_eq!(bnn.n_inputs(), 4);
+        assert_eq!(bnn.n_hidden(), 64);
+        assert_eq!(bnn.n_outputs(), 2);
+        assert_eq!(bnn.n_layers(), 0);
     }
 
     #[test]

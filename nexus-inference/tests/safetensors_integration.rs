@@ -88,7 +88,7 @@ fn run_stacked_lstm_test(name: &str) {
     .unwrap();
 
     let expected_layers = exp["num_layers"].as_u64().unwrap() as usize;
-    assert_eq!(lstm.num_layers(), expected_layers);
+    assert_eq!(lstm.n_layers(), expected_layers);
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -116,7 +116,7 @@ fn run_stacked_gru_test(name: &str) {
     .unwrap();
 
     let expected_layers = exp["num_layers"].as_u64().unwrap() as usize;
-    assert_eq!(gru.num_layers(), expected_layers);
+    assert_eq!(gru.n_layers(), expected_layers);
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
