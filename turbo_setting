@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+PSTATE=/sys/devices/system/cpu/intel_pstate/no_turbo
+
+case "${1:-}" in
+    on)
+        echo 0 | sudo tee "$PSTATE" > /dev/null
+        echo "Turbo boost enabled"
+        ;;
+    off)
+        echo 1 | sudo tee "$PSTATE" > /dev/null
+        echo "Turbo boost disabled"
+        ;;
+    *)
+        echo "Usage: ./turbo_setting on|off"
+        exit 1
+        ;;
+esac

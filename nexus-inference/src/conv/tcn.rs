@@ -65,7 +65,6 @@ pub struct TinyTcnF32 {
     w_out: Box<[f32]>,
     b_out: Box<[f32]>,
     filter_scratch: Box<[f32]>,
-    prev_out: Box<[f32]>,
     lin_buf: Box<[f32]>,
     input_size: u16,
     filters: u16,
@@ -206,7 +205,6 @@ impl TinyTcnF32 {
             w_out: w_out.into(),
             b_out: b_out.into(),
             filter_scratch: vec![0.0_f32; filters].into_boxed_slice(),
-            prev_out: vec![0.0_f32; filters].into_boxed_slice(),
             lin_buf: vec![0.0_f32; max_conv_len].into_boxed_slice(),
             input_size: input_size as u16,
             filters: filters as u16,
@@ -249,10 +247,10 @@ impl TinyTcnF32 {
         let act = self.activation;
         let res = self.residual;
 
-        // Layer 0: input from caller
-        conv_layer_forward(
+        // Layer 0: write caller's input, then convolve
+        buffer_write(&mut self.layers[0], input);
+        conv_from_buffer(
             &mut self.layers[0],
-            input,
             &mut self.lin_buf,
             &mut self.filter_scratch,
             k_size,
@@ -262,12 +260,13 @@ impl TinyTcnF32 {
             res,
         );
 
-        // Layers 1+: input from previous layer's output (filter_scratch)
+        // Layers 1+: write filter_scratch (prev output) into buffer, then convolve.
+        // Split API avoids aliasing — filter_scratch is read into buffer first,
+        // then safely overwritten by the convolution.
         for k in 1..n_layers {
-            self.prev_out[..n_filters].copy_from_slice(&self.filter_scratch[..n_filters]);
-            conv_layer_forward(
+            buffer_write(&mut self.layers[k], &self.filter_scratch[..n_filters]);
+            conv_from_buffer(
                 &mut self.layers[k],
-                &self.prev_out[..n_filters],
                 &mut self.lin_buf,
                 &mut self.filter_scratch,
                 k_size,
@@ -350,10 +349,18 @@ impl TinyTcnF32 {
     }
 }
 
+/// Write input into the layer's circular buffer. Must be called before
+/// `conv_from_buffer` — separating these allows the caller to pass
+/// `filter_scratch` as input without borrowing conflicts.
+fn buffer_write(layer: &mut TcnConvLayer, input: &[f32]) {
+    let in_ch = layer.in_ch as usize;
+    let wi = layer.write_idx as usize;
+    layer.buffer[wi * in_ch..(wi + 1) * in_ch].copy_from_slice(input);
+}
+
 #[allow(clippy::too_many_arguments)]
-fn conv_layer_forward(
+fn conv_from_buffer(
     layer: &mut TcnConvLayer,
-    layer_input: &[f32],
     lin_buf: &mut [f32],
     filter_scratch: &mut [f32],
     kernel_size: usize,
@@ -368,10 +375,14 @@ fn conv_layer_forward(
     let wi = layer.write_idx as usize;
     let conv_len = kernel_size * in_ch;
 
-    layer.buffer[wi * in_ch..(wi + 1) * in_ch].copy_from_slice(layer_input);
+    // kk=0: position is always wi (current write position)
+    lin_buf[..in_ch].copy_from_slice(&layer.buffer[wi * in_ch..(wi + 1) * in_ch]);
 
-    for kk in 0..kernel_size {
-        let buf_pos = (wi + buf_len - kk * dilation) % buf_len;
+    // kk>0: conditional subtract replaces integer division (% buf_len).
+    // Value before mod is in [1, 2*buf_len-1], so a single compare+subtract suffices.
+    for kk in 1..kernel_size {
+        let raw = wi + buf_len - kk * dilation;
+        let buf_pos = if raw >= buf_len { raw - buf_len } else { raw };
         lin_buf[kk * in_ch..(kk + 1) * in_ch]
             .copy_from_slice(&layer.buffer[buf_pos * in_ch..(buf_pos + 1) * in_ch]);
     }
@@ -425,7 +436,8 @@ fn conv_layer_forward(
         }
     }
 
-    layer.write_idx = ((wi + 1) % buf_len) as u16;
+    let next = wi + 1;
+    layer.write_idx = if next >= buf_len { 0 } else { next as u16 };
 }
 
 #[cfg(test)]
