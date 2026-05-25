@@ -34,21 +34,6 @@ fn inputs_f32(v: &serde_json::Value) -> Vec<Vec<f32>> {
         .collect()
 }
 
-fn inputs_f64(v: &serde_json::Value) -> Vec<Vec<f64>> {
-    v["inputs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|inp| {
-            inp.as_array()
-                .unwrap()
-                .iter()
-                .map(|x| x.as_f64().unwrap())
-                .collect()
-        })
-        .collect()
-}
-
 fn expected_outputs(v: &serde_json::Value) -> Vec<Vec<f64>> {
     v["outputs"]
         .as_array()
@@ -65,7 +50,8 @@ fn expected_outputs(v: &serde_json::Value) -> Vec<Vec<f64>> {
 fn parse_activation(v: &serde_json::Value) -> Activation {
     let param = v
         .get("activation_param")
-        .and_then(serde_json::Value::as_f64);
+        .and_then(serde_json::Value::as_f64)
+        .map(|p| p as f32);
     match v["activation"].as_str().unwrap() {
         "relu" => Activation::Relu,
         "tanh" => Activation::Tanh,
@@ -94,7 +80,7 @@ fn run_stacked_lstm_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut lstm = StackedLstmF32::from_safetensors(
+    let mut lstm = StackedLstm::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -102,7 +88,7 @@ fn run_stacked_lstm_test(name: &str) {
     .unwrap();
 
     let expected_layers = exp["num_layers"].as_u64().unwrap() as usize;
-    assert_eq!(lstm.num_layers(), expected_layers);
+    assert_eq!(lstm.n_layers(), expected_layers);
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -110,7 +96,7 @@ fn run_stacked_lstm_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        lstm.step_into(inp, &mut out);
+        lstm.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -122,7 +108,7 @@ fn run_stacked_gru_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut gru = StackedGruF32::from_safetensors(
+    let mut gru = StackedGru::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -130,7 +116,7 @@ fn run_stacked_gru_test(name: &str) {
     .unwrap();
 
     let expected_layers = exp["num_layers"].as_u64().unwrap() as usize;
-    assert_eq!(gru.num_layers(), expected_layers);
+    assert_eq!(gru.n_layers(), expected_layers);
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -138,7 +124,7 @@ fn run_stacked_gru_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        gru.step_into(inp, &mut out);
+        gru.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -150,7 +136,7 @@ fn run_lstm_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut lstm = TinyLstmF32::from_safetensors(
+    let mut lstm = TinyLstm::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -163,7 +149,7 @@ fn run_lstm_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        lstm.step_into(inp, &mut out);
+        lstm.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -175,7 +161,7 @@ fn run_gru_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut gru = TinyGruF32::from_safetensors(
+    let mut gru = TinyGru::from_safetensors(
         &data,
         exp["rnn_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -188,7 +174,7 @@ fn run_gru_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        gru.step_into(inp, &mut out);
+        gru.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -200,7 +186,7 @@ fn run_mlp_f32_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut mlp = MlpF32::from_safetensors(
+    let mlp = Mlp::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),
@@ -220,37 +206,12 @@ fn run_mlp_f32_test(name: &str) {
     }
 }
 
-fn run_mlp_f64_test(name: &str) {
-    let data = load_model(name);
-    let exp = load_expected(name);
-    let tol = exp["tolerance"].as_f64().unwrap();
-
-    let mut mlp = MlpF64::from_safetensors(
-        &data,
-        exp["prefix"].as_str().unwrap(),
-        parse_activation(&exp),
-    )
-    .unwrap();
-
-    for (i, (inp, exp_out)) in inputs_f64(&exp)
-        .iter()
-        .zip(expected_outputs(&exp).iter())
-        .enumerate()
-    {
-        let mut out = vec![0.0_f64; exp_out.len()];
-        mlp.predict_into(inp, &mut out);
-        for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
-            assert_close(name, i, j, actual, expected, tol);
-        }
-    }
-}
-
 fn run_conv1d_test(name: &str) {
     let data = load_model(name);
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut conv = Causal1dConvF32::from_safetensors(
+    let mut conv = Causal1dConv::from_safetensors(
         &data,
         exp["conv_prefix"].as_str().unwrap(),
         exp["proj_prefix"].as_str().unwrap(),
@@ -264,7 +225,7 @@ fn run_conv1d_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        conv.step_into(inp, &mut out);
+        conv.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -377,23 +338,6 @@ fn mlp_f32_layernorm_no_bias() {
     run_mlp_f32_test("mlp_f32_layernorm_no_bias");
 }
 
-// ---- MLP f64 tests ----
-
-#[test]
-fn mlp_f64() {
-    run_mlp_f64_test("mlp_f64");
-}
-
-#[test]
-fn mlp_f64_no_prefix() {
-    run_mlp_f64_test("mlp_f64_no_prefix");
-}
-
-#[test]
-fn mlp_f64_tanh() {
-    run_mlp_f64_test("mlp_f64_tanh");
-}
-
 // ---- Conv1d tests ----
 
 #[test]
@@ -443,7 +387,7 @@ fn run_ssm_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut ssm = LinearSsmF32::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
+    let mut ssm = LinearSsm::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -451,7 +395,7 @@ fn run_ssm_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        ssm.step_into(inp, &mut out);
+        ssm.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -540,7 +484,6 @@ fuzz_tests!(
     fuzz_mlp_f32_2,
     fuzz_mlp_f32_3,
 );
-fuzz_tests!(run_mlp_f64_test, fuzz_mlp_f64_0, fuzz_mlp_f64_1);
 fuzz_tests!(
     run_conv1d_test,
     fuzz_conv1d_0,
@@ -571,7 +514,7 @@ fn run_bnn_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut bnn = BnnF32::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
+    let bnn = Bnn::from_safetensors(&data, exp["prefix"].as_str().unwrap()).unwrap();
 
     for (i, (inp, exp_out)) in inputs_f32(&exp)
         .iter()
@@ -616,7 +559,7 @@ fn run_tcn_test(name: &str) {
     let tol = exp["tolerance"].as_f64().unwrap();
     let residual = exp["residual"].as_bool().unwrap();
 
-    let mut tcn = TinyTcnF32::from_safetensors(
+    let mut tcn = TinyTcn::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),
@@ -630,7 +573,7 @@ fn run_tcn_test(name: &str) {
         .enumerate()
     {
         let mut out = vec![0.0_f32; exp_out.len()];
-        tcn.step_into(inp, &mut out);
+        tcn.predict_into(inp, &mut out);
         for (j, (&actual, &expected)) in out.iter().zip(exp_out.iter()).enumerate() {
             assert_close(name, i, j, actual as f64, expected, tol);
         }
@@ -666,7 +609,7 @@ fn run_quantized_mlp_test(name: &str) {
     let exp = load_expected(name);
     let tol = exp["tolerance"].as_f64().unwrap();
 
-    let mut qmlp = QuantizedMlpI8::from_safetensors(
+    let qmlp = QuantizedMlp::from_safetensors(
         &data,
         exp["prefix"].as_str().unwrap(),
         parse_activation(&exp),

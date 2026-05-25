@@ -30,7 +30,7 @@ loaded once at startup via `from_parts()`, and served immutably with
 - [Quickstart](guides/quickstart.md) — Load a model, make predictions, handle errors
 - [Choosing a Model Type](guides/choosing.md) — Decision tree: which model for your use case
 - [NaN Handling](guides/nan-handling.md) — Checked vs unchecked contracts per type
-- [no_std Support](guides/no-std.md) — Feature flags: `alloc`, `std`, `libm`
+- [no_std Support](guides/no-std.md) — Crate requires `std`
 - [Exporting from Python](guides/python-export.md) — Get weights out of PyTorch/LightGBM into `from_parts()`
 
 ## Reference
@@ -47,19 +47,19 @@ loaded once at startup via `from_parts()`, and served immutably with
 src/
 ├── lib.rs              — Public API, re-exports
 ├── error.rs            — LoadError
-├── gbdt.rs             — GbdtF64/F32, Node, RawNode, reorder_and_compact
-├── mlp.rs              — MlpF64/F32, Activation
-├── lut.rs              — LutF64/F32, checked_pow
+├── gbdt.rs             — Gbdt, Node, RawNode, reorder_and_compact
+├── mlp.rs              — Mlp, Activation
+├── lut.rs              — Lut, checked_pow
 ├── dot/
 │   └── mod.rs          — SIMD dot products, matvec_bias_f32, matvec_f32
 ├── rnn/
 │   ├── mod.rs          — sigmoid_f32, tanh_f32 (Padé approximants)
-│   ├── lstm.rs         — TinyLstmF32
-│   ├── gru.rs          — TinyGruF32
+│   ├── lstm.rs         — TinyLstm
+│   ├── gru.rs          — TinyGru
 │   └── avx2_gates.rs   — AVX2 vectorized gate activations
 ├── conv/
 │   ├── mod.rs          — Module declaration
-│   └── causal1d.rs     — Causal1dConvF32
+│   └── causal1d.rs     — Causal1dConv
 └── loader/
     └── lightgbm.rs     — LightGBM text format parser
 ```
@@ -68,7 +68,4 @@ src/
 
 | Flag | Default | Enables |
 |------|---------|---------|
-| `std` | Yes | Standard library (implies `alloc`) |
-| `alloc` | Via `std` | GBDT, MLP, LUT, Conv types (`Box`, `Vec`) |
-| `libm` | No | LSTM/GRU in no_std, `Tanh`/`Sigmoid` activations (implies `alloc`) |
-| `loader-lightgbm` | No | `GbdtF64::from_lightgbm()` parser (implies `alloc`) |
+| `loader-lightgbm` | No | `Gbdt::from_lightgbm()` parser |

@@ -1,7 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use nexus_inference::{
-    Activation, BnnF32, Gbdt, LutF64, MlpF32, MlpF64, QuantizedMlpI8, TinyTcnF32,
-};
+use nexus_inference::{Activation, Bnn, Gbdt, Lut, Mlp, QuantizedMlp, TinyTcn};
 
 const LIGHTGBM_HEADER: &str = "\
 tree
@@ -221,33 +219,6 @@ fn bench_gbdt_random(c: &mut Criterion) {
     });
 }
 
-fn bench_mlp(c: &mut Criterion) {
-    let features_8 = vec![0.5_f64; 8];
-    let features_16 = vec![0.5_f64; 16];
-    let features_64 = vec![0.5_f64; 64];
-
-    // 8 → 16 → 1
-    let (w, b) = build_mlp_weights(&[8, 16, 1]);
-    let mut model = MlpF64::from_parts(&[8, 16, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF64::predict 8→16→1 relu", |b| {
-        b.iter(|| model.predict(black_box(&features_8)));
-    });
-
-    // 16 → 32 → 8 → 1
-    let (w, b) = build_mlp_weights(&[16, 32, 8, 1]);
-    let mut model = MlpF64::from_parts(&[16, 32, 8, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF64::predict 16→32→8→1 relu", |b| {
-        b.iter(|| model.predict(black_box(&features_16)));
-    });
-
-    // 64 → 64 → 1
-    let (w, b) = build_mlp_weights(&[64, 64, 1]);
-    let mut model = MlpF64::from_parts(&[64, 64, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF64::predict 64→64→1 relu", |b| {
-        b.iter(|| model.predict(black_box(&features_64)));
-    });
-}
-
 fn bench_mlp_f32(c: &mut Criterion) {
     let features_8: Vec<f32> = vec![0.5; 8];
     let features_16: Vec<f32> = vec![0.5; 16];
@@ -256,24 +227,24 @@ fn bench_mlp_f32(c: &mut Criterion) {
     let (w, b) = build_mlp_weights(&[8, 16, 1]);
     let w: Vec<f32> = w.into_iter().map(|x| x as f32).collect();
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
-    let mut model = MlpF32::from_parts(&[8, 16, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF32::predict 8→16→1 relu", |b| {
+    let mut model = Mlp::from_parts(&[8, 16, 1], &w, &b, Activation::Relu).unwrap();
+    c.bench_function("Mlp::predict 8→16→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_8)));
     });
 
     let (w, b) = build_mlp_weights(&[16, 32, 8, 1]);
     let w: Vec<f32> = w.into_iter().map(|x| x as f32).collect();
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
-    let mut model = MlpF32::from_parts(&[16, 32, 8, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF32::predict 16→32→8→1 relu", |b| {
+    let mut model = Mlp::from_parts(&[16, 32, 8, 1], &w, &b, Activation::Relu).unwrap();
+    c.bench_function("Mlp::predict 16→32→8→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_16)));
     });
 
     let (w, b) = build_mlp_weights(&[64, 64, 1]);
     let w: Vec<f32> = w.into_iter().map(|x| x as f32).collect();
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
-    let mut model = MlpF32::from_parts(&[64, 64, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF32::predict 64→64→1 relu", |b| {
+    let mut model = Mlp::from_parts(&[64, 64, 1], &w, &b, Activation::Relu).unwrap();
+    c.bench_function("Mlp::predict 64→64→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_64)));
     });
 
@@ -284,8 +255,8 @@ fn bench_mlp_f32(c: &mut Criterion) {
     let (w, b) = build_mlp_weights(&[32, 32, 32, 32, 1]);
     let w: Vec<f32> = w.into_iter().map(|x| x as f32).collect();
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
-    let mut model = MlpF32::from_parts(&[32, 32, 32, 32, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF32::predict 32→32→32→32→1 relu", |b| {
+    let mut model = Mlp::from_parts(&[32, 32, 32, 32, 1], &w, &b, Activation::Relu).unwrap();
+    c.bench_function("Mlp::predict 32→32→32→32→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_32)));
     });
 
@@ -293,25 +264,25 @@ fn bench_mlp_f32(c: &mut Criterion) {
     let (w, b) = build_mlp_weights(&[64, 64, 64, 1]);
     let w: Vec<f32> = w.into_iter().map(|x| x as f32).collect();
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
-    let mut model = MlpF32::from_parts(&[64, 64, 64, 1], &w, &b, Activation::Relu).unwrap();
-    c.bench_function("MlpF32::predict 64→64→64→1 relu", |b| {
+    let mut model = Mlp::from_parts(&[64, 64, 64, 1], &w, &b, Activation::Relu).unwrap();
+    c.bench_function("Mlp::predict 64→64→64→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_64)));
     });
 }
 
 fn bench_lut(c: &mut Criterion) {
     // 2 features × 10 bins
-    let table_2x10: Vec<f64> = (0..100).map(|i| i as f64 * 0.01).collect();
-    let model = LutF64::from_parts(2, 10, &[0.0, 0.0], &[1.0, 1.0], &table_2x10).unwrap();
-    c.bench_function("LutF64::predict 2feat×10bins", |b| {
-        b.iter(|| model.predict(black_box(&[0.35, 0.72])));
+    let table_2x10: Vec<f32> = (0..100).map(|i| i as f32 * 0.01).collect();
+    let model = Lut::from_parts(2, 10, &[0.0, 0.0], &[1.0, 1.0], &table_2x10).unwrap();
+    c.bench_function("Lut::predict 2feat×10bins", |b| {
+        b.iter(|| model.predict(black_box(&[0.35_f32, 0.72])));
     });
 
     // 3 features × 20 bins
-    let table_3x20: Vec<f64> = (0..8000).map(|i| i as f64 * 0.001).collect();
-    let model = LutF64::from_parts(3, 20, &[0.0, 0.0, 0.0], &[1.0, 1.0, 1.0], &table_3x20).unwrap();
-    c.bench_function("LutF64::predict 3feat×20bins", |b| {
-        b.iter(|| model.predict(black_box(&[0.35, 0.72, 0.15])));
+    let table_3x20: Vec<f32> = (0..8000).map(|i| i as f32 * 0.001).collect();
+    let model = Lut::from_parts(3, 20, &[0.0, 0.0, 0.0], &[1.0, 1.0, 1.0], &table_3x20).unwrap();
+    c.bench_function("Lut::predict 3feat×20bins", |b| {
+        b.iter(|| model.predict(black_box(&[0.35_f32, 0.72, 0.15])));
     });
 }
 
@@ -326,7 +297,7 @@ fn bench_mlp_f32_layernorm(c: &mut Criterion) {
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
     let ln_gamma: Vec<f32> = vec![1.0; 40];
     let ln_beta: Vec<f32> = vec![0.0; 40];
-    let mut model = MlpF32::from_parts_with_layer_norm(
+    let mut model = Mlp::from_parts_with_layer_norm(
         &[16, 32, 8, 1],
         &w,
         &b,
@@ -335,7 +306,7 @@ fn bench_mlp_f32_layernorm(c: &mut Criterion) {
         Activation::Relu,
     )
     .unwrap();
-    c.bench_function("MlpF32::predict 16→32→8→1 relu+LN", |b| {
+    c.bench_function("Mlp::predict 16→32→8→1 relu+LN", |b| {
         b.iter(|| model.predict(black_box(&features_16)));
     });
 
@@ -345,7 +316,7 @@ fn bench_mlp_f32_layernorm(c: &mut Criterion) {
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
     let ln_gamma: Vec<f32> = vec![1.0; 96];
     let ln_beta: Vec<f32> = vec![0.0; 96];
-    let mut model = MlpF32::from_parts_with_layer_norm(
+    let mut model = Mlp::from_parts_with_layer_norm(
         &[32, 32, 32, 32, 1],
         &w,
         &b,
@@ -354,7 +325,7 @@ fn bench_mlp_f32_layernorm(c: &mut Criterion) {
         Activation::Relu,
     )
     .unwrap();
-    c.bench_function("MlpF32::predict 32→32→32→32→1 relu+LN", |b| {
+    c.bench_function("Mlp::predict 32→32→32→32→1 relu+LN", |b| {
         b.iter(|| model.predict(black_box(&features_32)));
     });
 
@@ -364,7 +335,7 @@ fn bench_mlp_f32_layernorm(c: &mut Criterion) {
     let b: Vec<f32> = b.into_iter().map(|x| x as f32).collect();
     let ln_gamma: Vec<f32> = vec![1.0; 128];
     let ln_beta: Vec<f32> = vec![0.0; 128];
-    let mut model = MlpF32::from_parts_with_layer_norm(
+    let mut model = Mlp::from_parts_with_layer_norm(
         &[64, 64, 64, 1],
         &w,
         &b,
@@ -373,12 +344,12 @@ fn bench_mlp_f32_layernorm(c: &mut Criterion) {
         Activation::Relu,
     )
     .unwrap();
-    c.bench_function("MlpF32::predict 64→64→64→1 relu+LN", |b| {
+    c.bench_function("Mlp::predict 64→64→64→1 relu+LN", |b| {
         b.iter(|| model.predict(black_box(&features_64)));
     });
 }
 
-fn make_bnn(input: usize, hidden: usize, output: usize, n_binary: usize) -> BnnF32 {
+fn make_bnn(input: usize, hidden: usize, output: usize, n_binary: usize) -> Bnn {
     let wpr = hidden / 64;
     let w_input = vec![0.1_f32; hidden * input];
     let b_input = vec![0.0_f32; hidden];
@@ -392,7 +363,7 @@ fn make_bnn(input: usize, hidden: usize, output: usize, n_binary: usize) -> BnnF
     let w_output = vec![0.1_f32; output * hidden];
     let b_output = vec![0.0_f32; output];
 
-    BnnF32::from_parts(
+    Bnn::from_parts(
         &w_input,
         &b_input,
         &bin_weights,
@@ -435,7 +406,7 @@ fn make_tcn(
     num_layers: usize,
     output: usize,
     residual: bool,
-) -> TinyTcnF32 {
+) -> TinyTcn {
     let mut seed = 42u64;
     let mut next_f32 = || -> f32 {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -457,7 +428,7 @@ fn make_tcn(
     let w_out: Vec<f32> = (0..output * filters).map(|_| next_f32()).collect();
     let b_out = vec![0.0_f32; output];
 
-    TinyTcnF32::from_parts(
+    TinyTcn::from_parts(
         input,
         filters,
         kernel,
@@ -479,28 +450,28 @@ fn bench_tcn(c: &mut Criterion) {
     let mut m = make_tcn(4, 16, 3, 2, 1, false);
     // Prime the model
     for _ in 0..10 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("TCN I=4 F=16 K=3 L=2", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     // 4→16, K=3, 4 layers, residual
     let mut m = make_tcn(4, 16, 3, 4, 1, true);
     for _ in 0..40 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("TCN I=4 F=16 K=3 L=4 res", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     // 4→32, K=3, 3 layers
     let mut m = make_tcn(4, 32, 3, 3, 1, false);
     for _ in 0..20 {
-        m.step(&input_4);
+        m.predict(&input_4);
     }
     c.bench_function("TCN I=4 F=32 K=3 L=3", |b| {
-        b.iter(|| m.step(black_box(&input_4)));
+        b.iter(|| m.predict(black_box(&input_4)));
     });
 
     let input_8 = vec![0.5_f32; 8];
@@ -508,14 +479,14 @@ fn bench_tcn(c: &mut Criterion) {
     // 8→16, K=3, 4 layers, residual
     let mut m = make_tcn(8, 16, 3, 4, 1, true);
     for _ in 0..40 {
-        m.step(&input_8);
+        m.predict(&input_8);
     }
     c.bench_function("TCN I=8 F=16 K=3 L=4 res", |b| {
-        b.iter(|| m.step(black_box(&input_8)));
+        b.iter(|| m.predict(black_box(&input_8)));
     });
 }
 
-fn make_quantized_mlp(sizes: &[usize]) -> QuantizedMlpI8 {
+fn make_quantized_mlp(sizes: &[usize]) -> QuantizedMlp {
     let mut layers_w = Vec::new();
     let mut layers_b = Vec::new();
     let mut w_scales = Vec::new();
@@ -540,7 +511,7 @@ fn make_quantized_mlp(sizes: &[usize]) -> QuantizedMlpI8 {
 
     let w_refs: Vec<&[i8]> = layers_w.iter().map(Vec::as_slice).collect();
     let b_refs: Vec<&[f32]> = layers_b.iter().map(Vec::as_slice).collect();
-    QuantizedMlpI8::from_parts(
+    QuantizedMlp::from_parts(
         &w_refs,
         &b_refs,
         &w_scales,
@@ -558,23 +529,23 @@ fn bench_quantized_mlp(c: &mut Criterion) {
     let features_64: Vec<f32> = vec![0.5; 64];
 
     let mut model = make_quantized_mlp(&[8, 16, 1]);
-    c.bench_function("QuantizedMlpI8::predict 8→16→1 relu", |b| {
+    c.bench_function("QuantizedMlp::predict 8→16→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_8)));
     });
 
     let mut model = make_quantized_mlp(&[16, 32, 8, 1]);
-    c.bench_function("QuantizedMlpI8::predict 16→32→8→1 relu", |b| {
+    c.bench_function("QuantizedMlp::predict 16→32→8→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_16)));
     });
 
     let mut model = make_quantized_mlp(&[64, 64, 1]);
-    c.bench_function("QuantizedMlpI8::predict 64→64→1 relu", |b| {
+    c.bench_function("QuantizedMlp::predict 64→64→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_64)));
     });
 
     let features_32: Vec<f32> = vec![0.5; 32];
     let mut model = make_quantized_mlp(&[32, 32, 32, 32, 1]);
-    c.bench_function("QuantizedMlpI8::predict 32→32→32→32→1 relu", |b| {
+    c.bench_function("QuantizedMlp::predict 32→32→32→32→1 relu", |b| {
         b.iter(|| model.predict(black_box(&features_32)));
     });
 }
@@ -583,7 +554,6 @@ criterion_group!(
     benches,
     bench_gbdt,
     bench_gbdt_random,
-    bench_mlp,
     bench_mlp_f32,
     bench_mlp_f32_layernorm,
     bench_lut,

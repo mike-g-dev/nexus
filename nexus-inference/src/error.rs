@@ -9,8 +9,7 @@ pub enum LoadError {
     /// Feature count, tree structure, or metadata is inconsistent.
     Validation(&'static str),
     /// A required tensor was not found in the model file.
-    #[cfg(feature = "alloc")]
-    TensorNotFound(alloc::string::String),
+    TensorNotFound(String),
 }
 
 impl fmt::Display for LoadError {
@@ -18,11 +17,9 @@ impl fmt::Display for LoadError {
         match self {
             Self::Parse(msg) => write!(f, "parse error: {msg}"),
             Self::Validation(msg) => write!(f, "validation error: {msg}"),
-            #[cfg(feature = "alloc")]
             Self::TensorNotFound(name) => write!(f, "tensor not found: {name}"),
         }
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for LoadError {}

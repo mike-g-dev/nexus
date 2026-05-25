@@ -20,7 +20,7 @@ runtime feature detection overhead.
 
 **Stateless types** (GBDT, MLP, LUT) compute output directly from
 input features. **Temporal types** (LSTM, GRU, Conv) carry hidden
-state between `step` calls — the state buffers are pre-allocated
+state between `predict` calls — the state buffers are pre-allocated
 at construction and mutated in place.
 
 ## GBDT
@@ -70,7 +70,7 @@ The f32 advantage grows with layer width because the tiled SIMD path
 fuses bias + relu in registers and the 8-wide dot product halves
 iteration count.
 
-### MLP i8 (QuantizedMlpI8)
+### MLP i8 (QuantizedMlp)
 
 Int8 quantized weights with per-layer affine quantization. The forward
 pass quantizes f32 inputs to i8, performs integer matmul with i32
@@ -82,7 +82,7 @@ loads. SIMD quantization via `_mm256_cvtps_epi32` + saturating pack.
 Corrections (128*row_sum, input_zp*row_sum) precomputed into bias at
 construction — zero per-output correction overhead at inference.
 
-| Configuration | Latency | vs MlpF32 |
+| Configuration | Latency | vs Mlp |
 |--------------|--------:|----------:|
 | 8→16→1 relu | 113 ns | 2.1x slower |
 | 16→32→8→1 relu | 316 ns | 3.0x slower |
@@ -122,7 +122,7 @@ step instead of two. Gate activations (sigmoid, tanh) use a Pade
 [7,6] rational polynomial approximation vectorized 8-wide (AVX2) or
 16-wide (AVX-512), replacing scalar glibc transcendentals.
 
-### Single-layer (TinyLstmF32)
+### Single-layer (TinyLstm)
 
 | Configuration | Gate matrix | Latency |
 |--------------|-------------|--------:|
@@ -131,7 +131,7 @@ step instead of two. Gate activations (sigmoid, tanh) use a Pade
 | 8→32→1 | 128×40 | 297 ns |
 | 16→64→1 | 256×80 | 1066 ns |
 
-### Stacked (StackedLstmF32)
+### Stacked (StackedLstm)
 
 Each layer's hidden state feeds as input to the next. Output
 projection applied only to the final layer.
@@ -153,7 +153,7 @@ the candidate gate applies the reset gate between the input-hidden
 and hidden-hidden matrix-vector products. Same Pade sigmoid/tanh
 approximation as LSTM.
 
-### Single-layer (TinyGruF32)
+### Single-layer (TinyGru)
 
 | Configuration | Latency |
 |--------------|--------:|
@@ -161,7 +161,7 @@ approximation as LSTM.
 | 8→32→1 | 325 ns |
 | 16→64→1 | 909 ns |
 
-### Stacked (StackedGruF32)
+### Stacked (StackedGru)
 
 | Configuration | Latency |
 |--------------|--------:|

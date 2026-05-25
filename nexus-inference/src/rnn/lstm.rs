@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::dot::matvec_bias_f32;
 
@@ -33,7 +29,7 @@ use super::{sigmoid_f32, tanh_f32};
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::TinyLstmF32;
+/// use nexus_inference::TinyLstm;
 ///
 /// let weight_ih = vec![0.1_f32; 4 * 8 * 4];
 /// let weight_hh = vec![0.1_f32; 4 * 8 * 8];
@@ -42,17 +38,17 @@ use super::{sigmoid_f32, tanh_f32};
 /// let w_out = vec![0.1_f32; 1 * 8];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut lstm = TinyLstmF32::from_parts(
+/// let mut lstm = TinyLstm::from_parts(
 ///     4, 8, 1,
 ///     &weight_ih, &weight_hh,
 ///     &bias_ih, &bias_hh,
 ///     &w_out, &b_out,
 /// ).unwrap();
 ///
-/// let output = lstm.step(&[0.5, 1.2, -0.3, 0.8]);
+/// let output = lstm.predict(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct TinyLstmF32 {
+pub struct TinyLstm {
     w_gates: Box<[f32]>,
     b_gates: Box<[f32]>,
     w_out: Box<[f32]>,
@@ -66,7 +62,7 @@ pub struct TinyLstmF32 {
     output_size: u16,
 }
 
-impl TinyLstmF32 {
+impl TinyLstm {
     /// Construct from pre-trained weights.
     ///
     /// Parameters map to PyTorch's `nn.LSTM` + `nn.Linear`:
@@ -170,13 +166,13 @@ impl TinyLstmF32 {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
-            "step() requires output_size == 1, use step_into()"
+            "predict() requires output_size == 1, use predict_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -198,7 +194,7 @@ impl TinyLstmF32 {
     ///
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let i = self.input_size as usize;
         let h = self.hidden_size as usize;
         let concat_size = i + h;
@@ -235,7 +231,7 @@ impl TinyLstmF32 {
     }
 
     /// Reset hidden and cell state to zeros.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         self.h.fill(0.0);
         self.c.fill(0.0);
     }
@@ -251,18 +247,30 @@ impl TinyLstmF32 {
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Number of hidden units.
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
+    }
+}
+
+impl crate::Model for TinyLstm {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        TinyLstm::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        TinyLstm::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        TinyLstm::n_outputs(self)
     }
 }
 
@@ -279,7 +287,7 @@ mod tests {
         w_hh_val: f32,
         b_val: f32,
         w_out_val: f32,
-    ) -> TinyLstmF32 {
+    ) -> TinyLstm {
         let gate_count = 4 * hidden;
         let weight_ih = vec![w_ih_val; gate_count * input];
         let weight_hh = vec![w_hh_val; gate_count * hidden];
@@ -287,7 +295,7 @@ mod tests {
         let bias_hh = vec![0.0_f32; gate_count];
         let w_out = vec![w_out_val; output * hidden];
         let b_out = vec![0.0_f32; output];
-        TinyLstmF32::from_parts(
+        TinyLstm::from_parts(
             input, hidden, output, &weight_ih, &weight_hh, &bias_ih, &bias_hh, &w_out, &b_out,
         )
         .unwrap()
@@ -296,7 +304,7 @@ mod tests {
     #[test]
     fn basic_forward_pass() {
         let mut lstm = make_lstm(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out = lstm.step(&[1.0, 0.0]);
+        let out = lstm.predict(&[1.0, 0.0]);
 
         // h_0 = [0, 0], so concat = [1, 0, 0, 0]
         // Each gate row dot concat = 0.1*1 = 0.1 (all rows identical)
@@ -315,8 +323,8 @@ mod tests {
     #[test]
     fn state_carries_between_steps() {
         let mut lstm = make_lstm(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out1 = lstm.step(&[1.0, 0.0]);
-        let out2 = lstm.step(&[1.0, 0.0]);
+        let out1 = lstm.predict(&[1.0, 0.0]);
+        let out2 = lstm.predict(&[1.0, 0.0]);
         // Second step sees h != 0, so output differs from first
         assert!((out1 - out2).abs() > 1e-6);
     }
@@ -324,11 +332,11 @@ mod tests {
     #[test]
     fn reset_clears_state() {
         let mut lstm = make_lstm(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        lstm.step(&[1.0, 0.0]);
+        lstm.predict(&[1.0, 0.0]);
         assert!(lstm.hidden_state().iter().any(|&v| v != 0.0));
         assert!(lstm.cell_state().iter().any(|&v| v != 0.0));
 
-        lstm.reset_state();
+        lstm.reset();
         assert!(lstm.hidden_state().iter().all(|&v| v == 0.0));
         assert!(lstm.cell_state().iter().all(|&v| v == 0.0));
     }
@@ -336,11 +344,11 @@ mod tests {
     #[test]
     fn reset_reproduces_first_output() {
         let mut lstm = make_lstm(2, 4, 1, 0.1, 0.2, 0.0, 0.1);
-        let first = lstm.step(&[1.0, -1.0]);
-        lstm.step(&[0.5, 0.5]);
-        lstm.step(&[0.0, 1.0]);
-        lstm.reset_state();
-        let after_reset = lstm.step(&[1.0, -1.0]);
+        let first = lstm.predict(&[1.0, -1.0]);
+        lstm.predict(&[0.5, 0.5]);
+        lstm.predict(&[0.0, 1.0]);
+        lstm.reset();
+        let after_reset = lstm.predict(&[1.0, -1.0]);
         assert!(
             (first - after_reset).abs() < 1e-6,
             "first={first}, after_reset={after_reset}"
@@ -351,7 +359,7 @@ mod tests {
     fn multi_output() {
         let mut lstm = make_lstm(2, 4, 3, 0.1, 0.1, 0.0, 0.1);
         let mut out = [0.0_f32; 3];
-        lstm.step_into(&[1.0, 0.5], &mut out);
+        lstm.predict_into(&[1.0, 0.5], &mut out);
         // All output neurons see the same h with uniform w_out
         assert!((out[0] - out[1]).abs() < 1e-6);
         assert!((out[1] - out[2]).abs() < 1e-6);
@@ -360,29 +368,29 @@ mod tests {
     #[test]
     fn nan_propagates() {
         let mut lstm = make_lstm(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out = lstm.step(&[f32::NAN, 1.0]);
+        let out = lstm.predict(&[f32::NAN, 1.0]);
         assert!(out.is_nan());
     }
 
     #[test]
     fn accessors() {
         let lstm = make_lstm(4, 8, 2, 0.1, 0.1, 0.0, 0.1);
-        assert_eq!(lstm.input_size(), 4);
-        assert_eq!(lstm.hidden_size(), 8);
-        assert_eq!(lstm.output_size(), 2);
+        assert_eq!(lstm.n_inputs(), 4);
+        assert_eq!(lstm.n_hidden(), 8);
+        assert_eq!(lstm.n_outputs(), 2);
         assert_eq!(lstm.hidden_state().len(), 8);
         assert_eq!(lstm.cell_state().len(), 8);
     }
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = TinyLstmF32::from_parts(0, 2, 1, &[], &[], &[], &[], &[], &[]);
+        let r = TinyLstm::from_parts(0, 2, 1, &[], &[], &[], &[], &[], &[]);
         assert!(r.is_err());
     }
 
     #[test]
     fn validation_rejects_weight_mismatch() {
-        let r = TinyLstmF32::from_parts(
+        let r = TinyLstm::from_parts(
             2, 2, 1, &[0.0; 15], // wrong: should be 4*2*2 = 16
             &[0.0; 16], &[0.0; 8], &[0.0; 8], &[0.0; 2], &[0.0; 1],
         );
@@ -393,7 +401,7 @@ mod tests {
     fn validation_rejects_non_finite() {
         let mut w = vec![0.1_f32; 16];
         w[5] = f32::INFINITY;
-        let r = TinyLstmF32::from_parts(
+        let r = TinyLstm::from_parts(
             2, 2, 1, &w, &[0.0; 16], &[0.0; 8], &[0.0; 8], &[0.0; 2], &[0.0; 1],
         );
         assert!(r.is_err());
@@ -418,19 +426,19 @@ mod tests {
             let bias_hh = vec![0.0_f32; gc];
             let w_out = vec![0.1_f32; h];
             let b_out = vec![0.0_f32; 1];
-            TinyLstmF32::from_parts(
+            TinyLstm::from_parts(
                 i, h, 1, &weight_ih, &weight_hh, &bias_ih, &bias_hh, &w_out, &b_out,
             )
             .unwrap()
         };
         let mut lstm_bias0 = make_lstm(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
 
-        lstm_bias1.step(&[1.0, 0.5]);
-        lstm_bias0.step(&[1.0, 0.5]);
+        lstm_bias1.predict(&[1.0, 0.5]);
+        lstm_bias0.predict(&[1.0, 0.5]);
         // After one step with input, run several steps with zero input
         for _ in 0..5 {
-            lstm_bias1.step(&[0.0, 0.0]);
-            lstm_bias0.step(&[0.0, 0.0]);
+            lstm_bias1.predict(&[0.0, 0.0]);
+            lstm_bias0.predict(&[0.0, 0.0]);
         }
         let cell_bias1: f32 = lstm_bias1.cell_state().iter().map(|v| v.abs()).sum();
         let cell_bias0: f32 = lstm_bias0.cell_state().iter().map(|v| v.abs()).sum();
@@ -442,15 +450,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut lstm = make_lstm(2, 2, 3, 0.1, 0.1, 0.0, 0.1);
-        lstm.step(&[1.0, 0.0]);
+        lstm.predict(&[1.0, 0.0]);
     }
 
     #[test]
     #[should_panic(expected = "input length")]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut lstm = make_lstm(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        lstm.step(&[1.0]);
+        lstm.predict(&[1.0]);
     }
 }

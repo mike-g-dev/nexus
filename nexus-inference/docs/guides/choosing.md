@@ -12,11 +12,11 @@
   │   ├── Feedforward (nn.Linear layers)
   │   │   └── MLP (export weights to from_parts)
   │   ├── LSTM (nn.LSTM)
-  │   │   └── TinyLstmF32 (streaming step-by-step)
+  │   │   └── TinyLstm (streaming step-by-step)
   │   ├── GRU (nn.GRU)
-  │   │   └── TinyGruF32 (streaming step-by-step)
+  │   │   └── TinyGru (streaming step-by-step)
   │   └── 1D convolution (nn.Conv1d, causal)
-  │       └── Causal1dConvF32 (streaming step-by-step)
+  │       └── Causal1dConv (streaming step-by-step)
   │
   ├── A pre-computed function over a small grid
   │   └── LUT (tabulate in Python, load flat array)
@@ -53,7 +53,7 @@
 | **Missing data** | Learned NaN routing | No (propagate) | No (clamp to bin 0) |
 | **Output** | Single scalar | Single or multi-output | Single scalar |
 | **Model source** | LightGBM | PyTorch/TF/sklearn | Python script |
-| **Memory** | 16B/node | 8B/weight | 8B/bin^features |
+| **Memory** | 16B/node | 4B/weight | 4B/bin^features |
 | **Loader** | `from_lightgbm()` | `from_parts()` | `from_parts()` |
 
 ### Temporal types
@@ -67,7 +67,7 @@
 | **Gates** | 4 (sigmoid/tanh) | 3 (sigmoid/tanh) | None (configurable activation) |
 | **Output** | Single or multi | Single or multi | Single or multi |
 | **Model source** | PyTorch `nn.LSTM` | PyTorch `nn.GRU` | PyTorch `nn.Conv1d` |
-| **API** | `step` / `step_into` | `step` / `step_into` | `step` / `step_into` |
+| **API** | `predict` / `predict_into` | `predict` / `predict_into` | `predict` / `predict_into` |
 
 ## When to Combine Types
 
@@ -85,7 +85,7 @@ In trading systems, it's common to use multiple model types together:
 - **LSTM/GRU for regime detection** → temporal model outputs a regime
   score, GBDT or MLP conditions on it alongside snapshot features
 
-The `predict_into` and `step_into` APIs make composition straightforward
+The `predict_into` API makes composition straightforward
 — one model's output buffer feeds directly into the next model's input.
 
 ## Model Size Guidelines

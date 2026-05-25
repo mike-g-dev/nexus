@@ -400,24 +400,6 @@ def generate_mlp_f32_deep():
                  prefix="deep", init_fn=init_sinusoidal, tolerance=1e-5)
 
 
-def generate_mlp_f64():
-    generate_mlp("mlp_f64", [2, 4, 1], nn.ReLU, "relu", torch.float64,
-                 inputs=[[3.0, 4.0], [-1.0, 2.0], [0.0, 0.0]],
-                 prefix="net", init_fn=init_linspace, tolerance=1e-10)
-
-
-def generate_mlp_f64_no_prefix():
-    generate_mlp("mlp_f64_no_prefix", [3, 6, 2], nn.ReLU, "relu", torch.float64,
-                 inputs=make_inputs(4, 3, seed=16),
-                 prefix="", init_fn=init_sinusoidal, tolerance=1e-10)
-
-
-def generate_mlp_f64_tanh():
-    generate_mlp("mlp_f64_tanh", [2, 8, 4, 1], nn.Tanh, "tanh", torch.float64,
-                 inputs=make_inputs(5, 2, seed=17),
-                 prefix="model", init_fn=init_linspace, tolerance=1e-10)
-
-
 def generate_mlp_f32_swish():
     generate_mlp("mlp_f32_swish", [3, 6, 2], nn.SiLU, "swish", torch.float32,
                  inputs=make_inputs(4, 3, seed=30),
@@ -864,21 +846,6 @@ def generate_fuzz():
         generate_mlp(f"fuzz_mlp_f32_{i}", sizes, act_cls, act_name, torch.float32,
                      inputs=make_inputs(rng.randint(3, 8), input_size, seed=300+i),
                      prefix=f"fuzz{i}", init_fn=rng.choice(init_fns), tolerance=1e-5,
-                     activation_param=act_param)
-
-    # Fuzz MLP f64
-    rng = random.Random(342)
-    for i in range(2):
-        n_hidden = rng.randint(0, 2)
-        input_size = rng.randint(1, 6)
-        sizes = [input_size]
-        for _ in range(n_hidden):
-            sizes.append(rng.randint(2, 8))
-        sizes.append(rng.randint(1, 3))
-        act_name, act_cls, act_param = rng.choice(activations_mlp)
-        generate_mlp(f"fuzz_mlp_f64_{i}", sizes, act_cls, act_name, torch.float64,
-                     inputs=make_inputs(rng.randint(3, 6), input_size, seed=400+i),
-                     prefix=f"fuzz{i}", init_fn=rng.choice(init_fns), tolerance=1e-10,
                      activation_param=act_param)
 
     # Fuzz Conv1d
@@ -1360,9 +1327,6 @@ if __name__ == "__main__":
     generate_mlp_f32_layernorm()
     generate_mlp_f32_layernorm_no_bias()
     # MLP f64
-    generate_mlp_f64()
-    generate_mlp_f64_no_prefix()
-    generate_mlp_f64_tanh()
     # Conv1d
     generate_conv1d()
     generate_conv1d_tanh()

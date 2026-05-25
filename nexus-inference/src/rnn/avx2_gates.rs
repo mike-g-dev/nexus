@@ -1,48 +1,7 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-/// AVX2 vectorized Padé [7,6] tanh on 8 lanes.
-#[inline(always)]
-#[cfg(target_arch = "x86_64")]
-unsafe fn tanh_8wide(x: __m256) -> __m256 {
-    unsafe {
-        // Detect NaN lanes before clamping (min/max would swallow them).
-        let nan_mask = _mm256_cmp_ps(x, x, _CMP_UNORD_Q);
-
-        let pos_clip = _mm256_set1_ps(4.97);
-        let neg_clip = _mm256_set1_ps(-4.97);
-        let xc = _mm256_min_ps(_mm256_max_ps(x, neg_clip), pos_clip);
-
-        let x2 = _mm256_mul_ps(xc, xc);
-
-        // num = x * (135_135 + x2 * (17_325 + x2 * (378 + x2)))
-        let n_inner = _mm256_fmadd_ps(x2, _mm256_set1_ps(1.0), _mm256_set1_ps(378.0));
-        let n_mid = _mm256_fmadd_ps(x2, n_inner, _mm256_set1_ps(17_325.0));
-        let n_outer = _mm256_fmadd_ps(x2, n_mid, _mm256_set1_ps(135_135.0));
-        let num = _mm256_mul_ps(xc, n_outer);
-
-        // den = 135_135 + x2 * (62_370 + x2 * (3_150 + x2 * 28))
-        let d_inner = _mm256_fmadd_ps(x2, _mm256_set1_ps(28.0), _mm256_set1_ps(3_150.0));
-        let d_mid = _mm256_fmadd_ps(x2, d_inner, _mm256_set1_ps(62_370.0));
-        let den = _mm256_fmadd_ps(x2, d_mid, _mm256_set1_ps(135_135.0));
-
-        let result = _mm256_div_ps(num, den);
-
-        // Restore NaN lanes that clamping would have silently replaced.
-        _mm256_blendv_ps(result, x, nan_mask)
-    }
-}
-
-/// AVX2 vectorized sigmoid: 0.5 + 0.5 * tanh(x * 0.5)
-#[inline(always)]
-#[cfg(target_arch = "x86_64")]
-unsafe fn sigmoid_8wide(x: __m256) -> __m256 {
-    unsafe {
-        let half = _mm256_set1_ps(0.5);
-        let t = tanh_8wide(_mm256_mul_ps(x, half));
-        _mm256_fmadd_ps(half, t, half)
-    }
-}
+use crate::activation::simd::{sigmoid_8wide, tanh_8wide};
 
 /// LSTM gate activation + cell/hidden update, 8 units at a time.
 ///

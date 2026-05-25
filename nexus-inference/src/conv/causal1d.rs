@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::activation::{Activation, activate_f32};
 use crate::dot::{dot_f32, dot4_f32, matvec_bias_f32};
@@ -23,6 +19,7 @@ pub(super) fn conv_tiled_simd(
     filters_4: usize,
     activation: Activation,
 ) -> usize {
+    use crate::activation::simd::{activate_4wide, activate_8wide};
     use crate::dot::{dot4_f32_m128, dot8_f32_m256};
     use core::arch::x86_64::*;
 
@@ -31,55 +28,32 @@ pub(super) fn conv_tiled_simd(
     // SAFETY: cfg guarantees SIMD availability.
     // f + N <= filters_4 within respective loops; bias/scratch accesses are in bounds.
     unsafe {
-        match activation {
-            Activation::Relu => {
-                if conv_len >= 32 {
-                    let zero256 = _mm256_setzero_ps();
-                    while f < filters_8 {
-                        let rows = &w_conv[f * conv_len..(f + 8) * conv_len];
-                        let dots = dot8_f32_m256(rows, lin);
-                        let bias_v = _mm256_loadu_ps(b_conv.as_ptr().add(f));
-                        _mm256_storeu_ps(
-                            filter_scratch.as_mut_ptr().add(f),
-                            _mm256_max_ps(_mm256_add_ps(dots, bias_v), zero256),
-                        );
-                        f += 8;
+        if conv_len >= 32 {
+            while f < filters_8 {
+                let rows = &w_conv[f * conv_len..(f + 8) * conv_len];
+                let dots = dot8_f32_m256(rows, lin);
+                let bias_v = _mm256_loadu_ps(b_conv.as_ptr().add(f));
+                let with_bias = _mm256_add_ps(dots, bias_v);
+                match activate_8wide(with_bias, activation) {
+                    Some(activated) => {
+                        _mm256_storeu_ps(filter_scratch.as_mut_ptr().add(f), activated)
                     }
+                    None => return f,
                 }
-                let zero128 = _mm_setzero_ps();
-                while f < filters_4 {
-                    let rows = &w_conv[f * conv_len..(f + 4) * conv_len];
-                    let dots = dot4_f32_m128(rows, lin);
-                    let bias_v = _mm_loadu_ps(b_conv.as_ptr().add(f));
-                    _mm_storeu_ps(
-                        filter_scratch.as_mut_ptr().add(f),
-                        _mm_max_ps(_mm_add_ps(dots, bias_v), zero128),
-                    );
-                    f += 4;
-                }
+                f += 8;
             }
-            Activation::Identity => {
-                if conv_len >= 32 {
-                    while f < filters_8 {
-                        let rows = &w_conv[f * conv_len..(f + 8) * conv_len];
-                        let dots = dot8_f32_m256(rows, lin);
-                        let bias_v = _mm256_loadu_ps(b_conv.as_ptr().add(f));
-                        _mm256_storeu_ps(
-                            filter_scratch.as_mut_ptr().add(f),
-                            _mm256_add_ps(dots, bias_v),
-                        );
-                        f += 8;
-                    }
-                }
-                while f < filters_4 {
-                    let rows = &w_conv[f * conv_len..(f + 4) * conv_len];
-                    let dots = dot4_f32_m128(rows, lin);
-                    let bias_v = _mm_loadu_ps(b_conv.as_ptr().add(f));
-                    _mm_storeu_ps(filter_scratch.as_mut_ptr().add(f), _mm_add_ps(dots, bias_v));
-                    f += 4;
-                }
+        }
+
+        while f < filters_4 {
+            let rows = &w_conv[f * conv_len..(f + 4) * conv_len];
+            let dots = dot4_f32_m128(rows, lin);
+            let bias_v = _mm_loadu_ps(b_conv.as_ptr().add(f));
+            let with_bias = _mm_add_ps(dots, bias_v);
+            match activate_4wide(with_bias, activation) {
+                Some(activated) => _mm_storeu_ps(filter_scratch.as_mut_ptr().add(f), activated),
+                None => return f,
             }
-            _ => {}
+            f += 4;
         }
     }
     f
@@ -95,7 +69,7 @@ pub(super) fn conv_tiled_simd(
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::{Activation, Causal1dConvF32};
+/// use nexus_inference::{Activation, Causal1dConv};
 ///
 /// // 2 input channels, kernel 3, 4 filters, 1 output
 /// let w_conv = vec![0.1_f32; 4 * 3 * 2];
@@ -103,21 +77,21 @@ pub(super) fn conv_tiled_simd(
 /// let w_out = vec![0.1_f32; 1 * 4];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut conv = Causal1dConvF32::from_parts(
+/// let mut conv = Causal1dConv::from_parts(
 ///     2, 3, 4, 1,
 ///     &w_conv, &b_conv,
 ///     &w_out, &b_out,
 ///     Activation::Relu,
 /// ).unwrap();
 ///
-/// let output = conv.step(&[0.5, 1.0]);
+/// let output = conv.predict(&[0.5, 1.0]);
 /// assert!(!conv.is_primed()); // needs 3 steps to fill kernel buffer
-/// conv.step(&[0.2, 0.3]);
-/// conv.step(&[0.1, 0.4]);
+/// conv.predict(&[0.2, 0.3]);
+/// conv.predict(&[0.1, 0.4]);
 /// assert!(conv.is_primed());
 /// ```
 #[derive(Debug, Clone)]
-pub struct Causal1dConvF32 {
+pub struct Causal1dConv {
     w_conv: Box<[f32]>,
     b_conv: Box<[f32]>,
     w_out: Box<[f32]>,
@@ -134,7 +108,7 @@ pub struct Causal1dConvF32 {
     activation: Activation,
 }
 
-impl Causal1dConvF32 {
+impl Causal1dConv {
     /// Construct from pre-trained weights.
     ///
     /// - `input_ch`: number of input channels per timestep.
@@ -190,20 +164,6 @@ impl Causal1dConvF32 {
             }
         }
 
-        #[cfg(not(any(feature = "std", feature = "libm")))]
-        match activation {
-            Activation::Tanh
-            | Activation::Sigmoid
-            | Activation::Elu(_)
-            | Activation::Gelu
-            | Activation::Swish => {
-                return Err(LoadError::Validation(
-                    "Tanh/Sigmoid/Elu/Gelu/Swish require std or libm feature",
-                ));
-            }
-            _ => {}
-        }
-
         Ok(Self {
             w_conv: w_conv.into(),
             b_conv: b_conv.into(),
@@ -225,13 +185,13 @@ impl Causal1dConvF32 {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_ch`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
-            "step() requires output_size == 1, use step_into()"
+            "predict() requires output_size == 1, use predict_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -241,7 +201,7 @@ impl Causal1dConvF32 {
     ///
     /// Panics if `input.len() != input_ch` or
     /// `output.len() != output_size`.
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let ch = self.input_ch as usize;
         let k_size = self.kernel_size as usize;
         let n_filters = self.filters as usize;
@@ -322,7 +282,7 @@ impl Causal1dConvF32 {
     }
 
     /// Reset circular buffer and step counter.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         self.buffer.fill(0.0);
         self.write_idx = 0;
         self.step_count = 0;
@@ -337,7 +297,7 @@ impl Causal1dConvF32 {
     }
 
     /// Number of input channels per timestep.
-    pub fn input_ch(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_ch as usize
     }
 
@@ -347,18 +307,30 @@ impl Causal1dConvF32 {
     }
 
     /// Number of convolution filters.
-    pub fn filters(&self) -> usize {
+    pub fn n_filters(&self) -> usize {
         self.filters as usize
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 
     /// Activation function applied to convolution outputs.
     pub fn activation(&self) -> Activation {
         self.activation
+    }
+}
+
+impl crate::Model for Causal1dConv {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        Causal1dConv::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        Causal1dConv::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        Causal1dConv::n_outputs(self)
     }
 }
 
@@ -372,12 +344,12 @@ mod tests {
         filters: usize,
         output: usize,
         w_val: f32,
-    ) -> Causal1dConvF32 {
+    ) -> Causal1dConv {
         let w_conv = vec![w_val; filters * kernel * input_ch];
         let b_conv = vec![0.0_f32; filters];
         let w_out = vec![w_val; output * filters];
         let b_out = vec![0.0_f32; output];
-        Causal1dConvF32::from_parts(
+        Causal1dConv::from_parts(
             input_ch,
             kernel,
             filters,
@@ -396,13 +368,13 @@ mod tests {
         let mut conv = make_conv(1, 3, 1, 1, 1.0);
         assert!(!conv.is_primed());
 
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
         assert!(!conv.is_primed()); // 1 of 3
 
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
         assert!(!conv.is_primed()); // 2 of 3
 
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
         assert!(conv.is_primed()); // 3 of 3
     }
 
@@ -415,7 +387,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32]; // pass-through
         let b_out = [0.0_f32];
-        let mut conv = Causal1dConvF32::from_parts(
+        let mut conv = Causal1dConv::from_parts(
             1,
             3,
             1,
@@ -429,22 +401,22 @@ mod tests {
         .unwrap();
 
         // Step 1: buffer = [1, 0, 0] (zero-padded)
-        let out1 = conv.step(&[1.0]);
+        let out1 = conv.predict(&[1.0]);
         // k=0: w[0]*buf[current]=0.5*1=0.5, k=1: w[1]*buf[prev]=0.3*0=0, k=2: w[2]*0=0
         assert!((out1 - 0.5).abs() < 1e-6, "step1: {out1}");
 
         // Step 2: buffer = [1, 2, 0]
-        let out2 = conv.step(&[2.0]);
+        let out2 = conv.predict(&[2.0]);
         // k=0: 0.5*2=1.0, k=1: 0.3*1=0.3, k=2: 0.1*0=0
         assert!((out2 - 1.3).abs() < 1e-6, "step2: {out2}");
 
         // Step 3: buffer = [1, 2, 3], primed
-        let out3 = conv.step(&[3.0]);
+        let out3 = conv.predict(&[3.0]);
         // k=0: 0.5*3=1.5, k=1: 0.3*2=0.6, k=2: 0.1*1=0.1
         assert!((out3 - 2.2).abs() < 1e-6, "step3: {out3}");
 
         // Step 4: buffer overwrites oldest → [4, 2, 3]
-        let out4 = conv.step(&[4.0]);
+        let out4 = conv.predict(&[4.0]);
         // k=0: 0.5*4=2.0, k=1: 0.3*3=0.9, k=2: 0.1*2=0.2
         assert!((out4 - 3.1).abs() < 1e-6, "step4: {out4}");
     }
@@ -457,7 +429,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32];
         let b_out = [0.0_f32];
-        let mut conv = Causal1dConvF32::from_parts(
+        let mut conv = Causal1dConv::from_parts(
             2,
             2,
             1,
@@ -471,12 +443,12 @@ mod tests {
         .unwrap();
 
         // Step 1: x=[1, 2], buffer=[[1,2],[0,0]]
-        let out1 = conv.step(&[1.0, 2.0]);
+        let out1 = conv.predict(&[1.0, 2.0]);
         // k=0: 0.1*1+0.2*2=0.5, k=1: 0.3*0+0.4*0=0
         assert!((out1 - 0.5).abs() < 1e-6, "step1: {out1}");
 
         // Step 2: x=[3, 4], buffer=[[1,2],[3,4]]
-        let out2 = conv.step(&[3.0, 4.0]);
+        let out2 = conv.predict(&[3.0, 4.0]);
         // k=0: 0.1*3+0.2*4=1.1, k=1: 0.3*1+0.4*2=1.1
         assert!((out2 - 2.2).abs() < 1e-6, "step2: {out2}");
     }
@@ -488,7 +460,7 @@ mod tests {
         let b_conv = [0.0_f32];
         let w_out = [1.0_f32];
         let b_out = [0.0_f32];
-        let mut conv = Causal1dConvF32::from_parts(
+        let mut conv = Causal1dConv::from_parts(
             1,
             1,
             1,
@@ -501,11 +473,11 @@ mod tests {
         )
         .unwrap();
 
-        let out = conv.step(&[5.0]);
+        let out = conv.predict(&[5.0]);
         // conv = -1*5 = -5, relu(-5) = 0, output = 1*0 = 0
         assert!((out - 0.0).abs() < 1e-6, "{out}");
 
-        let out2 = conv.step(&[-3.0]);
+        let out2 = conv.predict(&[-3.0]);
         // conv = -1*(-3) = 3, relu(3) = 3, output = 1*3 = 3
         assert!((out2 - 3.0).abs() < 1e-6, "{out2}");
     }
@@ -513,17 +485,17 @@ mod tests {
     #[test]
     fn reset_clears_buffer() {
         let mut conv = make_conv(1, 3, 1, 1, 0.5);
-        conv.step(&[1.0]);
-        conv.step(&[2.0]);
+        conv.predict(&[1.0]);
+        conv.predict(&[2.0]);
         assert!(!conv.is_primed());
 
-        conv.reset_state();
+        conv.reset();
         assert!(!conv.is_primed());
 
         // After reset, same input should produce same output as fresh
         let mut fresh = make_conv(1, 3, 1, 1, 0.5);
-        let out_reset = conv.step(&[1.0]);
-        let out_fresh = fresh.step(&[1.0]);
+        let out_reset = conv.predict(&[1.0]);
+        let out_fresh = fresh.predict(&[1.0]);
         assert!(
             (out_reset - out_fresh).abs() < 1e-6,
             "reset={out_reset}, fresh={out_fresh}"
@@ -534,7 +506,7 @@ mod tests {
     fn multi_filter_multi_output() {
         let mut conv = make_conv(1, 2, 4, 2, 0.1);
         let mut out = [0.0_f32; 2];
-        conv.step_into(&[1.0], &mut out);
+        conv.predict_into(&[1.0], &mut out);
         // All filters have same weights, so filter outputs are equal.
         // All output neurons have same weights, so outputs are equal.
         assert!((out[0] - out[1]).abs() < 1e-6);
@@ -543,29 +515,29 @@ mod tests {
     #[test]
     fn nan_propagates() {
         let mut conv = make_conv(1, 2, 1, 1, 0.1);
-        let out = conv.step(&[f32::NAN]);
+        let out = conv.predict(&[f32::NAN]);
         assert!(out.is_nan());
     }
 
     #[test]
     fn accessors() {
         let conv = make_conv(3, 5, 8, 2, 0.1);
-        assert_eq!(conv.input_ch(), 3);
+        assert_eq!(conv.n_inputs(), 3);
         assert_eq!(conv.kernel_size(), 5);
-        assert_eq!(conv.filters(), 8);
-        assert_eq!(conv.output_size(), 2);
+        assert_eq!(conv.n_filters(), 8);
+        assert_eq!(conv.n_outputs(), 2);
         assert!(matches!(conv.activation(), Activation::Identity));
     }
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = Causal1dConvF32::from_parts(0, 3, 4, 1, &[], &[], &[], &[], Activation::Relu);
+        let r = Causal1dConv::from_parts(0, 3, 4, 1, &[], &[], &[], &[], Activation::Relu);
         assert!(r.is_err());
     }
 
     #[test]
     fn validation_rejects_weight_mismatch() {
-        let r = Causal1dConvF32::from_parts(
+        let r = Causal1dConv::from_parts(
             2,
             3,
             4,
@@ -583,7 +555,7 @@ mod tests {
     fn validation_rejects_non_finite() {
         let mut w = vec![0.1_f32; 4];
         w[2] = f32::NAN;
-        let r = Causal1dConvF32::from_parts(
+        let r = Causal1dConv::from_parts(
             1,
             2,
             2,
@@ -599,15 +571,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut conv = make_conv(1, 2, 2, 3, 0.1);
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
     }
 
     #[test]
     #[should_panic]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut conv = make_conv(2, 2, 1, 1, 0.1);
-        conv.step(&[1.0]);
+        conv.predict(&[1.0]);
     }
 }

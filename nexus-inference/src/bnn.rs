@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec, vec::Vec};
-
 use crate::LoadError;
 #[cfg(not(all(
     target_arch = "x86_64",
@@ -11,6 +7,7 @@ use crate::LoadError;
     )
 )))]
 use crate::dot::matvec_bias_f32;
+use crate::Scratch;
 
 fn bias_to_int_threshold(bias: f32, hidden_size: usize) -> u32 {
     let half = (hidden_size as f32 - bias) * 0.5;
@@ -228,7 +225,7 @@ struct BinaryLayer {
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::BnnF32;
+/// use nexus_inference::Bnn;
 ///
 /// let h = 64;
 /// let w_input = vec![0.1_f32; h * 2];
@@ -236,22 +233,22 @@ struct BinaryLayer {
 /// let w_output = vec![0.1_f32; 1 * h];
 /// let b_output = vec![0.0_f32; 1];
 ///
-/// let mut bnn = BnnF32::from_parts(
+/// let bnn = Bnn::from_parts(
 ///     &w_input, &b_input, &[], &[], &w_output, &b_output, 1,
 /// ).unwrap();
 ///
 /// let output = bnn.predict(&[1.0, 1.0]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct BnnF32 {
+pub struct Bnn {
     w_input: Box<[f32]>,
     b_input: Box<[f32]>,
     binary_layers: Box<[BinaryLayer]>,
     w_output: Box<[f32]>,
     b_output: Box<[f32]>,
     w_output_row_sum: Box<[f32]>,
-    bits_a: Box<[u64]>,
-    bits_b: Box<[u64]>,
+    bits_a: Scratch<Box<[u64]>>,
+    bits_b: Scratch<Box<[u64]>>,
     #[cfg(not(all(
         target_arch = "x86_64",
         any(
@@ -259,13 +256,13 @@ pub struct BnnF32 {
             all(target_feature = "avx2", target_feature = "fma")
         )
     )))]
-    float_scratch: Box<[f32]>,
+    float_scratch: Scratch<Box<[f32]>>,
     input_size: u16,
     hidden_size: u16,
     output_size: u16,
 }
 
-impl BnnF32 {
+impl Bnn {
     /// Construct from pre-packed binary weights.
     ///
     /// - `w_input`: fp32 input-to-hidden weights, `[H, I]` row-major.
@@ -390,8 +387,8 @@ impl BnnF32 {
             w_output: w_output.into(),
             b_output: b_output.into(),
             w_output_row_sum: w_output_row_sum.into_boxed_slice(),
-            bits_a: vec![0_u64; wpr].into_boxed_slice(),
-            bits_b: vec![0_u64; wpr].into_boxed_slice(),
+            bits_a: Scratch::new(vec![0_u64; wpr].into_boxed_slice()),
+            bits_b: Scratch::new(vec![0_u64; wpr].into_boxed_slice()),
             #[cfg(not(all(
                 target_arch = "x86_64",
                 any(
@@ -399,7 +396,7 @@ impl BnnF32 {
                     all(target_feature = "avx2", target_feature = "fma")
                 )
             )))]
-            float_scratch: vec![0.0_f32; hidden_size].into_boxed_slice(),
+            float_scratch: Scratch::new(vec![0.0_f32; hidden_size].into_boxed_slice()),
             input_size: input_size as u16,
             hidden_size: hidden_size as u16,
             output_size: output_size as u16,
@@ -411,7 +408,7 @@ impl BnnF32 {
     /// # Panics
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn predict(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
             "predict() requires output_size == 1, use predict_into()"
@@ -433,7 +430,7 @@ impl BnnF32 {
     ///
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
-    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&self, input: &[f32], output: &mut [f32]) {
         let i_sz = self.input_size as usize;
         let h_sz = self.hidden_size as usize;
         let o_sz = self.output_size as usize;
@@ -441,6 +438,18 @@ impl BnnF32 {
 
         assert_eq!(input.len(), i_sz, "input length must equal input_size");
         assert_eq!(output.len(), o_sz, "output length must equal output_size");
+
+        // SAFETY: predict is not reentrant. Scratch is !Sync, preventing concurrent access.
+        let bits_a = unsafe { self.bits_a.get_mut() };
+        let bits_b = unsafe { self.bits_b.get_mut() };
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            any(
+                target_feature = "avx512f",
+                all(target_feature = "avx2", target_feature = "fma")
+            )
+        )))]
+        let float_scratch = unsafe { self.float_scratch.get_mut() };
 
         // fused input: matmul + binarize in one pass
         #[cfg(all(
@@ -451,14 +460,7 @@ impl BnnF32 {
             )
         ))]
         {
-            matvec_bias_binarize_f32(
-                &self.w_input,
-                input,
-                &self.b_input,
-                &mut self.bits_a,
-                h_sz,
-                i_sz,
-            );
+            matvec_bias_binarize_f32(&self.w_input, input, &self.b_input, bits_a, h_sz, i_sz);
         }
         #[cfg(not(all(
             target_arch = "x86_64",
@@ -472,11 +474,11 @@ impl BnnF32 {
                 &self.w_input,
                 input,
                 &self.b_input,
-                &mut self.float_scratch,
+                float_scratch,
                 h_sz,
                 i_sz,
             );
-            binarize(&self.float_scratch, &mut self.bits_a);
+            binarize(float_scratch, bits_a);
         }
 
         // binary hidden layers (alternating buffers)
@@ -486,8 +488,8 @@ impl BnnF32 {
                 binary_layer_forward(
                     &self.binary_layers[i].w_packed,
                     &self.binary_layers[i].int_threshold,
-                    &self.bits_a,
-                    &mut self.bits_b,
+                    bits_a,
+                    bits_b,
                     h_sz,
                     wpr,
                 );
@@ -495,8 +497,8 @@ impl BnnF32 {
                 binary_layer_forward(
                     &self.binary_layers[i].w_packed,
                     &self.binary_layers[i].int_threshold,
-                    &self.bits_b,
-                    &mut self.bits_a,
+                    bits_b,
+                    bits_a,
                     h_sz,
                     wpr,
                 );
@@ -504,10 +506,10 @@ impl BnnF32 {
         }
 
         // fused output: compute dot product directly from bits
-        let final_bits = if n_layers.is_multiple_of(2) {
-            &self.bits_a
+        let final_bits: &[u64] = if n_layers.is_multiple_of(2) {
+            bits_a
         } else {
-            &self.bits_b
+            bits_b
         };
 
         for j in 0..o_sz {
@@ -539,25 +541,39 @@ impl BnnF32 {
     }
 
     /// Number of input features.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Hidden layer width (all layers same size, multiple of 64).
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of outputs.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
     }
 
     /// Number of binary hidden layers.
-    pub fn num_binary_layers(&self) -> usize {
+    pub fn n_layers(&self) -> usize {
         self.binary_layers.len()
     }
 }
+
+impl crate::Model for Bnn {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        Bnn::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        Bnn::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        Bnn::n_outputs(self)
+    }
+}
+
+impl crate::StatelessModel for Bnn {}
 
 #[cfg(test)]
 mod tests {
@@ -587,8 +603,8 @@ mod tests {
         w_output: &[f32],
         b_output: &[f32],
         output_size: usize,
-    ) -> BnnF32 {
-        BnnF32::from_parts(w_input, b_input, &[], &[], w_output, b_output, output_size).unwrap()
+    ) -> Bnn {
+        Bnn::from_parts(w_input, b_input, &[], &[], w_output, b_output, output_size).unwrap()
     }
 
     #[test]
@@ -596,7 +612,7 @@ mod tests {
         // I=2, H=64, O=1
         // W_in = 0.1, b_in = 0 → matmul = 0.2 for all → all bits = 1 → all +1.0
         // W_out = 0.1 → dot = 0.1 * 64 = 6.4
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &vec![0.1_f32; H],
@@ -611,7 +627,7 @@ mod tests {
     fn no_binary_layers_all_negative() {
         // Same but negative input → matmul = -0.2 → all bits = 0 → all -1.0
         // dot = 0.1 * (-64) = -6.4
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &vec![0.1_f32; H],
@@ -636,7 +652,7 @@ mod tests {
         }
         // input = [1, 1]: first 32 → 0.2 → +1, last 32 → -0.2 → -1
         // W_out = 0.1: dot = 0.1*(32 - 32) = 0
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &w_input,
             &vec![0.0_f32; H],
             &vec![0.1_f32; H],
@@ -652,7 +668,7 @@ mod tests {
         // b_input = -1.0: matmul must be >= 1.0 to activate
         // W_in @ [1, 1] = 0.2 per row, but 0.2 + (-1.0) = -0.8 < 0 → bit 0
         // All bits = 0 → all -1.0
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![-1.0_f32; H],
             &vec![0.1_f32; H],
@@ -672,7 +688,7 @@ mod tests {
         // 64 >= 32 → all bits = 1 → unpack = all +1.0
         let bin_weights = vec![u64::MAX; H * WPR];
         let bin_biases = vec![0.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -694,7 +710,7 @@ mod tests {
         // threshold = 32, 0 < 32 → all bits = 0 → all -1.0
         let bin_weights = vec![0_u64; H * WPR];
         let bin_biases = vec![0.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -715,7 +731,7 @@ mod tests {
         // 0 >= 0 → all activate → all +1.0
         let bin_weights = vec![0_u64; H * WPR];
         let bin_biases = vec![200.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -736,7 +752,7 @@ mod tests {
         // 64 < 132 → all suppressed → all -1.0
         let bin_weights = vec![u64::MAX; H * WPR];
         let bin_biases = vec![-200.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice()],
@@ -757,7 +773,7 @@ mod tests {
         // Result same as no binary layers with all-positive input
         let bin_weights = vec![u64::MAX; H * WPR];
         let bin_biases = vec![0.0_f32; H];
-        let mut bnn = BnnF32::from_parts(
+        let bnn = Bnn::from_parts(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &[bin_weights.as_slice(), bin_weights.as_slice()],
@@ -789,7 +805,7 @@ mod tests {
 
     #[test]
     fn multi_output() {
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &vec![0.1_f32; 2 * H],
@@ -804,7 +820,7 @@ mod tests {
 
     #[test]
     fn output_bias() {
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &vec![0.1_f32; H],
@@ -824,16 +840,16 @@ mod tests {
             &vec![0.0_f32; 2],
             2,
         );
-        assert_eq!(bnn.input_size(), 4);
-        assert_eq!(bnn.hidden_size(), 64);
-        assert_eq!(bnn.output_size(), 2);
-        assert_eq!(bnn.num_binary_layers(), 0);
+        assert_eq!(bnn.n_inputs(), 4);
+        assert_eq!(bnn.n_hidden(), 64);
+        assert_eq!(bnn.n_outputs(), 2);
+        assert_eq!(bnn.n_layers(), 0);
     }
 
     #[test]
     fn rejects_non_multiple_of_64() {
         assert!(
-            BnnF32::from_parts(
+            Bnn::from_parts(
                 &vec![0.1_f32; 32 * 2],
                 &vec![0.0_f32; 32],
                 &[],
@@ -848,14 +864,14 @@ mod tests {
 
     #[test]
     fn rejects_empty() {
-        assert!(BnnF32::from_parts(&[], &[], &[], &[], &[], &[], 1).is_err());
+        assert!(Bnn::from_parts(&[], &[], &[], &[], &[], &[], 1).is_err());
     }
 
     #[test]
     fn rejects_mismatched_binary_layers() {
         let bin_w = vec![0_u64; H * WPR];
         assert!(
-            BnnF32::from_parts(
+            Bnn::from_parts(
                 &vec![0.1_f32; H * 2],
                 &vec![0.0_f32; H],
                 &[bin_w.as_slice()],
@@ -871,7 +887,7 @@ mod tests {
     #[test]
     fn rejects_non_finite() {
         assert!(
-            BnnF32::from_parts(
+            Bnn::from_parts(
                 &vec![f32::NAN; H * 2],
                 &vec![0.0_f32; H],
                 &[],
@@ -887,7 +903,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "input length must equal input_size")]
     fn wrong_input_panics() {
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &vec![0.1_f32; H],
@@ -900,7 +916,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "output length must equal output_size")]
     fn wrong_output_panics() {
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &vec![0.1_f32; H],
@@ -914,7 +930,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "predict() requires output_size == 1")]
     fn predict_multi_output_panics() {
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; H * 2],
             &vec![0.0_f32; H],
             &vec![0.1_f32; 2 * H],
@@ -928,7 +944,7 @@ mod tests {
     fn hidden_128_two_words() {
         // H=128 (2 u64 words per row)
         let h = 128;
-        let mut bnn = make_bnn_no_binary(
+        let bnn = make_bnn_no_binary(
             &vec![0.1_f32; h * 2],
             &vec![0.0_f32; h],
             &vec![0.1_f32; h],

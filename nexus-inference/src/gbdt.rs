@@ -1,23 +1,13 @@
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
-#[cfg(feature = "alloc")]
-use alloc::{boxed::Box, vec::Vec};
-
 /// Marks a leaf in [`RawNode`] (intermediate format during loading).
-#[cfg(feature = "alloc")]
 pub(crate) const LEAF_SENTINEL: u16 = u16::MAX;
 
 /// Bit 15 of `feature_idx` — set on leaf nodes in the packed [`Node`].
-#[cfg(feature = "alloc")]
 pub(crate) const LEAF_BIT: u16 = 0x8000;
 
 /// Bit 14 of `feature_idx` — NaN default-left routing flag.
-#[cfg(feature = "alloc")]
 const DEFAULT_LEFT_BIT: u16 = 0x4000;
 
 /// Mask for the actual feature index (bits 13:0). Up to 16384 features.
-#[cfg(feature = "alloc")]
 pub(crate) const FEATURE_MASK: u16 = 0x3FFF;
 
 /// Intermediate node used during loading and tree construction.
@@ -25,7 +15,6 @@ pub(crate) const FEATURE_MASK: u16 = 0x3FFF;
 /// Explicit fields for clarity: `right` and `default_left` are separate.
 /// Converted to compact [`Node`] by [`reorder_and_compact`] during model
 /// construction.
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub(crate) struct RawNode {
     pub(crate) feature_idx: u16,
@@ -51,7 +40,6 @@ pub(crate) struct RawNode {
 ///
 /// 8-byte power-of-2 stride: pointer arithmetic is a shift, not a
 /// multiply. 2x cache density vs the previous 16-byte node.
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub(crate) struct Node {
@@ -60,7 +48,6 @@ pub(crate) struct Node {
     pub(crate) left: u16,
 }
 
-#[cfg(feature = "alloc")]
 const _: () = assert!(core::mem::size_of::<Node>() == 8);
 
 /// Reorder tree to false-branch-next layout and convert to compact [`Node`].
@@ -68,7 +55,6 @@ const _: () = assert!(core::mem::size_of::<Node>() == 8);
 /// DFS right-first traversal: the right (false) child is always placed at
 /// `idx + 1`, so `walk_tree` uses `idx + 1` instead of loading a stored
 /// index. Only the left child index is stored.
-#[cfg(feature = "alloc")]
 fn reorder_and_compact(raw: &[RawNode]) -> Vec<Node> {
     let n = raw.len();
     if n == 0 {
@@ -77,7 +63,7 @@ fn reorder_and_compact(raw: &[RawNode]) -> Vec<Node> {
     debug_assert!(n <= u16::MAX as usize + 1);
 
     let mut nodes = Vec::with_capacity(n);
-    let mut old_to_new = alloc::vec![0u16; n];
+    let mut old_to_new = vec![0u16; n];
     let mut stack = Vec::with_capacity(32);
     stack.push(0usize);
 
@@ -132,7 +118,6 @@ fn reorder_and_compact(raw: &[RawNode]) -> Vec<Node> {
 /// // let prediction = model.predict(&features);
 /// # }
 /// ```
-#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct Gbdt {
     nodes: Box<[Node]>,
@@ -141,7 +126,6 @@ pub struct Gbdt {
     base_score: f32,
 }
 
-#[cfg(feature = "alloc")]
 impl Gbdt {
     /// Predict the ensemble score.
     ///
@@ -273,14 +257,15 @@ impl Gbdt {
             }
 
             // SAFETY: feature_idx & FEATURE_MASK < n_features (validated in convert_tree).
-            let feat = unsafe {
-                *features.get_unchecked((node.feature_idx & FEATURE_MASK) as usize)
-            };
+            let feat =
+                unsafe { *features.get_unchecked((node.feature_idx & FEATURE_MASK) as usize) };
             let go_left = if nan_aware {
                 let is_nan = feat.is_nan();
                 let default_left = node.feature_idx & DEFAULT_LEFT_BIT != 0;
                 #[allow(clippy::needless_bitwise_bool)]
-                { (feat <= node.value) | (is_nan & default_left) }
+                {
+                    (feat <= node.value) | (is_nan & default_left)
+                }
             } else {
                 feat <= node.value
             };
@@ -292,19 +277,14 @@ impl Gbdt {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn from_parts(
-        trees: Vec<Vec<RawNode>>,
-        n_features: usize,
-        base_score: f32,
-    ) -> Self {
+    pub(crate) fn from_parts(trees: Vec<Vec<RawNode>>, n_features: usize, base_score: f32) -> Self {
         let total: usize = trees.iter().map(Vec::len).sum();
         let mut nodes = Vec::with_capacity(total);
         let mut tree_offsets = Vec::with_capacity(trees.len());
         for tree in &trees {
             for node in tree {
                 assert!(
-                    node.feature_idx == LEAF_SENTINEL
-                        || (node.feature_idx as usize) < n_features,
+                    node.feature_idx == LEAF_SENTINEL || (node.feature_idx as usize) < n_features,
                     "feature_idx {} out of range for n_features {}",
                     node.feature_idx,
                     n_features,
@@ -324,14 +304,24 @@ impl Gbdt {
     }
 }
 
+impl crate::Model for Gbdt {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        Gbdt::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        Gbdt::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        Gbdt::n_outputs(self)
+    }
+}
+
+impl crate::StatelessModel for Gbdt {}
+
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "alloc")]
     use super::*;
-    #[cfg(feature = "alloc")]
-    use alloc::vec;
 
-    #[cfg(feature = "alloc")]
     fn leaf(value: f64) -> RawNode {
         RawNode {
             feature_idx: LEAF_SENTINEL,
@@ -342,7 +332,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "alloc")]
     fn split(feat: u16, left: u16, right: u16, threshold: f64) -> RawNode {
         RawNode {
             feature_idx: feat,
@@ -353,35 +342,30 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "alloc")]
     fn single_stump(base_score: f32) -> Gbdt {
         let nodes = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         Gbdt::from_parts(vec![nodes], 1, base_score)
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn single_stump_left() {
         let model = single_stump(0.0);
         assert_eq!(model.predict(&[0.3_f32]), -1.0_f32);
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn single_stump_right() {
         let model = single_stump(0.0);
         assert_eq!(model.predict(&[0.8_f32]), 1.0_f32);
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn single_stump_boundary() {
         let model = single_stump(0.0);
         assert_eq!(model.predict(&[0.5_f32]), -1.0_f32);
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn base_score_added() {
         let model = single_stump(10.0);
         assert_eq!(model.predict(&[0.3_f32]), 10.0_f32 + -1.0_f32);
@@ -389,7 +373,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn multi_tree_sums() {
         let stump = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = Gbdt::from_parts(vec![stump.clone(), stump.clone(), stump], 1, 0.0_f32);
@@ -398,7 +381,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn predict_n_partial() {
         let stump = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = Gbdt::from_parts(vec![stump.clone(), stump.clone(), stump], 1, 5.0_f32);
@@ -406,7 +388,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn predict_n_exceeds_count() {
         let stump = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = Gbdt::from_parts(vec![stump.clone(), stump.clone(), stump], 1, 0.0_f32);
@@ -414,7 +395,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn deeper_tree() {
         let nodes = vec![
             split(0, 1, 2, 5.0),
@@ -433,7 +413,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn nan_routing_default_left() {
         let nodes = vec![
             RawNode {
@@ -451,7 +430,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn nan_routing_default_right() {
         let nodes = vec![split(0, 1, 2, 0.5), leaf(-1.0), leaf(1.0)];
         let model = Gbdt::from_parts(vec![nodes], 1, 0.0_f32);
@@ -459,7 +437,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn nan_goes_right() {
         let nodes = vec![
             RawNode {
@@ -477,7 +454,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     #[should_panic]
     fn wrong_feature_count_panics() {
         let model = single_stump(0.0);
@@ -485,7 +461,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn accessors() {
         let model = single_stump(2.5);
         assert_eq!(model.n_trees(), 1);
@@ -495,7 +470,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     fn predict_into_matches() {
         let model = single_stump(0.0);
         let mut out = [0.0_f32];
@@ -506,7 +480,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "alloc")]
     #[should_panic]
     fn predict_into_wrong_output_len() {
         let model = single_stump(0.0);

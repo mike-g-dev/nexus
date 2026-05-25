@@ -23,10 +23,10 @@ The most common pattern: LightGBM model trained on tabular features,
 deployed for real-time scoring.
 
 ```rust
-use nexus_inference::GbdtF64;
+use nexus_inference::Gbdt;
 
 // Load once at startup
-let model = GbdtF64::from_lightgbm(&model_bytes).unwrap();
+let model = Gbdt::from_lightgbm(&model_bytes).unwrap();
 
 // On each market data update:
 let features = [
@@ -54,9 +54,9 @@ When the relationship between features is nonlinear and can't be
 captured by a single tree ensemble:
 
 ```rust
-use nexus_inference::{MlpF64, Activation};
+use nexus_inference::{Mlp, Activation};
 
-let mut model = MlpF64::from_parts(
+let model = Mlp::from_parts(
     &[8, 16, 1], &weights, &biases, Activation::Relu,
 ).unwrap();
 
@@ -76,10 +76,10 @@ For functions that are too expensive to compute per-tick but can be
 pre-tabulated:
 
 ```rust
-use nexus_inference::LutF64;
+use nexus_inference::Lut;
 
 // Pre-computed: spread_model(volatility, time_of_day) → fair_spread
-let spread_lut = LutF64::from_parts(
+let spread_lut = Lut::from_parts(
     2, 50,
     &[0.0, 0.0],     // min vol, min time_frac
     &[0.05, 1.0],    // max vol, max time_frac
@@ -159,15 +159,14 @@ To update a live model, swap via `Arc`:
 use std::sync::Arc;
 
 // GBDT: prediction takes &self, so Arc sharing is natural
-let model = Arc::new(GbdtF64::from_lightgbm(&bytes).unwrap());
+let model = Arc::new(Gbdt::from_lightgbm(&bytes).unwrap());
 let m = model.clone();
 let score = m.predict(&features);
 
 // Cold path: load new model, swap the Arc
-let new_model = Arc::new(GbdtF64::from_lightgbm(&new_bytes).unwrap());
+let new_model = Arc::new(Gbdt::from_lightgbm(&new_bytes).unwrap());
 ```
 
-**MLP/LUT note:** MLP prediction takes `&mut self` (pre-allocated
-scratch buffers). For concurrent access, use per-thread model
-instances via `Clone` rather than `Arc<Mutex<MlpF64>>`. Each
-clone gets its own scratch buffers — no contention.
+**MLP/LUT note:** MLP prediction takes `&self` (scratch buffers
+use interior mutability). Models can be shared via `Arc<Mlp>`
+directly — no mutex needed, no contention.

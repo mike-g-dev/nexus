@@ -10,7 +10,7 @@ future leakage.
 |----------|-------|
 | Step cost | 50ns (8 filters) to 168ns (32 filters) with AVX2+FMA |
 | Memory | `(F, K, C)` conv weights + output projection + circular buffer |
-| Type | `Causal1dConvF32` |
+| Type | `Causal1dConv` |
 | Construction | `from_parts(input_ch, kernel_size, filters, output_size, w_conv, b_conv, w_out, b_out, activation)` |
 | Output | Single scalar or multi-output vector |
 
@@ -72,14 +72,14 @@ filled (zero-padded). `is_primed()` returns `true` once the full window
 is populated.
 
 ```rust
-let mut conv = Causal1dConvF32::from_parts(
+let mut conv = Causal1dConv::from_parts(
     2, 3, 4, 1, /* weights... */ Activation::Relu,
 ).unwrap();
 
 assert!(!conv.is_primed());    // kernel_size=3, need 3 steps
-conv.step(&[0.5, 1.0]);
-conv.step(&[0.2, 0.3]);
-conv.step(&[0.1, 0.4]);
+conv.predict(&[0.5, 1.0]);
+conv.predict(&[0.2, 0.3]);
+conv.predict(&[0.1, 0.4]);
 assert!(conv.is_primed());     // buffer fully populated
 ```
 
@@ -120,9 +120,9 @@ NaN correctly.
 ## Code Example
 
 ```rust
-use nexus_inference::{Causal1dConvF32, Activation};
+use nexus_inference::{Causal1dConv, Activation};
 
-let mut conv = Causal1dConvF32::from_parts(
+let mut conv = Causal1dConv::from_parts(
     4, 8, 16, 1,      // 4 input channels, kernel 8, 16 filters, 1 output
     &w_conv, &b_conv,
     &w_out, &b_out,
@@ -131,14 +131,14 @@ let mut conv = Causal1dConvF32::from_parts(
 
 // Process a stream
 for frame in data_stream {
-    let score = conv.step(&frame);
+    let score = conv.predict(&frame);
     if conv.is_primed() {
         // Act on score — buffer is fully populated
     }
 }
 
 // Reset for new sequence
-conv.reset_state();
+conv.reset();
 ```
 
 ## Complexity
@@ -146,7 +146,7 @@ conv.reset_state();
 | Operation | Time | Space |
 |-----------|------|-------|
 | Construction | O(F*K*C + O*F) | Weights + buffer + scratch |
-| `step` | O(F*K*C + O*F) | No allocation |
+| `predict` | O(F*K*C + O*F) | No allocation |
 
 | Configuration | FMAs | Latency (AVX2+FMA) |
 |---------------|------|--------------------|

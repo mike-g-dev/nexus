@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec, vec::Vec};
-
 use crate::LoadError;
 use crate::dot::matvec_bias_f32;
 
@@ -18,7 +14,7 @@ use crate::dot::matvec_bias_f32;
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::StackedLstmF32;
+/// use nexus_inference::StackedLstm;
 ///
 /// let input_size = 4;
 /// let hidden_size = 8;
@@ -40,7 +36,7 @@ use crate::dot::matvec_bias_f32;
 /// let w_out = vec![0.1_f32; 1 * hidden_size];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut lstm = StackedLstmF32::from_parts(
+/// let mut lstm = StackedLstm::from_parts(
 ///     input_size, hidden_size, 1,
 ///     &[&wih_l0, &wih_l1],
 ///     &[&whh_l0, &whh_l1],
@@ -49,10 +45,10 @@ use crate::dot::matvec_bias_f32;
 ///     &w_out, &b_out,
 /// ).unwrap();
 ///
-/// let output = lstm.step(&[0.5, 1.2, -0.3, 0.8]);
+/// let output = lstm.predict(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct StackedLstmF32 {
+pub struct StackedLstm {
     layers: Box<[LstmLayer]>,
     w_out: Box<[f32]>,
     b_out: Box<[f32]>,
@@ -150,7 +146,7 @@ impl LstmLayer {
     }
 }
 
-impl StackedLstmF32 {
+impl StackedLstm {
     /// Construct from pre-trained per-layer weights.
     ///
     /// Each slice in `layers_weight_ih`, `layers_weight_hh`,
@@ -235,13 +231,13 @@ impl StackedLstmF32 {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
-            "step() requires output_size == 1, use step_into()"
+            "predict() requires output_size == 1, use predict_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -257,7 +253,7 @@ impl StackedLstmF32 {
     ///
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let h = self.hidden_size as usize;
         let n = self.layers.len();
         assert_eq!(
@@ -291,7 +287,7 @@ impl StackedLstmF32 {
     }
 
     /// Reset all layers' hidden and cell state to zeros.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         for layer in &mut *self.layers {
             layer.h.fill(0.0);
             layer.c.fill(0.0);
@@ -302,7 +298,7 @@ impl StackedLstmF32 {
     ///
     /// # Panics
     ///
-    /// Panics if `layer >= num_layers()`.
+    /// Panics if `layer >= n_layers()`.
     pub fn hidden_state(&self, layer: usize) -> &[f32] {
         &self.layers[layer].h
     }
@@ -311,29 +307,41 @@ impl StackedLstmF32 {
     ///
     /// # Panics
     ///
-    /// Panics if `layer >= num_layers()`.
+    /// Panics if `layer >= n_layers()`.
     pub fn cell_state(&self, layer: usize) -> &[f32] {
         &self.layers[layer].c
     }
 
     /// Number of stacked LSTM layers.
-    pub fn num_layers(&self) -> usize {
+    pub fn n_layers(&self) -> usize {
         self.layers.len()
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Number of hidden units (same for all layers).
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
+    }
+}
+
+impl crate::Model for StackedLstm {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        StackedLstm::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        StackedLstm::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        StackedLstm::n_outputs(self)
     }
 }
 
@@ -347,7 +355,7 @@ mod tests {
         output: usize,
         num_layers: usize,
         val: f32,
-    ) -> StackedLstmF32 {
+    ) -> StackedLstm {
         let gc = 4 * hidden;
         let wih_l0 = vec![val; gc * input];
         let whh_l0 = vec![val; gc * hidden];
@@ -376,7 +384,7 @@ mod tests {
         let w_out = vec![val; output * hidden];
         let b_out = vec![0.0_f32; output];
 
-        StackedLstmF32::from_parts(
+        StackedLstm::from_parts(
             input,
             hidden,
             output,
@@ -404,7 +412,7 @@ mod tests {
         let w_out = vec![0.2_f32; output_size * hidden_size];
         let b_out = vec![0.1_f32; output_size];
 
-        let mut tiny = crate::TinyLstmF32::from_parts(
+        let mut tiny = crate::TinyLstm::from_parts(
             input_size,
             hidden_size,
             output_size,
@@ -417,7 +425,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut stacked = StackedLstmF32::from_parts(
+        let mut stacked = StackedLstm::from_parts(
             input_size,
             hidden_size,
             output_size,
@@ -430,13 +438,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(stacked.num_layers(), 1);
+        assert_eq!(stacked.n_layers(), 1);
 
         let input = [0.5_f32, -0.3, 1.2, 0.0];
         let mut tiny_out = [0.0_f32; 2];
         let mut stacked_out = [0.0_f32; 2];
-        tiny.step_into(&input, &mut tiny_out);
-        stacked.step_into(&input, &mut stacked_out);
+        tiny.predict_into(&input, &mut tiny_out);
+        stacked.predict_into(&input, &mut stacked_out);
 
         for i in 0..output_size {
             assert!(
@@ -454,8 +462,8 @@ mod tests {
         let mut double = make_stacked_lstm(4, 8, 1, 2, 0.1);
 
         let input = [1.0_f32, 0.5, -0.3, 0.8];
-        let out1 = single.step(&input);
-        let out2 = double.step(&input);
+        let out1 = single.predict(&input);
+        let out2 = double.predict(&input);
 
         assert!(
             (out1 - out2).abs() > 1e-6,
@@ -466,22 +474,22 @@ mod tests {
     #[test]
     fn state_carries_between_steps() {
         let mut lstm = make_stacked_lstm(2, 4, 1, 2, 0.1);
-        let out1 = lstm.step(&[1.0, 0.0]);
-        let out2 = lstm.step(&[1.0, 0.0]);
+        let out1 = lstm.predict(&[1.0, 0.0]);
+        let out2 = lstm.predict(&[1.0, 0.0]);
         assert!((out1 - out2).abs() > 1e-6);
     }
 
     #[test]
     fn reset_clears_all_layers() {
         let mut lstm = make_stacked_lstm(2, 4, 1, 3, 0.1);
-        lstm.step(&[1.0, 0.5]);
+        lstm.predict(&[1.0, 0.5]);
 
         for k in 0..3 {
             assert!(lstm.hidden_state(k).iter().any(|&v| v != 0.0));
             assert!(lstm.cell_state(k).iter().any(|&v| v != 0.0));
         }
 
-        lstm.reset_state();
+        lstm.reset();
 
         for k in 0..3 {
             assert!(lstm.hidden_state(k).iter().all(|&v| v == 0.0));
@@ -492,11 +500,11 @@ mod tests {
     #[test]
     fn reset_reproduces_first_output() {
         let mut lstm = make_stacked_lstm(2, 4, 1, 2, 0.1);
-        let first = lstm.step(&[1.0, -1.0]);
-        lstm.step(&[0.5, 0.5]);
-        lstm.step(&[0.0, 1.0]);
-        lstm.reset_state();
-        let after_reset = lstm.step(&[1.0, -1.0]);
+        let first = lstm.predict(&[1.0, -1.0]);
+        lstm.predict(&[0.5, 0.5]);
+        lstm.predict(&[0.0, 1.0]);
+        lstm.reset();
+        let after_reset = lstm.predict(&[1.0, -1.0]);
         assert!(
             (first - after_reset).abs() < 1e-6,
             "first={first}, after_reset={after_reset}"
@@ -507,7 +515,7 @@ mod tests {
     fn multi_output() {
         let mut lstm = make_stacked_lstm(2, 4, 3, 2, 0.1);
         let mut out = [0.0_f32; 3];
-        lstm.step_into(&[1.0, 0.5], &mut out);
+        lstm.predict_into(&[1.0, 0.5], &mut out);
         assert!((out[0] - out[1]).abs() < 1e-6);
         assert!((out[1] - out[2]).abs() < 1e-6);
     }
@@ -515,10 +523,10 @@ mod tests {
     #[test]
     fn accessors() {
         let lstm = make_stacked_lstm(4, 8, 2, 3, 0.1);
-        assert_eq!(lstm.input_size(), 4);
-        assert_eq!(lstm.hidden_size(), 8);
-        assert_eq!(lstm.output_size(), 2);
-        assert_eq!(lstm.num_layers(), 3);
+        assert_eq!(lstm.n_inputs(), 4);
+        assert_eq!(lstm.n_hidden(), 8);
+        assert_eq!(lstm.n_outputs(), 2);
+        assert_eq!(lstm.n_layers(), 3);
         assert_eq!(lstm.hidden_state(0).len(), 8);
         assert_eq!(lstm.hidden_state(2).len(), 8);
         assert_eq!(lstm.cell_state(1).len(), 8);
@@ -526,7 +534,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_layers() {
-        let r = StackedLstmF32::from_parts(2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1]);
+        let r = StackedLstm::from_parts(2, 4, 1, &[], &[], &[], &[], &[0.0; 4], &[0.0; 1]);
         assert!(r.is_err());
     }
 
@@ -537,7 +545,7 @@ mod tests {
         let whh = vec![0.1_f32; gc * 4];
         let bih = vec![0.0_f32; gc];
         let bhh = vec![0.0_f32; gc];
-        let r = StackedLstmF32::from_parts(
+        let r = StackedLstm::from_parts(
             2,
             4,
             1,
@@ -553,21 +561,21 @@ mod tests {
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = StackedLstmF32::from_parts(0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[]);
+        let r = StackedLstm::from_parts(0, 4, 1, &[&[]], &[&[]], &[&[]], &[&[]], &[], &[]);
         assert!(r.is_err());
     }
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut lstm = make_stacked_lstm(2, 4, 3, 2, 0.1);
-        lstm.step(&[1.0, 0.0]);
+        lstm.predict(&[1.0, 0.0]);
     }
 
     #[test]
     #[should_panic(expected = "input length")]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut lstm = make_stacked_lstm(2, 4, 1, 2, 0.1);
-        lstm.step(&[1.0]);
+        lstm.predict(&[1.0]);
     }
 }

@@ -26,28 +26,36 @@ fn build_lightgbm_model(n_trees: usize, depth: usize, n_features: usize) -> Stri
 
         s.push_str("split_feature=");
         for i in 0..num_internal {
-            if i > 0 { s.push(' '); }
+            if i > 0 {
+                s.push(' ');
+            }
             s.push_str(&format!("{}", (t + i) % n_features));
         }
         s.push('\n');
 
         s.push_str("threshold=");
         for i in 0..num_internal {
-            if i > 0 { s.push(' '); }
+            if i > 0 {
+                s.push(' ');
+            }
             s.push_str(&format!("{:.1}", (i as f64 + 1.0) * 0.5));
         }
         s.push('\n');
 
         s.push_str("decision_type=");
         for i in 0..num_internal {
-            if i > 0 { s.push(' '); }
+            if i > 0 {
+                s.push(' ');
+            }
             s.push('0');
         }
         s.push('\n');
 
         s.push_str("left_child=");
         for i in 0..num_internal {
-            if i > 0 { s.push(' '); }
+            if i > 0 {
+                s.push(' ');
+            }
             let left = 2 * i + 1;
             if left < num_internal {
                 s.push_str(&format!("{left}"));
@@ -60,7 +68,9 @@ fn build_lightgbm_model(n_trees: usize, depth: usize, n_features: usize) -> Stri
 
         s.push_str("right_child=");
         for i in 0..num_internal {
-            if i > 0 { s.push(' '); }
+            if i > 0 {
+                s.push(' ');
+            }
             let right = 2 * i + 2;
             if right < num_internal {
                 s.push_str(&format!("{right}"));
@@ -73,7 +83,9 @@ fn build_lightgbm_model(n_trees: usize, depth: usize, n_features: usize) -> Stri
 
         s.push_str("leaf_value=");
         for i in 0..num_leaves {
-            if i > 0 { s.push(' '); }
+            if i > 0 {
+                s.push(' ');
+            }
             let val = (i as f64 - num_leaves as f64 / 2.0) * 0.01;
             s.push_str(&format!("{val:.4}"));
         }
@@ -130,16 +142,23 @@ fn run_distribution(name: &str, model: &Gbdt, features: &[Vec<f32>], n_samples: 
     latencies.sort_unstable();
 
     let mean: f64 = latencies.iter().sum::<u64>() as f64 / n_samples as f64;
-    let variance: f64 = latencies.iter().map(|&x| {
-        let d = x as f64 - mean;
-        d * d
-    }).sum::<f64>() / n_samples as f64;
+    let variance: f64 = latencies
+        .iter()
+        .map(|&x| {
+            let d = x as f64 - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / n_samples as f64;
     let stddev = variance.sqrt();
 
     println!("{name}");
     println!("  samples: {n_samples}");
     println!("  mean:    {mean:.1} ns");
-    println!("  stddev:  {stddev:.1} ns  (CV: {:.1}%)", stddev / mean * 100.0);
+    println!(
+        "  stddev:  {stddev:.1} ns  (CV: {:.1}%)",
+        stddev / mean * 100.0
+    );
     println!("  p50:     {} ns", percentile(&latencies, 50.0));
     println!("  p90:     {} ns", percentile(&latencies, 90.0));
     println!("  p95:     {} ns", percentile(&latencies, 95.0));
@@ -170,16 +189,23 @@ fn run_distribution_nan(name: &str, model: &Gbdt, features: &[Vec<f32>], n_sampl
     latencies.sort_unstable();
 
     let mean: f64 = latencies.iter().sum::<u64>() as f64 / n_samples as f64;
-    let variance: f64 = latencies.iter().map(|&x| {
-        let d = x as f64 - mean;
-        d * d
-    }).sum::<f64>() / n_samples as f64;
+    let variance: f64 = latencies
+        .iter()
+        .map(|&x| {
+            let d = x as f64 - mean;
+            d * d
+        })
+        .sum::<f64>()
+        / n_samples as f64;
     let stddev = variance.sqrt();
 
     println!("{name}");
     println!("  samples: {n_samples}");
     println!("  mean:    {mean:.1} ns");
-    println!("  stddev:  {stddev:.1} ns  (CV: {:.1}%)", stddev / mean * 100.0);
+    println!(
+        "  stddev:  {stddev:.1} ns  (CV: {:.1}%)",
+        stddev / mean * 100.0
+    );
     println!("  p50:     {} ns", percentile(&latencies, 50.0));
     println!("  p90:     {} ns", percentile(&latencies, 90.0));
     println!("  p95:     {} ns", percentile(&latencies, 95.0));
@@ -202,8 +228,28 @@ fn main() {
 
     println!("=== GBDT 100x6, 8 features — Latency Distribution ===\n");
 
-    run_distribution("predict (constant features)", &model, &features_const, n_samples);
-    run_distribution("predict (random features)", &model, &features_random, n_samples);
-    run_distribution_nan("predict_nan_aware (constant features)", &model, &features_const, n_samples);
-    run_distribution_nan("predict_nan_aware (random features)", &model, &features_random, n_samples);
+    run_distribution(
+        "predict (constant features)",
+        &model,
+        &features_const,
+        n_samples,
+    );
+    run_distribution(
+        "predict (random features)",
+        &model,
+        &features_random,
+        n_samples,
+    );
+    run_distribution_nan(
+        "predict_nan_aware (constant features)",
+        &model,
+        &features_const,
+        n_samples,
+    );
+    run_distribution_nan(
+        "predict_nan_aware (random features)",
+        &model,
+        &features_random,
+        n_samples,
+    );
 }

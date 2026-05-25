@@ -1,47 +1,7 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-/// AVX-512 vectorized Padé [7,6] tanh on 16 lanes.
-#[inline(always)]
-#[cfg(target_arch = "x86_64")]
-unsafe fn tanh_16wide(x: __m512) -> __m512 {
-    unsafe {
-        let nan_mask = _mm512_cmp_ps_mask::<_CMP_UNORD_Q>(x, x);
-
-        let pos_clip = _mm512_set1_ps(4.97);
-        let neg_clip = _mm512_set1_ps(-4.97);
-        let xc = _mm512_min_ps(_mm512_max_ps(x, neg_clip), pos_clip);
-
-        let x2 = _mm512_mul_ps(xc, xc);
-
-        // num = x * (135_135 + x2 * (17_325 + x2 * (378 + x2)))
-        let n_inner = _mm512_fmadd_ps(x2, _mm512_set1_ps(1.0), _mm512_set1_ps(378.0));
-        let n_mid = _mm512_fmadd_ps(x2, n_inner, _mm512_set1_ps(17_325.0));
-        let n_outer = _mm512_fmadd_ps(x2, n_mid, _mm512_set1_ps(135_135.0));
-        let num = _mm512_mul_ps(xc, n_outer);
-
-        // den = 135_135 + x2 * (62_370 + x2 * (3_150 + x2 * 28))
-        let d_inner = _mm512_fmadd_ps(x2, _mm512_set1_ps(28.0), _mm512_set1_ps(3_150.0));
-        let d_mid = _mm512_fmadd_ps(x2, d_inner, _mm512_set1_ps(62_370.0));
-        let den = _mm512_fmadd_ps(x2, d_mid, _mm512_set1_ps(135_135.0));
-
-        let result = _mm512_div_ps(num, den);
-
-        // Restore NaN lanes that clamping would have silently replaced.
-        _mm512_mask_blend_ps(nan_mask, result, x)
-    }
-}
-
-/// AVX-512 vectorized sigmoid: 0.5 + 0.5 * tanh(x * 0.5)
-#[inline(always)]
-#[cfg(target_arch = "x86_64")]
-unsafe fn sigmoid_16wide(x: __m512) -> __m512 {
-    unsafe {
-        let half = _mm512_set1_ps(0.5);
-        let t = tanh_16wide(_mm512_mul_ps(x, half));
-        _mm512_fmadd_ps(half, t, half)
-    }
-}
+use crate::activation::simd512::{sigmoid_16wide, tanh_16wide};
 
 /// LSTM gate activation + cell/hidden update, 16 units at a time.
 ///

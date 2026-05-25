@@ -7,8 +7,8 @@ regardless of the underlying function's complexity.
 | Property | Value |
 |----------|-------|
 | Prediction cost | ~5-8 ns (1-3 features) |
-| Memory | `n_bins^n_features * 8` bytes (f64 table) |
-| Types | `LutF64`, `LutF32` |
+| Memory | `n_bins^n_features * 4` bytes (f32 table) |
+| Types | `Lut` |
 | Construction | `from_parts(n_features, n_bins, mins, maxs, table)` |
 | Output | Single scalar |
 
@@ -55,15 +55,15 @@ the first or last bin.
 
 The table grows exponentially with features:
 
-| Features | Bins | Table entries | Memory (f64) |
+| Features | Bins | Table entries | Memory (f32) |
 |----------|------|--------------|-------------|
-| 1 | 10 | 10 | 80 B |
-| 2 | 10 | 100 | 800 B |
-| 3 | 10 | 1,000 | 8 KB |
-| 2 | 50 | 2,500 | 20 KB |
-| 3 | 20 | 8,000 | 64 KB |
-| 4 | 10 | 10,000 | 80 KB |
-| 3 | 50 | 125,000 | 1 MB |
+| 1 | 10 | 10 | 40 B |
+| 2 | 10 | 100 | 400 B |
+| 3 | 10 | 1,000 | 4 KB |
+| 2 | 50 | 2,500 | 10 KB |
+| 3 | 20 | 8,000 | 32 KB |
+| 4 | 10 | 10,000 | 40 KB |
+| 3 | 50 | 125,000 | 500 KB |
 
 In practice, LUTs work best with 1-3 features. Beyond that, the
 table size explodes and you're better off with an MLP.
@@ -97,10 +97,10 @@ table but meaningless. Validate inputs in the feature pipeline.
 ## Code Example
 
 ```rust
-use nexus_inference::LutF64;
+use nexus_inference::Lut;
 
 // 2 features, 10 bins each, ranges [0, 1)
-let model = LutF64::from_parts(
+let model = Lut::from_parts(
     2,              // n_features
     10,             // n_bins per feature
     &[0.0, 0.0],   // mins

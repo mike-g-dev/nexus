@@ -16,20 +16,19 @@ The foundation everything else builds on. All model types bottleneck on
 matrix-vector products, so dot product throughput is the single largest
 lever.
 
-### dot_f32 / dot_f64 — single dot product
+### dot_f32 — single dot product
 
 - **4 independent accumulators** to hide FMA latency (4-5 cycle on most
-  x86). Inner loop processes 32 f32s (4×8-wide FMA) or 16 f64s (4×4-wide
-  FMA) per iteration.
+  x86). Inner loop processes 32 f32s (4×8-wide FMA) per iteration.
 - Unrolled main loop + 8-element cleanup loop + scalar tail.
 - AVX2 and AVX-512 implementations with compile-time dispatch via `cfg`.
 
-### dot4_f32 / dot4_f64 — 4 simultaneous dot products
+### dot4_f32 — 4 simultaneous dot products
 
 - **Shared input loads**: one `_mm256_loadu` per input vector feeds all 4
   row accumulators. Cuts input bandwidth by 4×.
 - **2 accumulators per row (A/B split, 8 total)** to hide FMA latency.
-  Inner loop processes 16 f32s or 8 f64s per iteration.
+  Inner loop processes 16 f32s per iteration.
 - Scalar tail for remainder.
 
 ### dot4_f32_m128 — 4 dots returning packed `__m128`
@@ -143,16 +142,13 @@ needed — the operation is a division + array index per feature, already
 - Identity/last-layer path: `bias + dots` directly.
 - **dot8→dot4 cascade** with `in_size >= 32` threshold: groups of 8 use
   `dot8_f32_m256`, remainder of 4 uses `dot4_f32_m128`.
-- `mlp_tiled_noop<T>`: generic no-op for `MlpF64` (returns 0, compiler
-  eliminates). Keeps the macro signature uniform without dead-code in the
-  f64 path.
-
 ### 3-branch borrow checker pattern
 
-- `predict_into` dispatches to `$tiled_fn` with one of three disjoint
-  src/dst pairs: `(scratch_a → scratch_b)`, `(scratch_b → scratch_a)`, or
-  `(scratch → output)`. Each branch is separate so Rust proves disjoint
-  borrows. One branch per layer, not per element.
+- `predict_into` dispatches to `mlp_tiled_simd_f32` with one of three
+  disjoint src/dst pairs: `(scratch_a → scratch_b)`,
+  `(scratch_b → scratch_a)`, or `(scratch → output)`. Each branch is
+  separate so Rust proves disjoint borrows. One branch per layer, not
+  per element.
 
 ### cfg-gated `let mut j` pattern
 
@@ -162,18 +158,11 @@ needed — the operation is a division + array index per feature, already
 
 ### Measured results
 
-See Results section for absolute latencies and f32-vs-f64 comparison.
 Deeper configs benefit more — the tiled path runs per layer.
-
-### f64 — no SIMD tiled path
-
-`MlpF64` uses the generic `dot4_f64` + scalar activation fallback. The
-tiled approach would work but f64 MLP is not a hot-path use case. If
-needed, add `mlp_tiled_simd_f64` following the f32 pattern.
 
 ---
 
-## QuantizedMlpI8 (`src/quantized_mlp.rs`)
+## QuantizedMlp (`src/quantized_mlp.rs`)
 
 Int8 quantized MLP with per-layer affine quantization (scale + zero_point).
 Supports both symmetric (zp=0) and asymmetric quantization, matching
@@ -641,7 +630,7 @@ Baseline: commit `1e871a6` (pre MLP-SIMD, pre dot8). Current: commit
 
 ### MLP f32
 
-MlpF32 benchmarks were added as part of this optimization work, so no
+Mlp benchmarks were added as part of this optimization work, so no
 pre/post A/B comparison exists for them. Absolute latencies with all
 optimizations (SIMD tiled + dot8):
 
@@ -653,9 +642,9 @@ optimizations (SIMD tiled + dot8):
 | 32→32→32→32→1 relu | 229ns | dot8 active, 4 layers |
 | 64→64→64→1 relu | 409ns | dot8 active, 3 layers |
 
-For reference, equivalent MlpF64 configs (no SIMD tiled path):
+For reference, equivalent Mlp configs (no SIMD tiled path):
 
-| Config | MlpF64 | MlpF32 | f32 speedup |
+| Config | Mlp | Mlp | f32 speedup |
 |--------|--------|--------|-------------|
 | 8→16→1 | 65ns | 53ns | 1.2× |
 | 16→32→8→1 | 170ns | 106ns | 1.6× |
@@ -677,7 +666,7 @@ tiling fires (both dimensions below threshold).
 No SIMD changes for f64 — confirms the improvements are from the
 optimization work, not system state changes.
 
-### QuantizedMlpI8 (2026-05-25)
+### QuantizedMlp (2026-05-25)
 
 Baseline: commit `ce399e6` (AVX2 scalar remainder fix, single-row
 kernel, no precomputed corrections). Optimized: precomputed bias +
@@ -690,9 +679,9 @@ kernel, no precomputed corrections). Optimized: precomputed bias +
 | 64→64→1 relu | 2.35μs | 387ns | **-84%** |
 | 32→32→32→32→1 relu | 2.19μs | 511ns | **-77%** |
 
-Comparison with MlpF32 (same configs):
+Comparison with Mlp (same configs):
 
-| Config | QuantizedMlpI8 | MlpF32 | Ratio |
+| Config | QuantizedMlp | Mlp | Ratio |
 |--------|---------------|--------|-------|
 | 8→16→1 | 113ns | 53ns | 2.1× |
 | 16→32→8→1 | 316ns | 106ns | 3.0× |
@@ -762,12 +751,12 @@ Not profiled — these are architectural observations, not measured splits.
   popcount. Further improvement requires AVX-512 VPOPCNTDQ (native
   vector popcount) or algorithmic change.
 
-- **QuantizedMlpI8**: quantize/dequant overhead per layer is the
+- **QuantizedMlp**: quantize/dequant overhead per layer is the
   remaining bottleneck. The i8 matmul processes 4× more elements per
   SIMD instruction than f32 FMA, but the surrounding quantize (f32→i8)
   and dequant (i32→f32) steps add fixed cost. For current benchmark
   layer sizes (8-64), this overhead keeps quantized ~2-3× slower than
-  MlpF32. At wider layers (256+) or when weights spill L2, the 4×
+  Mlp. At wider layers (256+) or when weights spill L2, the 4×
   lower weight memory bandwidth should dominate.
 
 ---
@@ -780,16 +769,16 @@ Not profiled — these are architectural observations, not measured splits.
 | dot4_f32_m128 batched hadd | matvec, MLP, Conv | eliminates scalar hsum round-trip |
 | dot8_f32_m256 (in_size≥32) | matvec, MLP, Conv | 5-19% on medium/large models |
 | Padé tanh/sigmoid 8-wide | LSTM/GRU gates | eliminates scalar activation bottleneck |
-| MLP fused bias+relu in SIMD | MLP f32 | ~2× vs MlpF64 at 64-wide |
+| MLP fused bias+relu in SIMD | MLP f32 | ~2× vs Mlp at 64-wide |
 | Conv fused bias+relu in SIMD | Conv f32 | 6-18% vs scalar |
 | GBDT false-branch-next layout | GBDT | ~50% of traversals sequential in L1 |
 | SIMD LayerNorm (3-pass f32) | MLP f32 | ~4× vs scalar LN (65-74% reduction) |
 | BNN fused output (masked sum from bits) | BNN | -14ns: eliminates unpack + output matmul |
 | BNN fused input (matvec+binarize+movemask) | BNN | -14ns: eliminates float_scratch round-trip |
 | `#[inline(never)]` on tiled helpers | MLP, Conv, BNN | prevents caller I-cache bloat |
-| 4-row tiled i8 maddubs (shared input) | QuantizedMlpI8 | 4× input bandwidth reduction, -77-84% on wide |
-| SIMD quantize (cvtps + saturating pack) | QuantizedMlpI8 | ~6× throughput vs scalar round() |
-| Precomputed bias corrections | QuantizedMlpI8 | eliminates O(out) per-prediction correction work |
+| 4-row tiled i8 maddubs (shared input) | QuantizedMlp | 4× input bandwidth reduction, -77-84% on wide |
+| SIMD quantize (cvtps + saturating pack) | QuantizedMlp | ~6× throughput vs scalar round() |
+| Precomputed bias corrections | QuantizedMlp | eliminates O(out) per-prediction correction work |
 
 ---
 
@@ -808,7 +797,7 @@ Ordered by expected impact, not effort.
    activations are deployed, the same 8-wide Padé can be applied in
    the tiled helpers.
 
-3. ~~**Int8 quantized matvec**~~: **Done** — `QuantizedMlpI8` implements
+3. ~~**Int8 quantized matvec**~~: **Done** — `QuantizedMlp` implements
    4-row tiled i8 matmul with SIMD quantize/dequant. See section above.
    Next step: wider layers (256+) where weight bandwidth savings dominate
    quantize/dequant overhead and the i8 path outperforms f32.

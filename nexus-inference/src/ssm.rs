@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::dot::{dot_f32, matvec_f32};
 
@@ -30,21 +26,21 @@ use crate::dot::{dot_f32, matvec_f32};
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::LinearSsmF32;
+/// use nexus_inference::LinearSsm;
 ///
 /// let a_diag = vec![0.9_f32; 4];
 /// let b = vec![0.1_f32; 4 * 2];
 /// let c = vec![0.1_f32; 1 * 4];
 /// let d = vec![0.0_f32; 1 * 2];
 ///
-/// let mut ssm = LinearSsmF32::from_parts(
+/// let mut ssm = LinearSsm::from_parts(
 ///     &a_diag, &b, &c, &d, 1,
 /// ).unwrap();
 ///
-/// let output = ssm.step(&[0.5, 1.0]);
+/// let output = ssm.predict(&[0.5, 1.0]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct LinearSsmF32 {
+pub struct LinearSsm {
     a_diag: Box<[f32]>,
     b: Box<[f32]>,
     c: Box<[f32]>,
@@ -56,7 +52,7 @@ pub struct LinearSsmF32 {
     output_size: u16,
 }
 
-impl LinearSsmF32 {
+impl LinearSsm {
     /// Construct from pre-discretized parameters.
     ///
     /// - `a_diag`: diagonal of A, `[H]`.
@@ -127,13 +123,13 @@ impl LinearSsmF32 {
     /// # Panics
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
-            "step() requires output_size == 1, use step_into()"
+            "predict() requires output_size == 1, use predict_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -149,7 +145,7 @@ impl LinearSsmF32 {
     ///
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let i_sz = self.input_size as usize;
         let h_sz = self.hidden_size as usize;
         let o_sz = self.output_size as usize;
@@ -178,18 +174,30 @@ impl LinearSsmF32 {
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Hidden state dimension.
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of outputs per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
+    }
+}
+
+impl crate::Model for LinearSsm {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        LinearSsm::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        LinearSsm::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        LinearSsm::n_outputs(self)
     }
 }
 
@@ -197,14 +205,14 @@ impl LinearSsmF32 {
 mod tests {
     use super::*;
 
-    fn ssm_1x2x1() -> LinearSsmF32 {
+    fn ssm_1x2x1() -> LinearSsm {
         // I=2, H=2, O=1
         // A = diag(0.9, 0.8)
         // B = [[0.1, 0.2],
         //      [0.3, 0.4]]  (H=2, I=2)
         // C = [[0.5, 0.6]]  (O=1, H=2)
         // D = [[0.01, 0.02]] (O=1, I=2)
-        LinearSsmF32::from_parts(
+        LinearSsm::from_parts(
             &[0.9, 0.8],
             &[0.1, 0.2, 0.3, 0.4],
             &[0.5, 0.6],
@@ -222,34 +230,34 @@ mod tests {
         // y = C @ [0.5, 1.1] + D @ [1, 2]
         //   = 0.5*0.5 + 0.6*1.1 + 0.01*1 + 0.02*2
         //   = 0.25 + 0.66 + 0.01 + 0.04 = 0.96
-        let y = ssm.step(&[1.0, 2.0]);
+        let y = ssm.predict(&[1.0, 2.0]);
         assert!((y - 0.96).abs() < 1e-6, "got {y}");
     }
 
     #[test]
     fn second_step_carries_state() {
         let mut ssm = ssm_1x2x1();
-        ssm.step(&[1.0, 2.0]); // h = [0.5, 1.1]
+        ssm.predict(&[1.0, 2.0]); // h = [0.5, 1.1]
         // h_2 = A ⊙ [0.5, 1.1] + B @ [0, 0]
         //      = [0.9*0.5, 0.8*1.1] = [0.45, 0.88]
         // y = C @ [0.45, 0.88] + D @ [0, 0]
         //   = 0.5*0.45 + 0.6*0.88 = 0.225 + 0.528 = 0.753
-        let y = ssm.step(&[0.0, 0.0]);
+        let y = ssm.predict(&[0.0, 0.0]);
         assert!((y - 0.753).abs() < 1e-5, "got {y}");
     }
 
     #[test]
     fn reset_clears_state() {
         let mut ssm = ssm_1x2x1();
-        let y1 = ssm.step(&[1.0, 2.0]);
+        let y1 = ssm.predict(&[1.0, 2.0]);
         ssm.reset();
-        let y2 = ssm.step(&[1.0, 2.0]);
+        let y2 = ssm.predict(&[1.0, 2.0]);
         assert!((y1 - y2).abs() < 1e-7);
     }
 
     #[test]
     fn zero_d_means_no_skip() {
-        let mut ssm = LinearSsmF32::from_parts(
+        let mut ssm = LinearSsm::from_parts(
             &[0.9, 0.8],
             &[0.1, 0.2, 0.3, 0.4],
             &[0.5, 0.6],
@@ -259,14 +267,14 @@ mod tests {
         .unwrap();
         // h_1 = B @ [1, 2] = [0.5, 1.1]
         // y = C @ [0.5, 1.1] + 0 = 0.25 + 0.66 = 0.91
-        let y = ssm.step(&[1.0, 2.0]);
+        let y = ssm.predict(&[1.0, 2.0]);
         assert!((y - 0.91).abs() < 1e-6, "got {y}");
     }
 
     #[test]
     fn multi_output() {
         // I=1, H=2, O=2
-        let mut ssm = LinearSsmF32::from_parts(
+        let mut ssm = LinearSsm::from_parts(
             &[0.5, 0.5],
             &[1.0, 1.0],           // B: H=2, I=1
             &[1.0, 0.0, 0.0, 1.0], // C: O=2, H=2 (identity)
@@ -275,7 +283,7 @@ mod tests {
         )
         .unwrap();
         let mut out = [0.0_f32; 2];
-        ssm.step_into(&[3.0], &mut out);
+        ssm.predict_into(&[3.0], &mut out);
         // h = [0, 0]*0.5 + [3, 3] = [3, 3]
         // y = I @ [3, 3] = [3, 3]
         assert!((out[0] - 3.0).abs() < 1e-6);
@@ -284,7 +292,7 @@ mod tests {
 
     #[test]
     fn state_decays_without_input() {
-        let mut ssm = LinearSsmF32::from_parts(
+        let mut ssm = LinearSsm::from_parts(
             &[0.5], // fast decay
             &[1.0], // I=1, H=1
             &[1.0], // O=1, H=1 (identity)
@@ -292,10 +300,10 @@ mod tests {
             1,
         )
         .unwrap();
-        ssm.step(&[10.0]); // h = 10
-        let y1 = ssm.step(&[0.0]); // h = 5
-        let y2 = ssm.step(&[0.0]); // h = 2.5
-        let y3 = ssm.step(&[0.0]); // h = 1.25
+        ssm.predict(&[10.0]); // h = 10
+        let y1 = ssm.predict(&[0.0]); // h = 5
+        let y2 = ssm.predict(&[0.0]); // h = 2.5
+        let y3 = ssm.predict(&[0.0]); // h = 1.25
         assert!((y1 - 5.0).abs() < 1e-6);
         assert!((y2 - 2.5).abs() < 1e-6);
         assert!((y3 - 1.25).abs() < 1e-6);
@@ -304,20 +312,20 @@ mod tests {
     #[test]
     fn accessors() {
         let ssm = ssm_1x2x1();
-        assert_eq!(ssm.input_size(), 2);
-        assert_eq!(ssm.hidden_size(), 2);
-        assert_eq!(ssm.output_size(), 1);
+        assert_eq!(ssm.n_inputs(), 2);
+        assert_eq!(ssm.n_hidden(), 2);
+        assert_eq!(ssm.n_outputs(), 1);
     }
 
     #[test]
     fn rejects_empty() {
-        assert!(LinearSsmF32::from_parts(&[], &[1.0], &[1.0], &[0.0], 1).is_err());
+        assert!(LinearSsm::from_parts(&[], &[1.0], &[1.0], &[0.0], 1).is_err());
     }
 
     #[test]
     fn rejects_mismatched_c() {
         assert!(
-            LinearSsmF32::from_parts(
+            LinearSsm::from_parts(
                 &[0.9],
                 &[0.1],      // H=1, I=1
                 &[0.5, 0.6], // expects O*H=1, got 2
@@ -330,14 +338,14 @@ mod tests {
 
     #[test]
     fn rejects_non_finite() {
-        assert!(LinearSsmF32::from_parts(&[f32::NAN], &[0.1], &[0.5], &[0.0], 1,).is_err());
+        assert!(LinearSsm::from_parts(&[f32::NAN], &[0.1], &[0.5], &[0.0], 1,).is_err());
     }
 
     #[test]
     #[should_panic(expected = "input length must equal input_size")]
     fn wrong_input_panics() {
         let mut ssm = ssm_1x2x1();
-        ssm.step(&[1.0]); // expects 2 inputs
+        ssm.predict(&[1.0]); // expects 2 inputs
     }
 
     #[test]
@@ -345,13 +353,13 @@ mod tests {
     fn wrong_output_panics() {
         let mut ssm = ssm_1x2x1();
         let mut out = [0.0_f32; 3];
-        ssm.step_into(&[1.0, 2.0], &mut out);
+        ssm.predict_into(&[1.0, 2.0], &mut out);
     }
 
     #[test]
-    #[should_panic(expected = "step() requires output_size == 1")]
-    fn step_multi_output_panics() {
-        let mut ssm = LinearSsmF32::from_parts(
+    #[should_panic(expected = "predict() requires output_size == 1")]
+    fn predict_multi_output_panics() {
+        let mut ssm = LinearSsm::from_parts(
             &[0.5, 0.5],
             &[1.0, 1.0],
             &[1.0, 0.0, 0.0, 1.0],
@@ -359,6 +367,6 @@ mod tests {
             2,
         )
         .unwrap();
-        ssm.step(&[1.0]);
+        ssm.predict(&[1.0]);
     }
 }

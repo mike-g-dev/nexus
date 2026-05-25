@@ -1,7 +1,3 @@
-extern crate alloc;
-
-use alloc::{boxed::Box, vec};
-
 use crate::LoadError;
 use crate::dot::{matvec_bias_f32, matvec_f32};
 
@@ -32,7 +28,7 @@ use super::{sigmoid_f32, tanh_f32};
 /// # Examples
 ///
 /// ```
-/// use nexus_inference::TinyGruF32;
+/// use nexus_inference::TinyGru;
 ///
 /// let weight_ih = vec![0.1_f32; 3 * 8 * 4];
 /// let weight_hh = vec![0.1_f32; 3 * 8 * 8];
@@ -41,17 +37,17 @@ use super::{sigmoid_f32, tanh_f32};
 /// let w_out = vec![0.1_f32; 1 * 8];
 /// let b_out = vec![0.0_f32; 1];
 ///
-/// let mut gru = TinyGruF32::from_parts(
+/// let mut gru = TinyGru::from_parts(
 ///     4, 8, 1,
 ///     &weight_ih, &weight_hh,
 ///     &bias_ih, &bias_hh,
 ///     &w_out, &b_out,
 /// ).unwrap();
 ///
-/// let output = gru.step(&[0.5, 1.2, -0.3, 0.8]);
+/// let output = gru.predict(&[0.5, 1.2, -0.3, 0.8]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct TinyGruF32 {
+pub struct TinyGru {
     weight_ih: Box<[f32]>,
     weight_hh: Box<[f32]>,
     bias_ih: Box<[f32]>,
@@ -66,7 +62,7 @@ pub struct TinyGruF32 {
     output_size: u16,
 }
 
-impl TinyGruF32 {
+impl TinyGru {
     /// Construct from pre-trained weights.
     ///
     /// Parameters map to PyTorch's `nn.GRU` + `nn.Linear`:
@@ -157,13 +153,13 @@ impl TinyGruF32 {
     /// Process one timestep and return a single scalar output.
     ///
     /// Panics if `output_size != 1` or `input.len() != input_size`.
-    pub fn step(&mut self, input: &[f32]) -> f32 {
+    pub fn predict(&mut self, input: &[f32]) -> f32 {
         assert_eq!(
             self.output_size, 1,
-            "step() requires output_size == 1, use step_into()"
+            "predict() requires output_size == 1, use predict_into()"
         );
         let mut out = [0.0_f32];
-        self.step_into(input, &mut out);
+        self.predict_into(input, &mut out);
         out[0]
     }
 
@@ -182,7 +178,7 @@ impl TinyGruF32 {
     /// Panics if `input.len() != input_size` or
     /// `output.len() != output_size`.
     #[allow(clippy::many_single_char_names)]
-    pub fn step_into(&mut self, input: &[f32], output: &mut [f32]) {
+    pub fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
         let in_sz = self.input_size as usize;
         let hi = self.hidden_size as usize;
         let gate_count = 3 * hi;
@@ -231,7 +227,7 @@ impl TinyGruF32 {
     }
 
     /// Reset hidden state to zeros.
-    pub fn reset_state(&mut self) {
+    pub fn reset(&mut self) {
         self.h.fill(0.0);
     }
 
@@ -241,18 +237,30 @@ impl TinyGruF32 {
     }
 
     /// Number of input features per timestep.
-    pub fn input_size(&self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         self.input_size as usize
     }
 
     /// Number of hidden units.
-    pub fn hidden_size(&self) -> usize {
+    pub fn n_hidden(&self) -> usize {
         self.hidden_size as usize
     }
 
     /// Number of output values per timestep.
-    pub fn output_size(&self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         self.output_size as usize
+    }
+}
+
+impl crate::Model for TinyGru {
+    fn predict(&mut self, input: &[f32]) -> f32 {
+        TinyGru::predict(self, input)
+    }
+    fn predict_into(&mut self, input: &[f32], output: &mut [f32]) {
+        TinyGru::predict_into(self, input, output);
+    }
+    fn n_outputs(&self) -> usize {
+        TinyGru::n_outputs(self)
     }
 }
 
@@ -269,7 +277,7 @@ mod tests {
         w_hh_val: f32,
         b_val: f32,
         w_out_val: f32,
-    ) -> TinyGruF32 {
+    ) -> TinyGru {
         let gate_count = 3 * hidden;
         let weight_ih = vec![w_ih_val; gate_count * input];
         let weight_hh = vec![w_hh_val; gate_count * hidden];
@@ -277,7 +285,7 @@ mod tests {
         let bias_hh = vec![0.0_f32; gate_count];
         let w_out = vec![w_out_val; output * hidden];
         let b_out = vec![0.0_f32; output];
-        TinyGruF32::from_parts(
+        TinyGru::from_parts(
             input, hidden, output, &weight_ih, &weight_hh, &bias_ih, &bias_hh, &w_out, &b_out,
         )
         .unwrap()
@@ -286,7 +294,7 @@ mod tests {
     #[test]
     fn basic_forward_pass() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out = gru.step(&[1.0, 0.0]);
+        let out = gru.predict(&[1.0, 0.0]);
 
         // h_0 = [0, 0], x = [1, 0]
         // ih = W_ih @ x: each row dot [1, 0] = 0.1
@@ -308,28 +316,28 @@ mod tests {
     #[test]
     fn state_carries_between_steps() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out1 = gru.step(&[1.0, 0.0]);
-        let out2 = gru.step(&[1.0, 0.0]);
+        let out1 = gru.predict(&[1.0, 0.0]);
+        let out2 = gru.predict(&[1.0, 0.0]);
         assert!((out1 - out2).abs() > 1e-6);
     }
 
     #[test]
     fn reset_clears_state() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        gru.step(&[1.0, 0.5]);
+        gru.predict(&[1.0, 0.5]);
         assert!(gru.hidden_state().iter().any(|&v| v != 0.0));
-        gru.reset_state();
+        gru.reset();
         assert!(gru.hidden_state().iter().all(|&v| v == 0.0));
     }
 
     #[test]
     fn reset_reproduces_first_output() {
         let mut gru = make_gru(2, 4, 1, 0.1, 0.2, 0.0, 0.1);
-        let first = gru.step(&[1.0, -1.0]);
-        gru.step(&[0.5, 0.5]);
-        gru.step(&[0.0, 1.0]);
-        gru.reset_state();
-        let after_reset = gru.step(&[1.0, -1.0]);
+        let first = gru.predict(&[1.0, -1.0]);
+        gru.predict(&[0.5, 0.5]);
+        gru.predict(&[0.0, 1.0]);
+        gru.reset();
+        let after_reset = gru.predict(&[1.0, -1.0]);
         assert!(
             (first - after_reset).abs() < 1e-6,
             "first={first}, after_reset={after_reset}"
@@ -340,7 +348,7 @@ mod tests {
     fn multi_output() {
         let mut gru = make_gru(2, 4, 3, 0.1, 0.1, 0.0, 0.1);
         let mut out = [0.0_f32; 3];
-        gru.step_into(&[1.0, 0.5], &mut out);
+        gru.predict_into(&[1.0, 0.5], &mut out);
         assert!((out[0] - out[1]).abs() < 1e-6);
         assert!((out[1] - out[2]).abs() < 1e-6);
     }
@@ -348,7 +356,7 @@ mod tests {
     #[test]
     fn nan_propagates() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        let out = gru.step(&[f32::NAN, 1.0]);
+        let out = gru.predict(&[f32::NAN, 1.0]);
         assert!(out.is_nan());
     }
 
@@ -376,7 +384,7 @@ mod tests {
         for k in h..2 * h {
             bias_z[k] = 5.0;
         }
-        let mut gru_z = TinyGruF32::from_parts(
+        let mut gru_z = TinyGru::from_parts(
             i,
             h,
             1,
@@ -392,12 +400,12 @@ mod tests {
         let mut gru_normal = make_gru(i, h, 1, 0.1, 0.1, 0.0, 0.1);
 
         // Inject state via a step, then feed zeros
-        gru_z.step(&[1.0, 1.0]);
-        gru_normal.step(&[1.0, 1.0]);
+        gru_z.predict(&[1.0, 1.0]);
+        gru_normal.predict(&[1.0, 1.0]);
 
         for _ in 0..10 {
-            gru_z.step(&[0.0, 0.0]);
-            gru_normal.step(&[0.0, 0.0]);
+            gru_z.predict(&[0.0, 0.0]);
+            gru_normal.predict(&[0.0, 0.0]);
         }
 
         // z-biased model should retain more hidden state
@@ -412,21 +420,21 @@ mod tests {
     #[test]
     fn accessors() {
         let gru = make_gru(4, 8, 2, 0.1, 0.1, 0.0, 0.1);
-        assert_eq!(gru.input_size(), 4);
-        assert_eq!(gru.hidden_size(), 8);
-        assert_eq!(gru.output_size(), 2);
+        assert_eq!(gru.n_inputs(), 4);
+        assert_eq!(gru.n_hidden(), 8);
+        assert_eq!(gru.n_outputs(), 2);
         assert_eq!(gru.hidden_state().len(), 8);
     }
 
     #[test]
     fn validation_rejects_zero_size() {
-        let r = TinyGruF32::from_parts(0, 2, 1, &[], &[], &[], &[], &[], &[]);
+        let r = TinyGru::from_parts(0, 2, 1, &[], &[], &[], &[], &[], &[]);
         assert!(r.is_err());
     }
 
     #[test]
     fn validation_rejects_weight_mismatch() {
-        let r = TinyGruF32::from_parts(
+        let r = TinyGru::from_parts(
             2, 2, 1, &[0.0; 11], // wrong: should be 3*2*2 = 12
             &[0.0; 12], &[0.0; 6], &[0.0; 6], &[0.0; 2], &[0.0; 1],
         );
@@ -437,7 +445,7 @@ mod tests {
     fn validation_rejects_non_finite() {
         let mut w = vec![0.1_f32; 12];
         w[5] = f32::INFINITY;
-        let r = TinyGruF32::from_parts(
+        let r = TinyGru::from_parts(
             2, 2, 1, &w, &[0.0; 12], &[0.0; 6], &[0.0; 6], &[0.0; 2], &[0.0; 1],
         );
         assert!(r.is_err());
@@ -445,15 +453,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "output_size == 1")]
-    fn step_panics_multi_output() {
+    fn predict_panics_multi_output() {
         let mut gru = make_gru(2, 2, 3, 0.1, 0.1, 0.0, 0.1);
-        gru.step(&[1.0, 0.0]);
+        gru.predict(&[1.0, 0.0]);
     }
 
     #[test]
     #[should_panic(expected = "input length")]
-    fn step_panics_wrong_input_len() {
+    fn predict_panics_wrong_input_len() {
         let mut gru = make_gru(2, 2, 1, 0.1, 0.1, 0.0, 0.1);
-        gru.step(&[1.0]);
+        gru.predict(&[1.0]);
     }
 }

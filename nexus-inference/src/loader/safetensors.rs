@@ -1,6 +1,3 @@
-extern crate alloc;
-
-use alloc::{format, string::String, vec, vec::Vec};
 use safetensors::{Dtype, SafeTensors};
 
 use crate::LoadError;
@@ -141,65 +138,15 @@ fn extract_i8_2d(st: &SafeTensors<'_>, name: &str) -> Result<(Vec<i8>, [usize; 2
     Ok((data, dims))
 }
 
-fn extract_f64_1d(st: &SafeTensors<'_>, name: &str) -> Result<Vec<f64>, LoadError> {
-    let tv = st
-        .tensor(name)
-        .map_err(|_| LoadError::TensorNotFound(String::from(name)))?;
-    if tv.dtype() != Dtype::F64 {
-        return Err(LoadError::Validation("expected F64 tensor"));
-    }
-    if tv.shape().len() != 1 {
-        return Err(LoadError::Validation("expected 1D tensor"));
-    }
-    let bytes = tv.data();
-    if bytes.len() % 8 != 0 {
-        return Err(LoadError::Parse("F64 tensor data not aligned"));
-    }
-    Ok(bytes
-        .chunks_exact(8)
-        .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
-        .collect())
-}
-
-fn extract_f64_2d(st: &SafeTensors<'_>, name: &str) -> Result<(Vec<f64>, [usize; 2]), LoadError> {
-    let tv = st
-        .tensor(name)
-        .map_err(|_| LoadError::TensorNotFound(String::from(name)))?;
-    if tv.dtype() != Dtype::F64 {
-        return Err(LoadError::Validation("expected F64 tensor"));
-    }
-    let shape = tv.shape();
-    if shape.len() != 2 {
-        return Err(LoadError::Validation("expected 2D tensor"));
-    }
-    let dims = [shape[0], shape[1]];
-    let bytes = tv.data();
-    if bytes.len() % 8 != 0 {
-        return Err(LoadError::Parse("F64 tensor data not aligned"));
-    }
-    let data = bytes
-        .chunks_exact(8)
-        .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
-        .collect();
-    Ok((data, dims))
-}
-
 // ---- sqrt helper for BatchNorm fusion ----
 
-#[cfg(feature = "std")]
 fn sqrt_f64(x: f64) -> f64 {
     x.sqrt()
 }
 
-#[cfg(all(not(feature = "std"), feature = "libm"))]
-fn sqrt_f64(x: f64) -> f64 {
-    libm::sqrt(x)
-}
+// ---- RNN loaders ----
 
-// ---- RNN loaders (require tanh/sigmoid from std or libm) ----
-
-#[cfg(any(feature = "std", feature = "libm"))]
-impl crate::TinyLstmF32 {
+impl crate::TinyLstm {
     /// Load from safetensors data.
     ///
     /// `rnn_prefix` resolves PyTorch `nn.LSTM` tensors:
@@ -221,7 +168,7 @@ impl crate::TinyLstmF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let lstm = TinyLstmF32::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
+    /// let lstm = TinyLstm::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -273,8 +220,7 @@ impl crate::TinyLstmF32 {
     }
 }
 
-#[cfg(any(feature = "std", feature = "libm"))]
-impl crate::TinyGruF32 {
+impl crate::TinyGru {
     /// Load from safetensors data.
     ///
     /// `rnn_prefix` resolves PyTorch `nn.GRU` tensors:
@@ -295,7 +241,7 @@ impl crate::TinyGruF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let gru = TinyGruF32::from_safetensors(&bytes, "gru", "fc")?;
+    /// let gru = TinyGru::from_safetensors(&bytes, "gru", "fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -347,10 +293,9 @@ impl crate::TinyGruF32 {
     }
 }
 
-// ---- Stacked RNN loaders (require tanh/sigmoid from std or libm) ----
+// ---- Stacked RNN loaders ----
 
-#[cfg(any(feature = "std", feature = "libm"))]
-impl crate::StackedLstmF32 {
+impl crate::StackedLstm {
     /// Load from safetensors data.
     ///
     /// Auto-detects `num_layers` by scanning for `weight_ih_l0`,
@@ -376,7 +321,7 @@ impl crate::StackedLstmF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let lstm = StackedLstmF32::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
+    /// let lstm = StackedLstm::from_safetensors(&bytes, "encoder.lstm", "encoder.fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -466,8 +411,7 @@ impl crate::StackedLstmF32 {
     }
 }
 
-#[cfg(any(feature = "std", feature = "libm"))]
-impl crate::StackedGruF32 {
+impl crate::StackedGru {
     /// Load from safetensors data.
     ///
     /// Auto-detects `num_layers` by scanning for `weight_ih_l0`,
@@ -493,7 +437,7 @@ impl crate::StackedGruF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let gru = StackedGruF32::from_safetensors(&bytes, "encoder.gru", "encoder.fc")?;
+    /// let gru = StackedGru::from_safetensors(&bytes, "encoder.gru", "encoder.fc")?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -672,7 +616,7 @@ macro_rules! impl_mlp_safetensors {
             ///
             /// ```ignore
             /// let bytes = std::fs::read("model.safetensors")?;
-            /// let mlp = MlpF32::from_safetensors(&bytes, "fc", Activation::Relu)?;
+            /// let mlp = Mlp::from_safetensors(&bytes, "fc", Activation::Relu)?;
             /// ```
             pub fn from_safetensors(
                 data: &[u8],
@@ -765,68 +709,59 @@ macro_rules! impl_mlp_safetensors {
                         .iter()
                         .find(|&&bi| bi > idx && bi < next_linear)
                     {
-                        #[cfg(not(any(feature = "std", feature = "libm")))]
-                        {
+                        let bn_mean =
+                            $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_mean"))?;
+                        let bn_var =
+                            $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_var"))?;
+                        let out_features = w_shape[0];
+                        let in_features = w_shape[1];
+                        if bn_mean.len() != out_features || bn_var.len() != out_features {
                             return Err(LoadError::Validation(
-                                "BatchNorm fusion requires 'std' or 'libm' feature",
+                                "BatchNorm size mismatch with linear output",
                             ));
                         }
-                        #[cfg(any(feature = "std", feature = "libm"))]
-                        {
-                            let bn_mean =
-                                $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_mean"))?;
-                            let bn_var =
-                                $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.running_var"))?;
-                            let out_features = w_shape[0];
-                            let in_features = w_shape[1];
-                            if bn_mean.len() != out_features || bn_var.len() != out_features {
-                                return Err(LoadError::Validation(
-                                    "BatchNorm size mismatch with linear output",
-                                ));
-                            }
-                            let bn_gamma: Vec<$ty> =
-                                match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.weight")) {
-                                    Ok(g) => {
-                                        if g.len() != out_features {
-                                            return Err(LoadError::Validation(
-                                                "BatchNorm gamma size mismatch",
-                                            ));
-                                        }
-                                        g
+                        let bn_gamma: Vec<$ty> =
+                            match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.weight")) {
+                                Ok(g) => {
+                                    if g.len() != out_features {
+                                        return Err(LoadError::Validation(
+                                            "BatchNorm gamma size mismatch",
+                                        ));
                                     }
-                                    Err(LoadError::TensorNotFound(_)) => {
-                                        vec![1.0 as $ty; out_features]
-                                    }
-                                    Err(e) => return Err(e),
-                                };
-                            let bn_beta: Vec<$ty> =
-                                match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.bias")) {
-                                    Ok(b) => {
-                                        if b.len() != out_features {
-                                            return Err(LoadError::Validation(
-                                                "BatchNorm beta size mismatch",
-                                            ));
-                                        }
-                                        b
-                                    }
-                                    Err(LoadError::TensorNotFound(_)) => {
-                                        vec![0.0 as $ty; out_features]
-                                    }
-                                    Err(e) => return Err(e),
-                                };
-                            let eps = 1e-5_f64;
-                            for row in 0..out_features {
-                                let scale =
-                                    bn_gamma[row] as f64 / sqrt_f64(bn_var[row] as f64 + eps);
-                                for col in 0..in_features {
-                                    let wi = row * in_features + col;
-                                    w_data[wi] = (w_data[wi] as f64 * scale) as $ty;
+                                    g
                                 }
-                                b_data[row] = scale.mul_add(
-                                    b_data[row] as f64 - bn_mean[row] as f64,
-                                    bn_beta[row] as f64,
-                                ) as $ty;
+                                Err(LoadError::TensorNotFound(_)) => {
+                                    vec![1.0 as $ty; out_features]
+                                }
+                                Err(e) => return Err(e),
+                            };
+                        let bn_beta: Vec<$ty> =
+                            match $extract_1d(&st, &format!("{prefix_dot}{bn_idx}.bias")) {
+                                Ok(b) => {
+                                    if b.len() != out_features {
+                                        return Err(LoadError::Validation(
+                                            "BatchNorm beta size mismatch",
+                                        ));
+                                    }
+                                    b
+                                }
+                                Err(LoadError::TensorNotFound(_)) => {
+                                    vec![0.0 as $ty; out_features]
+                                }
+                                Err(e) => return Err(e),
+                            };
+                        let eps = 1e-5_f64;
+                        for row in 0..out_features {
+                            let scale =
+                                bn_gamma[row] as f64 / sqrt_f64(bn_var[row] as f64 + eps);
+                            for col in 0..in_features {
+                                let wi = row * in_features + col;
+                                w_data[wi] = (w_data[wi] as f64 * scale) as $ty;
                             }
+                            b_data[row] = scale.mul_add(
+                                b_data[row] as f64 - bn_mean[row] as f64,
+                                bn_beta[row] as f64,
+                            ) as $ty;
                         }
                     }
 
@@ -869,13 +804,6 @@ macro_rules! impl_mlp_safetensors {
                             "LayerNorm must be present on all hidden layers or none",
                         ));
                     }
-                    #[cfg(not(any(feature = "std", feature = "libm")))]
-                    {
-                        return Err(LoadError::Validation(
-                            "LayerNorm requires 'std' or 'libm' feature",
-                        ));
-                    }
-                    #[cfg(any(feature = "std", feature = "libm"))]
                     return Self::from_parts_with_layer_norm(
                         &layer_sizes,
                         &all_weights,
@@ -892,12 +820,11 @@ macro_rules! impl_mlp_safetensors {
     };
 }
 
-impl_mlp_safetensors!(MlpF32, f32, extract_f32_2d, extract_f32_1d);
-impl_mlp_safetensors!(MlpF64, f64, extract_f64_2d, extract_f64_1d);
+impl_mlp_safetensors!(Mlp, f32, extract_f32_2d, extract_f32_1d);
 
 // ---- Conv1d loader ----
 
-impl crate::Causal1dConvF32 {
+impl crate::Causal1dConv {
     /// Load from safetensors data.
     ///
     /// `conv_prefix` resolves PyTorch `nn.Conv1d` tensors:
@@ -921,7 +848,7 @@ impl crate::Causal1dConvF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("model.safetensors")?;
-    /// let conv = Causal1dConvF32::from_safetensors(
+    /// let conv = Causal1dConv::from_safetensors(
     ///     &bytes, "conv", "fc", Activation::Relu,
     /// )?;
     /// ```
@@ -979,7 +906,7 @@ impl crate::Causal1dConvF32 {
 
 // ---- SSM loader ----
 
-impl crate::LinearSsmF32 {
+impl crate::LinearSsm {
     /// Load from safetensors data.
     ///
     /// Expected tensors under `prefix`:
@@ -997,7 +924,7 @@ impl crate::LinearSsmF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("ssm.safetensors")?;
-    /// let ssm = LinearSsmF32::from_safetensors(&bytes, "ssm")?;
+    /// let ssm = LinearSsm::from_safetensors(&bytes, "ssm")?;
     /// ```
     pub fn from_safetensors(data: &[u8], prefix: &str) -> Result<Self, LoadError> {
         let st = parse(data)?;
@@ -1082,7 +1009,7 @@ fn count_tcn_layers(st: &SafeTensors<'_>, prefix: &str) -> Result<usize, LoadErr
     Ok(n)
 }
 
-impl crate::TinyTcnF32 {
+impl crate::TinyTcn {
     /// Load from safetensors data.
     ///
     /// Tensor naming convention:
@@ -1109,7 +1036,7 @@ impl crate::TinyTcnF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("tcn.safetensors")?;
-    /// let tcn = TinyTcnF32::from_safetensors(
+    /// let tcn = TinyTcn::from_safetensors(
     ///     &bytes, "tcn", Activation::Relu, false,
     /// )?;
     /// ```
@@ -1248,7 +1175,7 @@ fn count_bnn_binary_layers(st: &SafeTensors<'_>, prefix: &str) -> Result<usize, 
     Ok(n)
 }
 
-impl crate::BnnF32 {
+impl crate::Bnn {
     /// Load from safetensors data.
     ///
     /// Tensor naming convention:
@@ -1274,7 +1201,7 @@ impl crate::BnnF32 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("bnn.safetensors")?;
-    /// let bnn = BnnF32::from_safetensors(&bytes, "bnn")?;
+    /// let bnn = Bnn::from_safetensors(&bytes, "bnn")?;
     /// ```
     pub fn from_safetensors(data: &[u8], prefix: &str) -> Result<Self, LoadError> {
         let st = parse(data)?;
@@ -1395,7 +1322,7 @@ fn count_quantized_mlp_layers(st: &SafeTensors<'_>, prefix: &str) -> Result<usiz
     Ok(n)
 }
 
-impl crate::QuantizedMlpI8 {
+impl crate::QuantizedMlp {
     /// Load from safetensors data.
     ///
     /// Tensor naming convention (per layer `k`):
@@ -1419,7 +1346,7 @@ impl crate::QuantizedMlpI8 {
     ///
     /// ```ignore
     /// let bytes = std::fs::read("quantized_mlp.safetensors")?;
-    /// let qmlp = QuantizedMlpI8::from_safetensors(&bytes, "qmlp", Activation::Relu)?;
+    /// let qmlp = QuantizedMlp::from_safetensors(&bytes, "qmlp", Activation::Relu)?;
     /// ```
     pub fn from_safetensors(
         data: &[u8],
@@ -1499,16 +1426,11 @@ impl crate::QuantizedMlpI8 {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::ToString, vec, vec::Vec};
     use safetensors::Dtype;
 
     use crate::LoadError;
 
     fn f32_bytes(data: &[f32]) -> Vec<u8> {
-        data.iter().flat_map(|v| v.to_le_bytes()).collect()
-    }
-
-    fn f64_bytes(data: &[f64]) -> Vec<u8> {
         data.iter().flat_map(|v| v.to_le_bytes()).collect()
     }
 
@@ -1527,7 +1449,6 @@ mod tests {
     // ---- LSTM ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn lstm_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -1557,14 +1478,13 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let lstm = crate::TinyLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
-        assert_eq!(lstm.input_size(), i);
-        assert_eq!(lstm.hidden_size(), h);
-        assert_eq!(lstm.output_size(), o);
+        let lstm = crate::TinyLstm::from_safetensors(&data, "lstm", "fc").unwrap();
+        assert_eq!(lstm.n_inputs(), i);
+        assert_eq!(lstm.n_hidden(), h);
+        assert_eq!(lstm.n_outputs(), o);
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn lstm_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -1579,7 +1499,7 @@ mod tests {
         let bo = vec![0.1_f32; o];
 
         let mut reference =
-            crate::TinyLstmF32::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
+            crate::TinyLstm::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
 
         let wih_b = f32_bytes(&wih);
         let whh_b = f32_bytes(&whh);
@@ -1597,11 +1517,11 @@ mod tests {
             ("out.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::TinyLstmF32::from_safetensors(&data, "rnn", "out").unwrap();
+        let mut loaded = crate::TinyLstm::from_safetensors(&data, "rnn", "out").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -1611,7 +1531,6 @@ mod tests {
     // ---- GRU ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn gru_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -1641,14 +1560,13 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let gru = crate::TinyGruF32::from_safetensors(&data, "gru", "fc").unwrap();
-        assert_eq!(gru.input_size(), i);
-        assert_eq!(gru.hidden_size(), h);
-        assert_eq!(gru.output_size(), o);
+        let gru = crate::TinyGru::from_safetensors(&data, "gru", "fc").unwrap();
+        assert_eq!(gru.n_inputs(), i);
+        assert_eq!(gru.n_hidden(), h);
+        assert_eq!(gru.n_outputs(), o);
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn gru_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -1663,7 +1581,7 @@ mod tests {
         let bo = vec![0.1_f32; o];
 
         let mut reference =
-            crate::TinyGruF32::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
+            crate::TinyGru::from_parts(i, h, o, &wih, &whh, &bih, &bhh, &wo, &bo).unwrap();
 
         let wih_b = f32_bytes(&wih);
         let whh_b = f32_bytes(&whh);
@@ -1681,11 +1599,11 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::TinyGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+        let mut loaded = crate::TinyGru::from_safetensors(&data, "gru", "fc").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -1715,7 +1633,7 @@ mod tests {
             ("fc.2.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mlp = crate::MlpF32::from_safetensors(&data, "fc", crate::Activation::Relu).unwrap();
+        let mlp = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu).unwrap();
         assert_eq!(mlp.n_inputs(), 2);
         assert_eq!(mlp.n_outputs(), 1);
         assert_eq!(mlp.n_layers(), 2);
@@ -1728,7 +1646,7 @@ mod tests {
         let w1: Vec<f32> = vec![1.0, 1.0, 0.0, 0.0];
         let b1: Vec<f32> = vec![0.0];
 
-        let mut reference = crate::MlpF32::from_parts(
+        let reference = crate::Mlp::from_parts(
             &[2, 4, 1],
             &[w0.as_slice(), w1.as_slice()].concat(),
             &[b0.as_slice(), b1.as_slice()].concat(),
@@ -1748,8 +1666,7 @@ mod tests {
             ("1.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut loaded =
-            crate::MlpF32::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
+        let loaded = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
 
         let input = [3.0_f32, 4.0];
         let ref_out = reference.predict(&input);
@@ -1760,35 +1677,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mlp_f64_from_safetensors() {
-        let w0: Vec<f64> = vec![1.0, 0.0, 0.0, 1.0];
-        let b0: Vec<f64> = vec![0.0; 2];
-        let w1: Vec<f64> = vec![1.0, 1.0];
-        let b1: Vec<f64> = vec![0.0];
-
-        let w0_b = f64_bytes(&w0);
-        let b0_b = f64_bytes(&b0);
-        let w1_b = f64_bytes(&w1);
-        let b1_b = f64_bytes(&b1);
-
-        let data = serialize_tensors(vec![
-            ("net.0.weight", make_view(Dtype::F64, &[2, 2], &w0_b)),
-            ("net.0.bias", make_view(Dtype::F64, &[2], &b0_b)),
-            ("net.1.weight", make_view(Dtype::F64, &[1, 2], &w1_b)),
-            ("net.1.bias", make_view(Dtype::F64, &[1], &b1_b)),
-        ]);
-
-        let mut mlp =
-            crate::MlpF64::from_safetensors(&data, "net", crate::Activation::Relu).unwrap();
-        let out = mlp.predict(&[3.0, 4.0]);
-        assert!((out - 7.0).abs() < 1e-12);
-    }
-
     // ---- BatchNorm fusion ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn mlp_f32_batchnorm_fusion() {
         // 2 → 4 (Linear+BN) → ReLU → 1 (Linear)
         // Sequential: 0=Linear, 1=BatchNorm, 2=ReLU, 3=Linear
@@ -1821,7 +1712,7 @@ mod tests {
             ("fc.3.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut mlp = crate::MlpF32::from_safetensors(&data, "fc", crate::Activation::Relu)
+        let mlp = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu)
             .expect("should load with BN fusion");
 
         // Verify: input [3, 5]
@@ -1851,7 +1742,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn mlp_f32_batchnorm_affine_false() {
         // BatchNorm with affine=False — no gamma/beta tensors
         let w0: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0]; // (2, 2) identity
@@ -1877,7 +1767,7 @@ mod tests {
             ("2.bias", make_view(Dtype::F32, &[1], &b1_b)),
         ]);
 
-        let mut mlp = crate::MlpF32::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
+        let mlp = crate::Mlp::from_safetensors(&data, "", crate::Activation::Relu).unwrap();
 
         // Input [3, 4]: Linear=[3,4], BN with gamma=1,beta=0:
         //   scale = 1/sqrt(1+1e-5) ≈ 1.0
@@ -1916,17 +1806,13 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[1], &bo_b)),
         ]);
 
-        let conv = crate::Causal1dConvF32::from_safetensors(
-            &data,
-            "conv",
-            "fc",
-            crate::Activation::Identity,
-        )
-        .unwrap();
-        assert_eq!(conv.input_ch(), 1);
+        let conv =
+            crate::Causal1dConv::from_safetensors(&data, "conv", "fc", crate::Activation::Identity)
+                .unwrap();
+        assert_eq!(conv.n_inputs(), 1);
         assert_eq!(conv.kernel_size(), 3);
-        assert_eq!(conv.filters(), 2);
-        assert_eq!(conv.output_size(), 1);
+        assert_eq!(conv.n_filters(), 2);
+        assert_eq!(conv.n_outputs(), 1);
     }
 
     #[test]
@@ -1961,16 +1847,12 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[1], &bo_b)),
         ]);
 
-        let mut conv = crate::Causal1dConvF32::from_safetensors(
-            &data,
-            "conv",
-            "fc",
-            crate::Activation::Identity,
-        )
-        .unwrap();
+        let mut conv =
+            crate::Causal1dConv::from_safetensors(&data, "conv", "fc", crate::Activation::Identity)
+                .unwrap();
 
         let w_conv_ours = [0.2_f32, 0.4, 0.1, 0.3];
-        let mut reference = crate::Causal1dConvF32::from_parts(
+        let mut reference = crate::Causal1dConv::from_parts(
             2,
             2,
             1,
@@ -1984,16 +1866,16 @@ mod tests {
         .unwrap();
 
         let input = [1.0_f32, 2.0];
-        let ref_out = reference.step(&input);
-        let load_out = conv.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = conv.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-6,
             "ref={ref_out}, loaded={load_out}"
         );
 
         let input2 = [3.0_f32, 4.0];
-        let ref_out2 = reference.step(&input2);
-        let load_out2 = conv.step(&input2);
+        let ref_out2 = reference.predict(&input2);
+        let load_out2 = conv.predict(&input2);
         assert!(
             (ref_out2 - load_out2).abs() < 1e-6,
             "ref={ref_out2}, loaded={load_out2}"
@@ -2011,12 +1893,11 @@ mod tests {
             make_view(Dtype::F32, &[4, 1], &w_b),
         )]);
 
-        let err = crate::MlpF32::from_safetensors(&data, "fc", crate::Activation::Relu);
+        let err = crate::Mlp::from_safetensors(&data, "fc", crate::Activation::Relu);
         assert!(matches!(err, Err(LoadError::Parse(_))));
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn lstm_missing_tensor() {
         let w = vec![0.1_f32; 8];
         let w_b = f32_bytes(&w);
@@ -2025,7 +1906,7 @@ mod tests {
             make_view(Dtype::F32, &[4, 2], &w_b),
         )]);
 
-        let err = crate::TinyLstmF32::from_safetensors(&data, "lstm", "fc");
+        let err = crate::TinyLstm::from_safetensors(&data, "lstm", "fc");
         match err {
             Err(LoadError::TensorNotFound(name)) => {
                 assert_eq!(name, "lstm.weight_hh_l0".to_string());
@@ -2036,18 +1917,14 @@ mod tests {
 
     #[test]
     fn invalid_safetensors() {
-        let err = crate::MlpF32::from_safetensors(
-            b"not valid safetensors",
-            "fc",
-            crate::Activation::Relu,
-        );
+        let err =
+            crate::Mlp::from_safetensors(b"not valid safetensors", "fc", crate::Activation::Relu);
         assert!(matches!(err, Err(LoadError::Parse(_))));
     }
 
     // ---- Stacked LSTM ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -2097,15 +1974,14 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let lstm = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
-        assert_eq!(lstm.input_size(), i);
-        assert_eq!(lstm.hidden_size(), h);
-        assert_eq!(lstm.output_size(), o);
-        assert_eq!(lstm.num_layers(), 2);
+        let lstm = crate::StackedLstm::from_safetensors(&data, "lstm", "fc").unwrap();
+        assert_eq!(lstm.n_inputs(), i);
+        assert_eq!(lstm.n_hidden(), h);
+        assert_eq!(lstm.n_outputs(), o);
+        assert_eq!(lstm.n_layers(), 2);
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -2123,7 +1999,7 @@ mod tests {
         let wo = vec![0.2_f32; o * h];
         let bo = vec![0.1_f32; o];
 
-        let mut reference = crate::StackedLstmF32::from_parts(
+        let mut reference = crate::StackedLstm::from_parts(
             i,
             h,
             o,
@@ -2172,11 +2048,11 @@ mod tests {
             ("out.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::StackedLstmF32::from_safetensors(&data, "rnn", "out").unwrap();
+        let mut loaded = crate::StackedLstm::from_safetensors(&data, "rnn", "out").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -2184,7 +2060,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_single_layer_auto_detect() {
         let i = 4_usize;
         let h = 8_usize;
@@ -2214,12 +2089,11 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let lstm = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc").unwrap();
-        assert_eq!(lstm.num_layers(), 1);
+        let lstm = crate::StackedLstm::from_safetensors(&data, "lstm", "fc").unwrap();
+        assert_eq!(lstm.n_layers(), 1);
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_rejects_non_consecutive_layers() {
         // l0 and l2 present, l1 missing. A gap means a malformed file or
         // wrong prefix; must error rather than silently load 1 layer.
@@ -2258,14 +2132,13 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let err = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc");
+        let err = crate::StackedLstm::from_safetensors(&data, "lstm", "fc");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
     // ---- Stacked GRU ----
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_gru_from_safetensors() {
         let i = 4_usize;
         let h = 8_usize;
@@ -2315,15 +2188,14 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let gru = crate::StackedGruF32::from_safetensors(&data, "gru", "fc").unwrap();
-        assert_eq!(gru.input_size(), i);
-        assert_eq!(gru.hidden_size(), h);
-        assert_eq!(gru.output_size(), o);
-        assert_eq!(gru.num_layers(), 2);
+        let gru = crate::StackedGru::from_safetensors(&data, "gru", "fc").unwrap();
+        assert_eq!(gru.n_inputs(), i);
+        assert_eq!(gru.n_hidden(), h);
+        assert_eq!(gru.n_outputs(), o);
+        assert_eq!(gru.n_layers(), 2);
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_gru_matches_from_parts() {
         let i = 2_usize;
         let h = 4_usize;
@@ -2341,7 +2213,7 @@ mod tests {
         let wo = vec![0.2_f32; o * h];
         let bo = vec![0.1_f32; o];
 
-        let mut reference = crate::StackedGruF32::from_parts(
+        let mut reference = crate::StackedGru::from_parts(
             i,
             h,
             o,
@@ -2390,11 +2262,11 @@ mod tests {
             ("fc.bias", make_view(Dtype::F32, &[o], &bo_b)),
         ]);
 
-        let mut loaded = crate::StackedGruF32::from_safetensors(&data, "gru", "fc").unwrap();
+        let mut loaded = crate::StackedGru::from_safetensors(&data, "gru", "fc").unwrap();
 
         let input = [0.5_f32, -0.3];
-        let ref_out = reference.step(&input);
-        let load_out = loaded.step(&input);
+        let ref_out = reference.predict(&input);
+        let load_out = loaded.predict(&input);
         assert!(
             (ref_out - load_out).abs() < 1e-7,
             "ref={ref_out}, loaded={load_out}"
@@ -2402,10 +2274,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "std", feature = "libm"))]
     fn stacked_lstm_missing_l0() {
         let data = serialize_tensors(vec![]);
-        let err = crate::StackedLstmF32::from_safetensors(&data, "lstm", "fc");
+        let err = crate::StackedLstm::from_safetensors(&data, "lstm", "fc");
         assert!(matches!(err, Err(LoadError::TensorNotFound(_))));
     }
 
@@ -2434,10 +2305,10 @@ mod tests {
             ("ssm.d", make_view(Dtype::F32, &[o, i], &d_b)),
         ]);
 
-        let ssm = crate::LinearSsmF32::from_safetensors(&data, "ssm").unwrap();
-        assert_eq!(ssm.input_size(), i);
-        assert_eq!(ssm.hidden_size(), h);
-        assert_eq!(ssm.output_size(), o);
+        let ssm = crate::LinearSsm::from_safetensors(&data, "ssm").unwrap();
+        assert_eq!(ssm.n_inputs(), i);
+        assert_eq!(ssm.n_hidden(), h);
+        assert_eq!(ssm.n_outputs(), o);
     }
 
     #[test]
@@ -2460,9 +2331,9 @@ mod tests {
             ("m.c", make_view(Dtype::F32, &[o, h], &c_b)),
         ]);
 
-        let mut ssm = crate::LinearSsmF32::from_safetensors(&data, "m").unwrap();
+        let mut ssm = crate::LinearSsm::from_safetensors(&data, "m").unwrap();
         // h = [0,0]*0.5 + [5,5] = [5, 5]; y = 1*5 + 1*5 + 0 = 10
-        let y = ssm.step(&[5.0]);
+        let y = ssm.predict(&[5.0]);
         assert!((y - 10.0).abs() < 1e-6);
     }
 
@@ -2485,16 +2356,16 @@ mod tests {
             ("s.d", make_view(Dtype::F32, &[1, 2], &d_b)),
         ]);
 
-        let mut st = crate::LinearSsmF32::from_safetensors(&data, "s").unwrap();
-        let mut fp = crate::LinearSsmF32::from_parts(&a, &b, &c, &d, 1).unwrap();
+        let mut st = crate::LinearSsm::from_safetensors(&data, "s").unwrap();
+        let mut fp = crate::LinearSsm::from_parts(&a, &b, &c, &d, 1).unwrap();
 
         let input = [1.0_f32, 2.0];
-        let y_st = st.step(&input);
-        let y_fp = fp.step(&input);
+        let y_st = st.predict(&input);
+        let y_fp = fp.predict(&input);
         assert!((y_st - y_fp).abs() < 1e-7, "step 1: st={y_st} fp={y_fp}");
 
-        let y_st2 = st.step(&input);
-        let y_fp2 = fp.step(&input);
+        let y_st2 = st.predict(&input);
+        let y_fp2 = fp.predict(&input);
         assert!(
             (y_st2 - y_fp2).abs() < 1e-7,
             "step 2: st={y_st2} fp={y_fp2}"
@@ -2542,11 +2413,11 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let bnn = crate::BnnF32::from_safetensors(&data, "bnn").unwrap();
-        assert_eq!(bnn.input_size(), i);
-        assert_eq!(bnn.hidden_size(), h);
-        assert_eq!(bnn.output_size(), o);
-        assert_eq!(bnn.num_binary_layers(), 1);
+        let bnn = crate::Bnn::from_safetensors(&data, "bnn").unwrap();
+        assert_eq!(bnn.n_inputs(), i);
+        assert_eq!(bnn.n_hidden(), h);
+        assert_eq!(bnn.n_outputs(), o);
+        assert_eq!(bnn.n_layers(), 1);
     }
 
     #[test]
@@ -2575,9 +2446,9 @@ mod tests {
             ("net.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let bnn = crate::BnnF32::from_safetensors(&data, "net").unwrap();
-        assert_eq!(bnn.num_binary_layers(), 0);
-        assert_eq!(bnn.input_size(), i);
+        let bnn = crate::Bnn::from_safetensors(&data, "net").unwrap();
+        assert_eq!(bnn.n_layers(), 0);
+        assert_eq!(bnn.n_inputs(), i);
     }
 
     #[test]
@@ -2622,7 +2493,7 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let err = crate::BnnF32::from_safetensors(&data, "bnn");
+        let err = crate::Bnn::from_safetensors(&data, "bnn");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2656,7 +2527,7 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let err = crate::BnnF32::from_safetensors(&data, "bnn");
+        let err = crate::Bnn::from_safetensors(&data, "bnn");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2693,7 +2564,7 @@ mod tests {
             ("bnn.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let err = crate::BnnF32::from_safetensors(&data, "bnn");
+        let err = crate::Bnn::from_safetensors(&data, "bnn");
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2731,8 +2602,8 @@ mod tests {
 
         let bw_refs: Vec<&[u64]> = vec![bin_w_u64.as_slice()];
         let bb_refs: Vec<&[f32]> = vec![bin_b.as_slice()];
-        let mut fp =
-            crate::BnnF32::from_parts(&w_in, &b_in, &bw_refs, &bb_refs, &w_out, &b_out, o).unwrap();
+        let fp =
+            crate::Bnn::from_parts(&w_in, &b_in, &bw_refs, &bb_refs, &w_out, &b_out, o).unwrap();
 
         // Build safetensors
         let w_in_b = f32_bytes(&w_in);
@@ -2751,7 +2622,7 @@ mod tests {
             ("b.output_bias", make_view(Dtype::F32, &[o], &b_out_b)),
         ]);
 
-        let mut st = crate::BnnF32::from_safetensors(&data, "b").unwrap();
+        let st = crate::Bnn::from_safetensors(&data, "b").unwrap();
 
         let input = [1.0_f32, -0.5];
         let y_st = st.predict(&input);
@@ -2785,7 +2656,7 @@ mod tests {
             ("t.output.bias", make_view(Dtype::F32, &[o], &bo)),
         ]);
 
-        let err = crate::TinyTcnF32::from_safetensors(&data, "t", crate::Activation::Relu, false);
+        let err = crate::TinyTcn::from_safetensors(&data, "t", crate::Activation::Relu, false);
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 
@@ -2822,10 +2693,10 @@ mod tests {
             ),
         ]);
 
-        let qmlp = crate::QuantizedMlpI8::from_safetensors(&data, "q", crate::Activation::Identity)
-            .unwrap();
-        assert_eq!(qmlp.input_size(), 3);
-        assert_eq!(qmlp.output_size(), 2);
+        let qmlp =
+            crate::QuantizedMlp::from_safetensors(&data, "q", crate::Activation::Identity).unwrap();
+        assert_eq!(qmlp.n_inputs(), 3);
+        assert_eq!(qmlp.n_outputs(), 2);
     }
 
     #[test]
@@ -2857,7 +2728,7 @@ mod tests {
             ("q.layer_2.weight", make_view(Dtype::I8, &[2, 2], &orphan_w)),
         ]);
 
-        let err = crate::QuantizedMlpI8::from_safetensors(&data, "q", crate::Activation::Relu);
+        let err = crate::QuantizedMlp::from_safetensors(&data, "q", crate::Activation::Relu);
         assert!(matches!(err, Err(LoadError::Validation(_))), "got {err:?}");
     }
 }

@@ -2,14 +2,14 @@
 
 **Single-layer LSTM for streaming temporal inference.** Four gates
 (input, forget, cell candidate, output) with hidden and cell state
-carried between steps. Trained externally in PyTorch, loaded via
-`from_parts`, one timestep per `step` call.
+carried between calls. Trained externally in PyTorch, loaded via
+`from_parts`, one timestep per `predict` call.
 
 | Property | Value |
 |----------|-------|
 | Step cost | 105ns (H=8) to 1.3us (H=64) with AVX2+FMA |
 | Memory | Fused `(4H, I+H)` gate matrix + output projection + state |
-| Type | `TinyLstmF32` |
+| Type | `TinyLstm` |
 | Construction | `from_parts(input, hidden, output, weight_ih, weight_hh, bias_ih, bias_hh, w_out, b_out)` |
 | Output | Single scalar or multi-output vector |
 
@@ -48,7 +48,7 @@ Parameters map directly to PyTorch's `nn.LSTM` + `nn.Linear`:
 
 Internally, `from_parts` fuses `weight_ih` and `weight_hh` into a
 single `(4H, I+H)` matrix and pre-sums biases. This enables a
-single matrix-vector product per step instead of two.
+single matrix-vector product per predict instead of two.
 
 ## Gate Activations
 
@@ -65,22 +65,22 @@ with full f32 precision (~1.2e-7 relative error). On AVX2 targets,
 
 NaN inputs propagate through the computation — sigmoid(NaN) = NaN,
 tanh(NaN) = NaN, and arithmetic with NaN produces NaN. The hidden
-and cell state will become NaN and remain so until `reset_state()`.
+and cell state will become NaN and remain so until `reset()`.
 This matches the standard ML convention (caller responsibility).
 
 ## State Management
 
 ```rust
-let mut lstm = TinyLstmF32::from_parts(/* ... */).unwrap();
+let mut lstm = TinyLstm::from_parts(/* ... */).unwrap();
 
 // Process a sequence
-let s1 = lstm.step(&frame_1);   // hidden state initialized to zero
-let s2 = lstm.step(&frame_2);   // carries h and c from previous step
-let s3 = lstm.step(&frame_3);   // accumulates temporal context
+let s1 = lstm.predict(&frame_1);   // hidden state initialized to zero
+let s2 = lstm.predict(&frame_2);   // carries h and c from previous step
+let s3 = lstm.predict(&frame_3);   // accumulates temporal context
 
 // Start a new sequence
-lstm.reset_state();              // clears h and c to zero
-let s1 = lstm.step(&new_frame);  // fresh start
+lstm.reset();              // clears h and c to zero
+let s1 = lstm.predict(&new_frame);  // fresh start
 ```
 
 ## When to Use It
@@ -90,7 +90,7 @@ let s1 = lstm.step(&new_frame);  // fresh start
 - The model needs to selectively remember and forget (regime detection,
   accumulating flow toxicity, tracking session state)
 - You have a PyTorch-trained LSTM with hidden size 8-64
-- Prediction budget is 100ns-2us per step
+- Prediction budget is 100ns-2us per predict
 
 **Don't use LSTM when:**
 - Temporal patterns have a known fixed horizon (use [Causal1dConv](causal1d.md))
@@ -104,7 +104,7 @@ let s1 = lstm.step(&new_frame);  // fresh start
 |----------|------|-----|
 | Gates | 4 (input, forget, cell candidate, output) | 3 (reset, update, candidate) |
 | State | Hidden + cell (separate long-term memory) | Hidden only |
-| Matmuls per step | 1 (fused) | 2 (separate, candidate needs reset between halves) |
+| Matmuls per predict | 1 (fused) | 2 (separate, candidate needs reset between halves) |
 | FMA count | ~33% more than GRU at same H | Baseline |
 | Cache behavior at H=64 | Fused matrix spills L1d | Separate matrices fit L1d |
 | Expressiveness | More — cell state decouples memory from output | Less — hidden state serves both roles |
@@ -118,7 +118,7 @@ both and keep whichever trains better for your task.
 | Operation | Time | Space |
 |-----------|------|-------|
 | Construction | O(4*H*(I+H) + O*H) | Fused weights + state + scratch |
-| `step` | O(4*H*(I+H) + O*H) | No allocation |
+| `predict` | O(4*H*(I+H) + O*H) | No allocation |
 
 | Configuration | FMAs | Latency (AVX2+FMA) |
 |---------------|------|--------------------|

@@ -8,8 +8,6 @@
 // - num_cat > 0: categorical splits not supported
 // - is_linear > 0: linear tree inference requires leaf_const/leaf_coeff/leaf_features
 
-use alloc::{vec, vec::Vec};
-
 use crate::error::LoadError;
 use crate::gbdt::{FEATURE_MASK, Gbdt, LEAF_SENTINEL, RawNode};
 
