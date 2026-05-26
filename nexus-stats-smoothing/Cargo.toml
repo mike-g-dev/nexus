@@ -1,6 +1,6 @@
 [package]
 name = "nexus-stats-smoothing"
-version = "1.2.2"
+version = "1.2.3"
 description = "Advanced smoothing algorithms for nexus-stats: KAMA, Holt, Spring, Kalman1d, WindowedMedian"
 readme = "README.md"
 edition.workspace = true
