@@ -1,8 +1,7 @@
 #![allow(
     clippy::suboptimal_flops,
     clippy::float_cmp,
-    clippy::neg_cmp_op_on_partial_ord,
-    clippy::unreadable_literal
+    clippy::neg_cmp_op_on_partial_ord
 )]
 
 /// Bayesian success rate estimator using the Beta-Binomial conjugate prior.
@@ -156,8 +155,8 @@ impl BetaBinomialF64 {
         // Abramowitz & Stegun 26.2.23 rational approximation
         let t = nexus_stats_core::math::sqrt(-2.0 * nexus_stats_core::math::ln(tail));
         let z = t
-            - (2.515517 + 0.802853 * t + 0.010328 * t * t)
-                / (1.0 + 1.432788 * t + 0.189269 * t * t + 0.001308 * t * t * t);
+            - (2.515_517 + 0.802_853 * t + 0.010_328 * t * t)
+                / (1.0 + 1.432_788 * t + 0.189_269 * t * t + 0.001_308 * t * t * t);
 
         let mean = self.mean();
         let std_dev = nexus_stats_core::math::sqrt(self.variance());
