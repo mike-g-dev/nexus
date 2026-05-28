@@ -1,756 +1,668 @@
 // Transformed Regression — Linearized Fits via ln
 //
 // Thin wrappers around linear regression that apply ln at the API boundary:
-// - Exponential: y = a * e^(bx)  →  ln(y) = ln(a) + bx
-// - Logarithmic: y = a * ln(x) + b  →  y = a * ln(x) + b  (already linear in ln(x))
-// - Power law: y = a * x^b  →  ln(y) = ln(a) + b * ln(x)
+// - Exponential: y = a * e^(bx)  ->  ln(y) = ln(a) + bx
+// - Logarithmic: y = a * ln(x) + b  ->  y = a * ln(x) + b  (already linear in ln(x))
+// - Power law: y = a * x^b  ->  ln(y) = ln(a) + b * ln(x)
 
-use super::linear_regression::{EwLinearRegressionF64, LinearRegressionF32, LinearRegressionF64};
+use super::linear_regression::{EwLinearRegressionF64, LinearRegressionF64};
 
 // ============================================================================
 // Exponential: y = a * e^(bx)
 // ============================================================================
 
-macro_rules! impl_exponential_regression {
-    ($name:ident, $inner:ident, $ty:ty) => {
-        /// Online exponential regression: `y = a · e^(bx)`.
-        ///
-        /// Linearized as `ln(y) = ln(a) + bx` and solved via linear regression.
-        /// Observations with `y <= 0` are silently skipped (ln undefined).
-        ///
-        /// R² is measured in log-space (goodness of fit of `ln(y)` vs `x`).
-        ///
-        /// # Examples
-        ///
-        /// ```
-        #[doc = concat!("use nexus_stats_regression::regression::", stringify!($name), ";")]
-        ///
-        #[doc = concat!("let mut r = ", stringify!($name), "::new();")]
-        /// for x in 0..100 {
-        #[doc = concat!("    let y = 2.0 as ", stringify!($ty), " * (0.05 as ", stringify!($ty), " * x as ", stringify!($ty), ").exp();")]
-        ///     r.update(x as _, y);
-        /// }
-        /// let rate = r.growth_rate().unwrap();
-        /// assert!((rate - 0.05).abs() < 0.01);
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            inner: $inner,
-        }
-
-        impl $name {
-            /// Creates a new empty exponential regression.
-            #[inline]
-            #[must_use]
-            pub fn new() -> Self {
-                Self { inner: $inner::new() }
-            }
-
-            /// Feeds (x, y). Silently skips if `y <= 0`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if x or y is NaN, or
-            /// `DataError::Infinite` if x or y is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                if y > 0.0 as $ty {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_y = nexus_stats_core::math::ln(y as f64) as $ty;
-                    self.inner.update(x, ln_y)?;
-                }
-                Ok(())
-            }
-
-            /// Growth/decay rate (the exponent b), or `None` if not primed.
-            #[must_use]
-            pub fn growth_rate(&self) -> Option<$ty> {
-                self.inner.slope()
-            }
-
-            /// Scale factor `a = e^(intercept)`, or `None` if not primed.
-            #[must_use]
-            pub fn scale(&self) -> Option<$ty> {
-                self.inner.intercept_value().map(|v| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    { nexus_stats_core::math::exp(v as f64) as $ty }
-                })
-            }
-
-            /// R² in log-space.
-            #[must_use]
-            pub fn r_squared(&self) -> Option<$ty> {
-                self.inner.r_squared()
-            }
-
-            /// Predict `y = a · e^(bx)`.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                self.inner.predict(x).map(|ln_y| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    { nexus_stats_core::math::exp(ln_y as f64) as $ty }
-                })
-            }
-
-            /// Number of accepted observations (y > 0).
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.inner.count()
-            }
-
-            /// Whether enough data for a fit (>= 2 observations with y > 0).
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.inner.is_primed()
-            }
-
-            /// Resets to empty state.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.inner.reset();
-            }
-        }
-
-        impl Default for $name {
-            #[inline]
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-    };
+/// Online exponential regression: `y = a * e^(bx)`.
+///
+/// Linearized as `ln(y) = ln(a) + bx` and solved via linear regression.
+/// Observations with `y <= 0` are silently skipped (ln undefined).
+///
+/// R² is measured in log-space (goodness of fit of `ln(y)` vs `x`).
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::regression::ExponentialRegressionF64;
+///
+/// let mut r = ExponentialRegressionF64::new();
+/// for x in 0..100 {
+///     let y = 2.0_f64 * (0.05_f64 * x as f64).exp();
+///     r.update(x as _, y);
+/// }
+/// let rate = r.growth_rate().unwrap();
+/// assert!((rate - 0.05).abs() < 0.01);
+/// ```
+#[derive(Debug, Clone)]
+pub struct ExponentialRegressionF64 {
+    inner: LinearRegressionF64,
 }
 
-impl_exponential_regression!(ExponentialRegressionF64, LinearRegressionF64, f64);
-impl_exponential_regression!(ExponentialRegressionF32, LinearRegressionF32, f32);
+impl ExponentialRegressionF64 {
+    /// Creates a new empty exponential regression.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: LinearRegressionF64::new(),
+        }
+    }
+
+    /// Feeds (x, y). Silently skips if `y <= 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if x or y is NaN, or
+    /// `DataError::Infinite` if x or y is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        if y > 0.0 {
+            let ln_y = nexus_stats_core::math::ln(y);
+            self.inner.update(x, ln_y)?;
+        }
+        Ok(())
+    }
+
+    /// Growth/decay rate (the exponent b), or `None` if not primed.
+    #[must_use]
+    pub fn growth_rate(&self) -> Option<f64> {
+        self.inner.slope()
+    }
+
+    /// Scale factor `a = e^(intercept)`, or `None` if not primed.
+    #[must_use]
+    pub fn scale(&self) -> Option<f64> {
+        self.inner
+            .intercept_value()
+            .map(nexus_stats_core::math::exp)
+    }
+
+    /// R² in log-space.
+    #[must_use]
+    pub fn r_squared(&self) -> Option<f64> {
+        self.inner.r_squared()
+    }
+
+    /// Predict `y = a * e^(bx)`.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        self.inner.predict(x).map(nexus_stats_core::math::exp)
+    }
+
+    /// Number of accepted observations (y > 0).
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.inner.count()
+    }
+
+    /// Whether enough data for a fit (>= 2 observations with y > 0).
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.inner.is_primed()
+    }
+
+    /// Resets to empty state.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+}
+
+impl Default for ExponentialRegressionF64 {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ============================================================================
 // Logarithmic: y = a * ln(x) + b
 // ============================================================================
 
-macro_rules! impl_logarithmic_regression {
-    ($name:ident, $inner:ident, $ty:ty) => {
-        /// Online logarithmic regression: `y = a · ln(x) + b`.
-        ///
-        /// Linearized by substituting `u = ln(x)`, solving `y = a·u + b`.
-        /// Observations with `x <= 0` are silently skipped (ln undefined).
-        ///
-        /// # Examples
-        ///
-        /// ```
-        #[doc = concat!("use nexus_stats_regression::regression::", stringify!($name), ";")]
-        ///
-        #[doc = concat!("let mut r = ", stringify!($name), "::new();")]
-        /// for x in 1..200 {
-        #[doc = concat!("    let y = 3.0 as ", stringify!($ty), " * (x as ", stringify!($ty), ").ln() + 1.0 as ", stringify!($ty), ";")]
-        ///     r.update(x as _, y);
-        /// }
-        /// let slope = r.slope().unwrap();
-        /// assert!((slope - 3.0).abs() < 0.01);
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            inner: $inner,
-        }
-
-        impl $name {
-            /// Creates a new empty logarithmic regression.
-            #[inline]
-            #[must_use]
-            pub fn new() -> Self {
-                Self { inner: $inner::new() }
-            }
-
-            /// Feeds (x, y). Silently skips if `x <= 0`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if x or y is NaN, or
-            /// `DataError::Infinite` if x or y is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                if x > 0.0 as $ty {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_x = nexus_stats_core::math::ln(x as f64) as $ty;
-                    self.inner.update(ln_x, y)?;
-                }
-                Ok(())
-            }
-
-            /// Slope (coefficient of ln(x)), or `None` if not primed.
-            #[must_use]
-            pub fn slope(&self) -> Option<$ty> {
-                self.inner.slope()
-            }
-
-            /// Intercept (constant term b), or `None` if not primed.
-            #[must_use]
-            pub fn intercept_value(&self) -> Option<$ty> {
-                self.inner.intercept_value()
-            }
-
-            /// R² goodness of fit.
-            #[must_use]
-            pub fn r_squared(&self) -> Option<$ty> {
-                self.inner.r_squared()
-            }
-
-            /// Predict `y = a · ln(x) + b`. Returns `None` if not primed or `x <= 0`.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                if x <= 0.0 as $ty {
-                    return Option::None;
-                }
-                #[allow(clippy::cast_possible_truncation)]
-                let ln_x = nexus_stats_core::math::ln(x as f64) as $ty;
-                self.inner.predict(ln_x)
-            }
-
-            /// Number of accepted observations (x > 0).
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.inner.count()
-            }
-
-            #[inline]
-            #[must_use]
-            /// Whether enough data for a fit.
-            pub fn is_primed(&self) -> bool {
-                self.inner.is_primed()
-            }
-
-            /// Resets to empty state.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.inner.reset();
-            }
-        }
-
-        impl Default for $name {
-            #[inline]
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-    };
+/// Online logarithmic regression: `y = a * ln(x) + b`.
+///
+/// Linearized by substituting `u = ln(x)`, solving `y = a*u + b`.
+/// Observations with `x <= 0` are silently skipped (ln undefined).
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::regression::LogarithmicRegressionF64;
+///
+/// let mut r = LogarithmicRegressionF64::new();
+/// for x in 1..200 {
+///     let y = 3.0_f64 * (x as f64).ln() + 1.0_f64;
+///     r.update(x as _, y);
+/// }
+/// let slope = r.slope().unwrap();
+/// assert!((slope - 3.0).abs() < 0.01);
+/// ```
+#[derive(Debug, Clone)]
+pub struct LogarithmicRegressionF64 {
+    inner: LinearRegressionF64,
 }
 
-impl_logarithmic_regression!(LogarithmicRegressionF64, LinearRegressionF64, f64);
-impl_logarithmic_regression!(LogarithmicRegressionF32, LinearRegressionF32, f32);
+impl LogarithmicRegressionF64 {
+    /// Creates a new empty logarithmic regression.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: LinearRegressionF64::new(),
+        }
+    }
+
+    /// Feeds (x, y). Silently skips if `x <= 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if x or y is NaN, or
+    /// `DataError::Infinite` if x or y is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        if x > 0.0 {
+            let ln_x = nexus_stats_core::math::ln(x);
+            self.inner.update(ln_x, y)?;
+        }
+        Ok(())
+    }
+
+    /// Slope (coefficient of ln(x)), or `None` if not primed.
+    #[must_use]
+    pub fn slope(&self) -> Option<f64> {
+        self.inner.slope()
+    }
+
+    /// Intercept (constant term b), or `None` if not primed.
+    #[must_use]
+    pub fn intercept_value(&self) -> Option<f64> {
+        self.inner.intercept_value()
+    }
+
+    /// R² goodness of fit.
+    #[must_use]
+    pub fn r_squared(&self) -> Option<f64> {
+        self.inner.r_squared()
+    }
+
+    /// Predict `y = a * ln(x) + b`. Returns `None` if not primed or `x <= 0`.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        if x <= 0.0 {
+            return None;
+        }
+        let ln_x = nexus_stats_core::math::ln(x);
+        self.inner.predict(ln_x)
+    }
+
+    /// Number of accepted observations (x > 0).
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.inner.count()
+    }
+
+    #[inline]
+    #[must_use]
+    /// Whether enough data for a fit.
+    pub fn is_primed(&self) -> bool {
+        self.inner.is_primed()
+    }
+
+    /// Resets to empty state.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+}
+
+impl Default for LogarithmicRegressionF64 {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ============================================================================
 // Power Law: y = a * x^b
 // ============================================================================
 
-macro_rules! impl_power_regression {
-    ($name:ident, $inner:ident, $ty:ty) => {
-        /// Online power law regression: `y = a · x^b`.
-        ///
-        /// Linearized as `ln(y) = ln(a) + b · ln(x)`. Observations with
-        /// `x <= 0` or `y <= 0` are silently skipped.
-        ///
-        /// R² is measured in log-log space.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        #[doc = concat!("use nexus_stats_regression::regression::", stringify!($name), ";")]
-        ///
-        #[doc = concat!("let mut r = ", stringify!($name), "::new();")]
-        /// for x in 1..200 {
-        #[doc = concat!("    let y = 4.0 as ", stringify!($ty), " * (x as ", stringify!($ty), ").powf(2.5);")]
-        ///     r.update(x as _, y);
-        /// }
-        /// let exp = r.exponent().unwrap();
-        /// assert!((exp - 2.5).abs() < 0.01);
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            inner: $inner,
-        }
-
-        impl $name {
-            /// Creates a new empty power law regression.
-            #[inline]
-            #[must_use]
-            pub fn new() -> Self {
-                Self { inner: $inner::new() }
-            }
-
-            /// Feeds (x, y). Silently skips if `x <= 0` or `y <= 0`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if x or y is NaN, or
-            /// `DataError::Infinite` if x or y is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                if x > 0.0 as $ty && y > 0.0 as $ty {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_x = nexus_stats_core::math::ln(x as f64) as $ty;
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_y = nexus_stats_core::math::ln(y as f64) as $ty;
-                    self.inner.update(ln_x, ln_y)?;
-                }
-                Ok(())
-            }
-
-            /// Exponent (the power b), or `None` if not primed.
-            #[must_use]
-            pub fn exponent(&self) -> Option<$ty> {
-                self.inner.slope()
-            }
-
-            /// Scale factor `a = e^(intercept)`, or `None` if not primed.
-            #[must_use]
-            pub fn scale(&self) -> Option<$ty> {
-                self.inner.intercept_value().map(|v| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    { nexus_stats_core::math::exp(v as f64) as $ty }
-                })
-            }
-
-            /// R² in log-log space.
-            #[must_use]
-            pub fn r_squared(&self) -> Option<$ty> {
-                self.inner.r_squared()
-            }
-
-            /// Predict `y = a · x^b`. Returns `None` if not primed or `x <= 0`.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                if x <= 0.0 as $ty {
-                    return Option::None;
-                }
-                let intercept = self.inner.intercept_value()?;
-                let slope = self.inner.slope()?;
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    let a = nexus_stats_core::math::exp(intercept as f64);
-                    let b = slope as f64;
-                    let result = a * (x as f64).powf(b);
-                    Option::Some(result as $ty)
-                }
-            }
-
-            /// Number of accepted observations.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.inner.count()
-            }
-
-            #[inline]
-            #[must_use]
-            /// Whether enough data for a fit.
-            pub fn is_primed(&self) -> bool {
-                self.inner.is_primed()
-            }
-
-            /// Resets to empty state.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.inner.reset();
-            }
-        }
-
-        impl Default for $name {
-            #[inline]
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-    };
+/// Online power law regression: `y = a * x^b`.
+///
+/// Linearized as `ln(y) = ln(a) + b * ln(x)`. Observations with
+/// `x <= 0` or `y <= 0` are silently skipped.
+///
+/// R² is measured in log-log space.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::regression::PowerRegressionF64;
+///
+/// let mut r = PowerRegressionF64::new();
+/// for x in 1..200 {
+///     let y = 4.0_f64 * (x as f64).powf(2.5);
+///     r.update(x as _, y);
+/// }
+/// let exp = r.exponent().unwrap();
+/// assert!((exp - 2.5).abs() < 0.01);
+/// ```
+#[derive(Debug, Clone)]
+pub struct PowerRegressionF64 {
+    inner: LinearRegressionF64,
 }
 
-impl_power_regression!(PowerRegressionF64, LinearRegressionF64, f64);
-impl_power_regression!(PowerRegressionF32, LinearRegressionF32, f32);
+impl PowerRegressionF64 {
+    /// Creates a new empty power law regression.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: LinearRegressionF64::new(),
+        }
+    }
+
+    /// Feeds (x, y). Silently skips if `x <= 0` or `y <= 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if x or y is NaN, or
+    /// `DataError::Infinite` if x or y is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        if x > 0.0 && y > 0.0 {
+            let ln_x = nexus_stats_core::math::ln(x);
+            let ln_y = nexus_stats_core::math::ln(y);
+            self.inner.update(ln_x, ln_y)?;
+        }
+        Ok(())
+    }
+
+    /// Exponent (the power b), or `None` if not primed.
+    #[must_use]
+    pub fn exponent(&self) -> Option<f64> {
+        self.inner.slope()
+    }
+
+    /// Scale factor `a = e^(intercept)`, or `None` if not primed.
+    #[must_use]
+    pub fn scale(&self) -> Option<f64> {
+        self.inner
+            .intercept_value()
+            .map(nexus_stats_core::math::exp)
+    }
+
+    /// R² in log-log space.
+    #[must_use]
+    pub fn r_squared(&self) -> Option<f64> {
+        self.inner.r_squared()
+    }
+
+    /// Predict `y = a * x^b`. Returns `None` if not primed or `x <= 0`.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        if x <= 0.0 {
+            return None;
+        }
+        let intercept = self.inner.intercept_value()?;
+        let slope = self.inner.slope()?;
+        let a = nexus_stats_core::math::exp(intercept);
+        let result = a * x.powf(slope);
+        Some(result)
+    }
+
+    /// Number of accepted observations.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.inner.count()
+    }
+
+    #[inline]
+    #[must_use]
+    /// Whether enough data for a fit.
+    pub fn is_primed(&self) -> bool {
+        self.inner.is_primed()
+    }
+
+    /// Resets to empty state.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+}
+
+impl Default for PowerRegressionF64 {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ============================================================================
 // EW Transformed Variants
 // ============================================================================
 
-macro_rules! impl_ew_exponential_regression {
-    ($name:ident, $builder:ident, $inner:ident, $ty:ty) => {
-        /// Exponentially-weighted exponential regression: `y = a · e^(bx)`.
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            inner: $inner,
-        }
-
-        #[doc = concat!("Builder for [`", stringify!($name), "`].")]
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            alpha: Option<$ty>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    alpha: Option::None,
-                }
-            }
-
-            /// Feeds (x, y). Silently skips if `y <= 0`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if x or y is NaN, or
-            /// `DataError::Infinite` if x or y is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                if y > 0.0 as $ty {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_y = nexus_stats_core::math::ln(y as f64) as $ty;
-                    self.inner.update(x, ln_y)?;
-                }
-                Ok(())
-            }
-
-            /// Growth/decay rate.
-            #[must_use]
-            pub fn growth_rate(&self) -> Option<$ty> {
-                self.inner.slope()
-            }
-
-            /// Scale factor `a = e^(intercept)`.
-            #[must_use]
-            pub fn scale(&self) -> Option<$ty> {
-                self.inner.intercept_value().map(|v| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        nexus_stats_core::math::exp(v as f64) as $ty
-                    }
-                })
-            }
-
-            /// R² in log-space.
-            #[must_use]
-            pub fn r_squared(&self) -> Option<$ty> {
-                self.inner.r_squared()
-            }
-
-            /// Predict `y = a · e^(bx)`.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                self.inner.predict(x).map(|ln_y| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        nexus_stats_core::math::exp(ln_y as f64) as $ty
-                    }
-                })
-            }
-
-            /// Number of accepted observations.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.inner.count()
-            }
-
-            #[inline]
-            #[must_use]
-            /// Whether primed.
-            pub fn is_primed(&self) -> bool {
-                self.inner.is_primed()
-            }
-
-            /// Reset.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.inner.reset();
-            }
-        }
-
-        impl $builder {
-            /// Weight on new observation, in (0, 1).
-            #[inline]
-            #[must_use]
-            pub fn alpha(mut self, alpha: $ty) -> Self {
-                self.alpha = Option::Some(alpha);
-                self
-            }
-
-            /// Builds the estimator.
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let alpha = self
-                    .alpha
-                    .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
-                let inner = $inner::builder().alpha(alpha).build()?;
-                Ok($name { inner })
-            }
-        }
-    };
+/// Exponentially-weighted exponential regression: `y = a * e^(bx)`.
+#[derive(Debug, Clone)]
+pub struct EwExponentialRegressionF64 {
+    inner: EwLinearRegressionF64,
 }
 
-impl_ew_exponential_regression!(
-    EwExponentialRegressionF64,
-    EwExponentialRegressionF64Builder,
-    EwLinearRegressionF64,
-    f64
-);
-
-macro_rules! impl_ew_logarithmic_regression {
-    ($name:ident, $builder:ident, $inner:ident, $ty:ty) => {
-        /// Exponentially-weighted logarithmic regression: `y = a · ln(x) + b`.
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            inner: $inner,
-        }
-
-        #[doc = concat!("Builder for [`", stringify!($name), "`].")]
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            alpha: Option<$ty>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    alpha: Option::None,
-                }
-            }
-
-            /// Feeds (x, y). Silently skips if `x <= 0`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if x or y is NaN, or
-            /// `DataError::Infinite` if x or y is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                if x > 0.0 as $ty {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_x = nexus_stats_core::math::ln(x as f64) as $ty;
-                    self.inner.update(ln_x, y)?;
-                }
-                Ok(())
-            }
-
-            /// Slope (coefficient of ln(x)).
-            #[must_use]
-            pub fn slope(&self) -> Option<$ty> {
-                self.inner.slope()
-            }
-
-            /// Intercept.
-            #[must_use]
-            pub fn intercept_value(&self) -> Option<$ty> {
-                self.inner.intercept_value()
-            }
-
-            /// R².
-            #[must_use]
-            pub fn r_squared(&self) -> Option<$ty> {
-                self.inner.r_squared()
-            }
-
-            /// Predict `y = a · ln(x) + b`.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                if x <= 0.0 as $ty {
-                    return Option::None;
-                }
-                #[allow(clippy::cast_possible_truncation)]
-                let ln_x = nexus_stats_core::math::ln(x as f64) as $ty;
-                self.inner.predict(ln_x)
-            }
-
-            #[inline]
-            #[must_use]
-            /// Count.
-            pub fn count(&self) -> u64 {
-                self.inner.count()
-            }
-            #[inline]
-            #[must_use]
-            /// Primed.
-            pub fn is_primed(&self) -> bool {
-                self.inner.is_primed()
-            }
-            /// Reset.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.inner.reset();
-            }
-        }
-
-        impl $builder {
-            /// Alpha.
-            #[inline]
-            #[must_use]
-            pub fn alpha(mut self, alpha: $ty) -> Self {
-                self.alpha = Option::Some(alpha);
-                self
-            }
-
-            /// Build.
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let alpha = self
-                    .alpha
-                    .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
-                let inner = $inner::builder().alpha(alpha).build()?;
-                Ok($name { inner })
-            }
-        }
-    };
+/// Builder for [`EwExponentialRegressionF64`].
+#[derive(Debug, Clone)]
+pub struct EwExponentialRegressionF64Builder {
+    alpha: Option<f64>,
 }
 
-impl_ew_logarithmic_regression!(
-    EwLogarithmicRegressionF64,
-    EwLogarithmicRegressionF64Builder,
-    EwLinearRegressionF64,
-    f64
-);
+impl EwExponentialRegressionF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> EwExponentialRegressionF64Builder {
+        EwExponentialRegressionF64Builder { alpha: None }
+    }
 
-macro_rules! impl_ew_power_regression {
-    ($name:ident, $builder:ident, $inner:ident, $ty:ty) => {
-        /// Exponentially-weighted power law regression: `y = a · x^b`.
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            inner: $inner,
+    /// Feeds (x, y). Silently skips if `y <= 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if x or y is NaN, or
+    /// `DataError::Infinite` if x or y is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        if y > 0.0 {
+            let ln_y = nexus_stats_core::math::ln(y);
+            self.inner.update(x, ln_y)?;
         }
+        Ok(())
+    }
 
-        #[doc = concat!("Builder for [`", stringify!($name), "`].")]
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            alpha: Option<$ty>,
-        }
+    /// Growth/decay rate.
+    #[must_use]
+    pub fn growth_rate(&self) -> Option<f64> {
+        self.inner.slope()
+    }
 
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    alpha: Option::None,
-                }
-            }
+    /// Scale factor `a = e^(intercept)`.
+    #[must_use]
+    pub fn scale(&self) -> Option<f64> {
+        self.inner
+            .intercept_value()
+            .map(nexus_stats_core::math::exp)
+    }
 
-            /// Feeds (x, y). Silently skips if `x <= 0` or `y <= 0`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if x or y is NaN, or
-            /// `DataError::Infinite` if x or y is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                if x > 0.0 as $ty && y > 0.0 as $ty {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_x = nexus_stats_core::math::ln(x as f64) as $ty;
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ln_y = nexus_stats_core::math::ln(y as f64) as $ty;
-                    self.inner.update(ln_x, ln_y)?;
-                }
-                Ok(())
-            }
+    /// R² in log-space.
+    #[must_use]
+    pub fn r_squared(&self) -> Option<f64> {
+        self.inner.r_squared()
+    }
 
-            /// Exponent b.
-            #[must_use]
-            pub fn exponent(&self) -> Option<$ty> {
-                self.inner.slope()
-            }
+    /// Predict `y = a * e^(bx)`.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        self.inner.predict(x).map(nexus_stats_core::math::exp)
+    }
 
-            /// Scale `a = e^(intercept)`.
-            #[must_use]
-            pub fn scale(&self) -> Option<$ty> {
-                self.inner.intercept_value().map(|v| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        nexus_stats_core::math::exp(v as f64) as $ty
-                    }
-                })
-            }
+    /// Number of accepted observations.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.inner.count()
+    }
 
-            /// R² in log-log space.
-            #[must_use]
-            pub fn r_squared(&self) -> Option<$ty> {
-                self.inner.r_squared()
-            }
+    #[inline]
+    #[must_use]
+    /// Whether primed.
+    pub fn is_primed(&self) -> bool {
+        self.inner.is_primed()
+    }
 
-            /// Predict `y = a · x^b`.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                if x <= 0.0 as $ty {
-                    return Option::None;
-                }
-                let intercept = self.inner.intercept_value()?;
-                let slope = self.inner.slope()?;
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    let a = nexus_stats_core::math::exp(intercept as f64);
-                    let b = slope as f64;
-                    let result = a * (x as f64).powf(b);
-                    Option::Some(result as $ty)
-                }
-            }
-
-            #[inline]
-            #[must_use]
-            /// Count.
-            pub fn count(&self) -> u64 {
-                self.inner.count()
-            }
-            #[inline]
-            #[must_use]
-            /// Primed.
-            pub fn is_primed(&self) -> bool {
-                self.inner.is_primed()
-            }
-            /// Reset.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.inner.reset();
-            }
-        }
-
-        impl $builder {
-            /// Alpha.
-            #[inline]
-            #[must_use]
-            pub fn alpha(mut self, alpha: $ty) -> Self {
-                self.alpha = Option::Some(alpha);
-                self
-            }
-
-            /// Build.
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let alpha = self
-                    .alpha
-                    .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
-                let inner = $inner::builder().alpha(alpha).build()?;
-                Ok($name { inner })
-            }
-        }
-    };
+    /// Reset.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
 }
 
-impl_ew_power_regression!(
-    EwPowerRegressionF64,
-    EwPowerRegressionF64Builder,
-    EwLinearRegressionF64,
-    f64
-);
+impl EwExponentialRegressionF64Builder {
+    /// Weight on new observation, in (0, 1).
+    #[inline]
+    #[must_use]
+    pub fn alpha(mut self, alpha: f64) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
+    /// Builds the estimator.
+    pub fn build(self) -> Result<EwExponentialRegressionF64, nexus_stats_core::ConfigError> {
+        let alpha = self
+            .alpha
+            .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
+        let inner = EwLinearRegressionF64::builder().alpha(alpha).build()?;
+        Ok(EwExponentialRegressionF64 { inner })
+    }
+}
+
+/// Exponentially-weighted logarithmic regression: `y = a * ln(x) + b`.
+#[derive(Debug, Clone)]
+pub struct EwLogarithmicRegressionF64 {
+    inner: EwLinearRegressionF64,
+}
+
+/// Builder for [`EwLogarithmicRegressionF64`].
+#[derive(Debug, Clone)]
+pub struct EwLogarithmicRegressionF64Builder {
+    alpha: Option<f64>,
+}
+
+impl EwLogarithmicRegressionF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> EwLogarithmicRegressionF64Builder {
+        EwLogarithmicRegressionF64Builder { alpha: None }
+    }
+
+    /// Feeds (x, y). Silently skips if `x <= 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if x or y is NaN, or
+    /// `DataError::Infinite` if x or y is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        if x > 0.0 {
+            let ln_x = nexus_stats_core::math::ln(x);
+            self.inner.update(ln_x, y)?;
+        }
+        Ok(())
+    }
+
+    /// Slope (coefficient of ln(x)).
+    #[must_use]
+    pub fn slope(&self) -> Option<f64> {
+        self.inner.slope()
+    }
+
+    /// Intercept.
+    #[must_use]
+    pub fn intercept_value(&self) -> Option<f64> {
+        self.inner.intercept_value()
+    }
+
+    /// R².
+    #[must_use]
+    pub fn r_squared(&self) -> Option<f64> {
+        self.inner.r_squared()
+    }
+
+    /// Predict `y = a * ln(x) + b`.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        if x <= 0.0 {
+            return None;
+        }
+        let ln_x = nexus_stats_core::math::ln(x);
+        self.inner.predict(ln_x)
+    }
+
+    #[inline]
+    #[must_use]
+    /// Count.
+    pub fn count(&self) -> u64 {
+        self.inner.count()
+    }
+    #[inline]
+    #[must_use]
+    /// Primed.
+    pub fn is_primed(&self) -> bool {
+        self.inner.is_primed()
+    }
+    /// Reset.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+}
+
+impl EwLogarithmicRegressionF64Builder {
+    /// Alpha.
+    #[inline]
+    #[must_use]
+    pub fn alpha(mut self, alpha: f64) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
+    /// Build.
+    pub fn build(self) -> Result<EwLogarithmicRegressionF64, nexus_stats_core::ConfigError> {
+        let alpha = self
+            .alpha
+            .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
+        let inner = EwLinearRegressionF64::builder().alpha(alpha).build()?;
+        Ok(EwLogarithmicRegressionF64 { inner })
+    }
+}
+
+/// Exponentially-weighted power law regression: `y = a * x^b`.
+#[derive(Debug, Clone)]
+pub struct EwPowerRegressionF64 {
+    inner: EwLinearRegressionF64,
+}
+
+/// Builder for [`EwPowerRegressionF64`].
+#[derive(Debug, Clone)]
+pub struct EwPowerRegressionF64Builder {
+    alpha: Option<f64>,
+}
+
+impl EwPowerRegressionF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> EwPowerRegressionF64Builder {
+        EwPowerRegressionF64Builder { alpha: None }
+    }
+
+    /// Feeds (x, y). Silently skips if `x <= 0` or `y <= 0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if x or y is NaN, or
+    /// `DataError::Infinite` if x or y is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        if x > 0.0 && y > 0.0 {
+            let ln_x = nexus_stats_core::math::ln(x);
+            let ln_y = nexus_stats_core::math::ln(y);
+            self.inner.update(ln_x, ln_y)?;
+        }
+        Ok(())
+    }
+
+    /// Exponent b.
+    #[must_use]
+    pub fn exponent(&self) -> Option<f64> {
+        self.inner.slope()
+    }
+
+    /// Scale `a = e^(intercept)`.
+    #[must_use]
+    pub fn scale(&self) -> Option<f64> {
+        self.inner
+            .intercept_value()
+            .map(nexus_stats_core::math::exp)
+    }
+
+    /// R² in log-log space.
+    #[must_use]
+    pub fn r_squared(&self) -> Option<f64> {
+        self.inner.r_squared()
+    }
+
+    /// Predict `y = a * x^b`.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        if x <= 0.0 {
+            return None;
+        }
+        let intercept = self.inner.intercept_value()?;
+        let slope = self.inner.slope()?;
+        let a = nexus_stats_core::math::exp(intercept);
+        let result = a * x.powf(slope);
+        Some(result)
+    }
+
+    #[inline]
+    #[must_use]
+    /// Count.
+    pub fn count(&self) -> u64 {
+        self.inner.count()
+    }
+    #[inline]
+    #[must_use]
+    /// Primed.
+    pub fn is_primed(&self) -> bool {
+        self.inner.is_primed()
+    }
+    /// Reset.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+}
+
+impl EwPowerRegressionF64Builder {
+    /// Alpha.
+    #[inline]
+    #[must_use]
+    pub fn alpha(mut self, alpha: f64) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
+    /// Build.
+    pub fn build(self) -> Result<EwPowerRegressionF64, nexus_stats_core::ConfigError> {
+        let alpha = self
+            .alpha
+            .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
+        let inner = EwLinearRegressionF64::builder().alpha(alpha).build()?;
+        Ok(EwPowerRegressionF64 { inner })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -892,38 +804,6 @@ mod tests {
             r.update(x as f64, 3.0 * (x as f64).powf(1.5)).unwrap();
         }
         assert!(r.is_primed());
-    }
-
-    // =========================================================================
-    // f32 variants
-    // =========================================================================
-
-    #[test]
-    fn f32_exponential() {
-        let mut r = ExponentialRegressionF32::new();
-        for x in 0..100u32 {
-            let xf = x as f32;
-            r.update(xf, 2.0 * (0.05 * xf).exp()).unwrap();
-        }
-        assert!(r.growth_rate().is_some());
-    }
-
-    #[test]
-    fn f32_logarithmic() {
-        let mut r = LogarithmicRegressionF32::new();
-        for x in 1..100u32 {
-            r.update(x as f32, 3.0 * (x as f32).ln() + 1.0).unwrap();
-        }
-        assert!(r.slope().is_some());
-    }
-
-    #[test]
-    fn f32_power() {
-        let mut r = PowerRegressionF32::new();
-        for x in 1..100u32 {
-            r.update(x as f32, 4.0 * (x as f32).powf(2.0)).unwrap();
-        }
-        assert!(r.exponent().is_some());
     }
 
     // =========================================================================

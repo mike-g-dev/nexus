@@ -2,333 +2,326 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec;
 
-macro_rules! impl_exp3 {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// EXP3 adversarial bandit.
-        ///
-        /// Exponential-weight algorithm for Exploration and Exploitation.
-        /// Unlike UCB1/Thompson which assume stochastic rewards, EXP3
-        /// makes no assumptions about how rewards are generated — they
-        /// can be adversarial.
-        ///
-        /// Selection probability: `p_i = (1 - gamma) * w_i / sum(w) + gamma / K`
-        ///
-        /// Weight update (log-space): `ln(w_i) += eta * reward / (K * p_i)`
-        ///
-        /// Internally stores log-weights for numerical stability. No
-        /// overflow possible regardless of learning rate or horizon.
-        ///
-        /// Auer, Cesa-Bianchi, Freund, Schapire (2002).
-        ///
-        /// # Parameters
-        ///
-        /// - `arms` — number of arms K (>= 2)
-        /// - `gamma` — exploration mixing rate, in (0, 1]. Higher = more uniform.
-        /// - `eta` — learning rate (default: gamma)
-        ///
-        /// # Reward range
-        ///
-        /// Rewards must be in [0, 1]. Normalize before feeding.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use nexus_stats_regression::learning::Exp3F64;
-        ///
-        /// let mut bandit = Exp3F64::builder()
-        ///     .arms(3)
-        ///     .gamma(0.1)
-        ///     .build()
-        ///     .unwrap();
-        ///
-        /// let mut s: u64 = 42;
-        /// let mut rng = || -> f64 {
-        ///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
-        ///     (s >> 33) as f64 / (1u64 << 31) as f64
-        /// };
-        /// let (arm, prob) = bandit.select(&mut rng);
-        /// bandit.update(arm, 0.8, prob).unwrap();
-        /// ```
-        #[derive(Debug)]
-        pub struct $name {
-            log_weights: Box<[$ty]>,
-            scratch: core::cell::UnsafeCell<Box<[$ty]>>,
-            gamma: $ty,
-            eta: $ty,
-            total_pulls: u64,
-            num_arms: usize,
-            min_samples: u64,
-        }
-
-        impl Clone for $name {
-            fn clone(&self) -> Self {
-                Self {
-                    log_weights: self.log_weights.clone(),
-                    scratch: core::cell::UnsafeCell::new(
-                        vec![0.0 as $ty; self.num_arms].into_boxed_slice(),
-                    ),
-                    gamma: self.gamma,
-                    eta: self.eta,
-                    total_pulls: self.total_pulls,
-                    num_arms: self.num_arms,
-                    min_samples: self.min_samples,
-                }
-            }
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            arms: Option<usize>,
-            gamma: Option<$ty>,
-            eta: Option<$ty>,
-            min_samples: Option<u64>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    arms: Option::None,
-                    gamma: Option::None,
-                    eta: Option::None,
-                    min_samples: Option::None,
-                }
-            }
-
-            /// Samples an arm proportional to mixed weights.
-            ///
-            /// Returns `(arm_index, selection_probability)`. The caller
-            /// must pass the probability back to `update()`.
-            ///
-            /// Uses log-sum-exp with a cached scratch buffer to avoid
-            /// recomputing exp() values during CDF sampling.
-            #[must_use]
-            #[allow(clippy::suboptimal_flops, clippy::cast_possible_truncation)]
-            pub fn select(&self, rng: &mut impl FnMut() -> $ty) -> (usize, $ty) {
-                let k = self.num_arms as $ty;
-                let gamma = self.gamma;
-
-                // SAFETY: scratch is a write-only cache derived from log_weights.
-                // No reference escapes this method and select() is not reentrant.
-                let scratch = unsafe { &mut *self.scratch.get() };
-
-                let max_lw = self.log_weights.iter().copied()
-                    .fold(-(1.0 as $ty / 0.0 as $ty), |a, b| if a > b { a } else { b });
-
-                // Compute exp values into scratch, accumulate sum (K exp calls)
-                let mut sum_exp = 0.0 as $ty;
-                for (s, &lw) in scratch.iter_mut().zip(self.log_weights.iter()) {
-                    *s = nexus_stats_core::math::exp((lw - max_lw) as f64) as $ty;
-                    sum_exp += *s;
-                }
-
-                let scale = (1.0 as $ty - gamma) / sum_exp;
-                let gamma_over_k = gamma / k;
-                let u = rng();
-                let mut cumulative = 0.0 as $ty;
-
-                // CDF sampling from cached exp values — no exp() calls
-                for (i, &exp_w) in scratch.iter().enumerate() {
-                    let p_i = exp_w * scale + gamma_over_k;
-                    cumulative += p_i;
-                    if u < cumulative {
-                        return (i, p_i);
-                    }
-                }
-
-                let last = self.num_arms - 1;
-                let p_last = scratch[last] * scale + gamma_over_k;
-                (last, p_last)
-            }
-
-            /// Records a reward for the selected arm.
-            ///
-            /// `prob` is the selection probability returned by `select()`.
-            /// Log-weight update: `ln(w_arm) += eta * reward / (K * prob)`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError` if reward is NaN, infinite, or outside [0, 1],
-            /// or if prob is NaN, infinite, or <= 0.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `arm >= num_arms`.
-            #[inline]
-            pub fn update(
-                &mut self,
-                arm: usize,
-                reward: $ty,
-                prob: $ty,
-            ) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(reward);
-                if reward < 0.0 as $ty || reward > 1.0 as $ty {
-                    return Err(nexus_stats_core::DataError::Negative);
-                }
-                check_finite!(prob);
-                if prob <= 0.0 as $ty {
-                    return Err(nexus_stats_core::DataError::Negative);
-                }
-                assert!(
-                    arm < self.num_arms,
-                    "arm {arm} >= num_arms {}",
-                    self.num_arms
-                );
-
-                let k = self.num_arms as $ty;
-                self.log_weights[arm] += self.eta * reward / (k * prob);
-                self.total_pulls += 1;
-                Ok(())
-            }
-
-            /// Writes the current probability distribution into `out`.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `out.len() != num_arms`.
-            #[allow(clippy::suboptimal_flops, clippy::cast_possible_truncation)]
-            pub fn probabilities(&self, out: &mut [$ty]) {
-                assert_eq!(
-                    out.len(),
-                    self.num_arms,
-                    "output length {} != num_arms {}",
-                    out.len(),
-                    self.num_arms,
-                );
-                let k = self.num_arms as $ty;
-                let gamma = self.gamma;
-
-                // Log-sum-exp: use output buffer as scratch for exp values
-                let max_lw = self.log_weights.iter().copied()
-                    .fold(-(1.0 as $ty / 0.0 as $ty), |a, b| if a > b { a } else { b });
-                let mut sum_exp = 0.0 as $ty;
-                for (o, &lw) in out.iter_mut().zip(self.log_weights.iter()) {
-                    *o = nexus_stats_core::math::exp((lw - max_lw) as f64) as $ty;
-                    sum_exp += *o;
-                }
-                let scale = (1.0 as $ty - gamma) / sum_exp;
-                let gamma_over_k = gamma / k;
-                for o in out.iter_mut() {
-                    *o = *o * scale + gamma_over_k;
-                }
-            }
-
-            /// Total pulls across all arms.
-            #[inline]
-            #[must_use]
-            pub fn total_pulls(&self) -> u64 {
-                self.total_pulls
-            }
-
-            /// Number of arms.
-            #[inline]
-            #[must_use]
-            pub fn num_arms(&self) -> usize {
-                self.num_arms
-            }
-
-            /// Whether total pulls >= min_samples.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.total_pulls >= self.min_samples
-            }
-
-            /// Returns the number of updates performed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.total_pulls
-            }
-
-            /// Resets log-weights to uniform (all zero = equal weight).
-            #[inline]
-            pub fn reset(&mut self) {
-                self.log_weights.fill(0.0 as $ty);
-                self.total_pulls = 0;
-            }
-        }
-
-        impl $builder {
-            /// Sets the number of arms (required, >= 2).
-            #[inline]
-            #[must_use]
-            pub fn arms(mut self, n: usize) -> Self {
-                self.arms = Option::Some(n);
-                self
-            }
-
-            /// Sets the exploration mixing rate (required, in (0, 1]).
-            #[inline]
-            #[must_use]
-            pub fn gamma(mut self, g: $ty) -> Self {
-                self.gamma = Option::Some(g);
-                self
-            }
-
-            /// Sets the learning rate (default: gamma, must be > 0).
-            #[inline]
-            #[must_use]
-            pub fn eta(mut self, e: $ty) -> Self {
-                self.eta = Option::Some(e);
-                self
-            }
-
-            /// Sets the minimum samples before `is_primed()` returns true.
-            #[inline]
-            #[must_use]
-            pub fn min_samples(mut self, n: u64) -> Self {
-                self.min_samples = Option::Some(n);
-                self
-            }
-
-            /// Builds the bandit.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let arms = self
-                    .arms
-                    .ok_or(nexus_stats_core::ConfigError::Missing("arms"))?;
-                let gamma = self
-                    .gamma
-                    .ok_or(nexus_stats_core::ConfigError::Missing("gamma"))?;
-                if arms < 2 {
-                    return Err(nexus_stats_core::ConfigError::Invalid("arms must be >= 2"));
-                }
-                if gamma <= 0.0 as $ty || gamma > 1.0 as $ty || !gamma.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "gamma must be in (0, 1]",
-                    ));
-                }
-                let eta = self.eta.unwrap_or(gamma);
-                if eta <= 0.0 as $ty || !eta.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "eta must be positive and finite",
-                    ));
-                }
-                let min_samples = self.min_samples.unwrap_or(arms as u64);
-                Ok($name {
-                    log_weights: vec![0.0 as $ty; arms].into_boxed_slice(),
-                    scratch: core::cell::UnsafeCell::new(
-                        vec![0.0 as $ty; arms].into_boxed_slice(),
-                    ),
-                    gamma,
-                    eta,
-                    total_pulls: 0,
-                    num_arms: arms,
-                    min_samples,
-                })
-            }
-        }
-    };
+/// EXP3 adversarial bandit.
+///
+/// Exponential-weight algorithm for Exploration and Exploitation.
+/// Unlike UCB1/Thompson which assume stochastic rewards, EXP3
+/// makes no assumptions about how rewards are generated — they
+/// can be adversarial.
+///
+/// Selection probability: `p_i = (1 - gamma) * w_i / sum(w) + gamma / K`
+///
+/// Weight update (log-space): `ln(w_i) += eta * reward / (K * p_i)`
+///
+/// Internally stores log-weights for numerical stability. No
+/// overflow possible regardless of learning rate or horizon.
+///
+/// Auer, Cesa-Bianchi, Freund, Schapire (2002).
+///
+/// # Parameters
+///
+/// - `arms` — number of arms K (>= 2)
+/// - `gamma` — exploration mixing rate, in (0, 1]. Higher = more uniform.
+/// - `eta` — learning rate (default: gamma)
+///
+/// # Reward range
+///
+/// Rewards must be in [0, 1]. Normalize before feeding.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::learning::Exp3F64;
+///
+/// let mut bandit = Exp3F64::builder()
+///     .arms(3)
+///     .gamma(0.1)
+///     .build()
+///     .unwrap();
+///
+/// let mut s: u64 = 42;
+/// let mut rng = || -> f64 {
+///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     (s >> 33) as f64 / (1u64 << 31) as f64
+/// };
+/// let (arm, prob) = bandit.select(&mut rng);
+/// bandit.update(arm, 0.8, prob).unwrap();
+/// ```
+#[derive(Debug)]
+pub struct Exp3F64 {
+    log_weights: Box<[f64]>,
+    scratch: core::cell::UnsafeCell<Box<[f64]>>,
+    gamma: f64,
+    eta: f64,
+    total_pulls: u64,
+    num_arms: usize,
+    min_samples: u64,
 }
 
-impl_exp3!(Exp3F64, Exp3F64Builder, f64);
-impl_exp3!(Exp3F32, Exp3F32Builder, f32);
+impl Clone for Exp3F64 {
+    fn clone(&self) -> Self {
+        Self {
+            log_weights: self.log_weights.clone(),
+            scratch: core::cell::UnsafeCell::new(vec![0.0; self.num_arms].into_boxed_slice()),
+            gamma: self.gamma,
+            eta: self.eta,
+            total_pulls: self.total_pulls,
+            num_arms: self.num_arms,
+            min_samples: self.min_samples,
+        }
+    }
+}
+
+/// Builder for [`Exp3F64`].
+#[derive(Debug, Clone)]
+pub struct Exp3F64Builder {
+    arms: Option<usize>,
+    gamma: Option<f64>,
+    eta: Option<f64>,
+    min_samples: Option<u64>,
+}
+
+impl Exp3F64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> Exp3F64Builder {
+        Exp3F64Builder {
+            arms: None,
+            gamma: None,
+            eta: None,
+            min_samples: None,
+        }
+    }
+
+    /// Samples an arm proportional to mixed weights.
+    ///
+    /// Returns `(arm_index, selection_probability)`. The caller
+    /// must pass the probability back to `update()`.
+    ///
+    /// Uses log-sum-exp with a cached scratch buffer to avoid
+    /// recomputing exp() values during CDF sampling.
+    #[must_use]
+    #[allow(clippy::suboptimal_flops)]
+    pub fn select(&self, rng: &mut impl FnMut() -> f64) -> (usize, f64) {
+        let k = self.num_arms as f64;
+        let gamma = self.gamma;
+
+        // SAFETY: scratch is a write-only cache derived from log_weights.
+        // No reference escapes this method and select() is not reentrant.
+        let scratch = unsafe { &mut *self.scratch.get() };
+
+        let max_lw = self
+            .log_weights
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, |a, b| if a > b { a } else { b });
+
+        // Compute exp values into scratch, accumulate sum (K exp calls)
+        let mut sum_exp = 0.0;
+        for (s, &lw) in scratch.iter_mut().zip(self.log_weights.iter()) {
+            *s = nexus_stats_core::math::exp(lw - max_lw);
+            sum_exp += *s;
+        }
+
+        let scale = (1.0 - gamma) / sum_exp;
+        let gamma_over_k = gamma / k;
+        let u = rng();
+        let mut cumulative = 0.0;
+
+        // CDF sampling from cached exp values — no exp() calls
+        for (i, &exp_w) in scratch.iter().enumerate() {
+            let p_i = exp_w * scale + gamma_over_k;
+            cumulative += p_i;
+            if u < cumulative {
+                return (i, p_i);
+            }
+        }
+
+        let last = self.num_arms - 1;
+        let p_last = scratch[last] * scale + gamma_over_k;
+        (last, p_last)
+    }
+
+    /// Records a reward for the selected arm.
+    ///
+    /// `prob` is the selection probability returned by `select()`.
+    /// Log-weight update: `ln(w_arm) += eta * reward / (K * prob)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError` if reward is NaN, infinite, or outside [0, 1],
+    /// or if prob is NaN, infinite, or <= 0.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `arm >= num_arms`.
+    #[inline]
+    pub fn update(
+        &mut self,
+        arm: usize,
+        reward: f64,
+        prob: f64,
+    ) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(reward);
+        if reward < 0.0 || reward > 1.0 {
+            return Err(nexus_stats_core::DataError::Negative);
+        }
+        check_finite!(prob);
+        if prob <= 0.0 {
+            return Err(nexus_stats_core::DataError::Negative);
+        }
+        assert!(
+            arm < self.num_arms,
+            "arm {arm} >= num_arms {}",
+            self.num_arms
+        );
+
+        let k = self.num_arms as f64;
+        self.log_weights[arm] += self.eta * reward / (k * prob);
+        self.total_pulls += 1;
+        Ok(())
+    }
+
+    /// Writes the current probability distribution into `out`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out.len() != num_arms`.
+    #[allow(clippy::suboptimal_flops)]
+    pub fn probabilities(&self, out: &mut [f64]) {
+        assert_eq!(
+            out.len(),
+            self.num_arms,
+            "output length {} != num_arms {}",
+            out.len(),
+            self.num_arms,
+        );
+        let k = self.num_arms as f64;
+        let gamma = self.gamma;
+
+        // Log-sum-exp: use output buffer as scratch for exp values
+        let max_lw = self
+            .log_weights
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, |a, b| if a > b { a } else { b });
+        let mut sum_exp = 0.0;
+        for (o, &lw) in out.iter_mut().zip(self.log_weights.iter()) {
+            *o = nexus_stats_core::math::exp(lw - max_lw);
+            sum_exp += *o;
+        }
+        let scale = (1.0 - gamma) / sum_exp;
+        let gamma_over_k = gamma / k;
+        for o in out.iter_mut() {
+            *o = *o * scale + gamma_over_k;
+        }
+    }
+
+    /// Total pulls across all arms.
+    #[inline]
+    #[must_use]
+    pub fn total_pulls(&self) -> u64 {
+        self.total_pulls
+    }
+
+    /// Number of arms.
+    #[inline]
+    #[must_use]
+    pub fn num_arms(&self) -> usize {
+        self.num_arms
+    }
+
+    /// Whether total pulls >= min_samples.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.total_pulls >= self.min_samples
+    }
+
+    /// Returns the number of updates performed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.total_pulls
+    }
+
+    /// Resets log-weights to uniform (all zero = equal weight).
+    #[inline]
+    pub fn reset(&mut self) {
+        self.log_weights.fill(0.0);
+        self.total_pulls = 0;
+    }
+}
+
+impl Exp3F64Builder {
+    /// Sets the number of arms (required, >= 2).
+    #[inline]
+    #[must_use]
+    pub fn arms(mut self, n: usize) -> Self {
+        self.arms = Some(n);
+        self
+    }
+
+    /// Sets the exploration mixing rate (required, in (0, 1]).
+    #[inline]
+    #[must_use]
+    pub fn gamma(mut self, g: f64) -> Self {
+        self.gamma = Some(g);
+        self
+    }
+
+    /// Sets the learning rate (default: gamma, must be > 0).
+    #[inline]
+    #[must_use]
+    pub fn eta(mut self, e: f64) -> Self {
+        self.eta = Some(e);
+        self
+    }
+
+    /// Sets the minimum samples before `is_primed()` returns true.
+    #[inline]
+    #[must_use]
+    pub fn min_samples(mut self, n: u64) -> Self {
+        self.min_samples = Some(n);
+        self
+    }
+
+    /// Builds the bandit.
+    #[inline]
+    pub fn build(self) -> Result<Exp3F64, nexus_stats_core::ConfigError> {
+        let arms = self
+            .arms
+            .ok_or(nexus_stats_core::ConfigError::Missing("arms"))?;
+        let gamma = self
+            .gamma
+            .ok_or(nexus_stats_core::ConfigError::Missing("gamma"))?;
+        if arms < 2 {
+            return Err(nexus_stats_core::ConfigError::Invalid("arms must be >= 2"));
+        }
+        if gamma <= 0.0 || gamma > 1.0 || !gamma.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "gamma must be in (0, 1]",
+            ));
+        }
+        let eta = self.eta.unwrap_or(gamma);
+        if eta <= 0.0 || !eta.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "eta must be positive and finite",
+            ));
+        }
+        let min_samples = self.min_samples.unwrap_or(arms as u64);
+        Ok(Exp3F64 {
+            log_weights: vec![0.0; arms].into_boxed_slice(),
+            scratch: core::cell::UnsafeCell::new(vec![0.0; arms].into_boxed_slice()),
+            gamma,
+            eta,
+            total_pulls: 0,
+            num_arms: arms,
+            min_samples,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

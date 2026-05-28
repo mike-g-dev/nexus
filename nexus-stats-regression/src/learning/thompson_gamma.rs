@@ -2,274 +2,263 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec;
 
-macro_rules! impl_thompson_gamma {
-    ($name:ident, $builder:ident, $ty:ty, $sampling:ident) => {
-        /// Thompson Sampling with Gamma prior.
-        ///
-        /// Each arm maintains Gamma(shape, rate) parameters. Selection
-        /// samples from each arm's Gamma posterior and picks the highest
-        /// sample. For positive continuous rewards where Beta (bounded
-        /// [0, 1]) is too restrictive.
-        ///
-        /// Conjugate update: shape += reward, rate += 1.
-        /// Posterior mean: shape / rate (approximates sample mean).
-        ///
-        /// # Parameters
-        ///
-        /// - `arms` — number of arms (>= 2)
-        /// - `initial_shape` — prior shape for all arms (default: 1.0)
-        /// - `initial_rate` — prior rate for all arms (default: 1.0)
-        /// - `decay` — multiplicative discount on shape, rate per update (default: 1.0)
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use nexus_stats_regression::learning::ThompsonGammaF64;
-        ///
-        /// let mut bandit = ThompsonGammaF64::builder()
-        ///     .arms(3)
-        ///     .build()
-        ///     .unwrap();
-        ///
-        /// let mut s: u64 = 42;
-        /// let mut rng = || -> f64 {
-        ///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
-        ///     (s >> 33) as f64 / (1u64 << 31) as f64
-        /// };
-        /// let arm = bandit.select(&mut rng);
-        /// bandit.update(arm, 2.5).unwrap();
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            shapes: Box<[$ty]>,
-            rates: Box<[$ty]>,
-            initial_shape: $ty,
-            initial_rate: $ty,
-            decay: $ty,
-            total_pulls: u64,
-            num_arms: usize,
-            min_samples: u64,
-        }
+use super::sampling::f64_impl;
 
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            arms: Option<usize>,
-            initial_shape: $ty,
-            initial_rate: $ty,
-            decay: $ty,
-            min_samples: Option<u64>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    arms: Option::None,
-                    initial_shape: 1.0 as $ty,
-                    initial_rate: 1.0 as $ty,
-                    decay: 1.0 as $ty,
-                    min_samples: Option::None,
-                }
-            }
-
-            /// Samples from each arm's Gamma posterior, returns the arm
-            /// with the highest sample.
-            ///
-            /// `rng` must return independent uniform samples in [0, 1).
-            #[must_use]
-            pub fn select(&self, rng: &mut impl FnMut() -> $ty) -> usize {
-                let mut best_arm = 0;
-                let mut best_sample = -(1.0 as $ty / 0.0 as $ty);
-                for (i, (&shape, &rate)) in self.shapes.iter().zip(self.rates.iter()).enumerate() {
-                    let g = super::sampling::$sampling::gamma_sample(shape, rng);
-                    let sample = g / rate;
-                    if sample > best_sample {
-                        best_sample = sample;
-                        best_arm = i;
-                    }
-                }
-                best_arm
-            }
-
-            /// Records a positive reward for an arm.
-            ///
-            /// Updates: shape += reward, rate += 1.
-            /// If `decay < 1.0`, all shape/rate are discounted first.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError` if reward is NaN, infinite, or <= 0.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `arm >= num_arms`.
-            #[inline]
-            pub fn update(
-                &mut self,
-                arm: usize,
-                reward: $ty,
-            ) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(reward);
-                if reward <= 0.0 as $ty {
-                    return Err(nexus_stats_core::DataError::Negative);
-                }
-                assert!(
-                    arm < self.num_arms,
-                    "arm {arm} >= num_arms {}",
-                    self.num_arms
-                );
-
-                if self.decay < 1.0 as $ty {
-                    let decay = self.decay;
-                    for (s, r) in self.shapes.iter_mut().zip(self.rates.iter_mut()) {
-                        *s *= decay;
-                        *r *= decay;
-                    }
-                }
-
-                self.shapes[arm] += reward;
-                self.rates[arm] += 1.0 as $ty;
-                self.total_pulls += 1;
-                Ok(())
-            }
-
-            /// Posterior mean for an arm: shape / rate.
-            #[inline]
-            #[must_use]
-            pub fn mean_reward(&self, arm: usize) -> $ty {
-                assert!(
-                    arm < self.num_arms,
-                    "arm {arm} >= num_arms {}",
-                    self.num_arms
-                );
-                self.shapes[arm] / self.rates[arm]
-            }
-
-            /// Total pulls across all arms.
-            #[inline]
-            #[must_use]
-            pub fn total_pulls(&self) -> u64 {
-                self.total_pulls
-            }
-
-            /// Number of arms.
-            #[inline]
-            #[must_use]
-            pub fn num_arms(&self) -> usize {
-                self.num_arms
-            }
-
-            /// Whether total pulls >= min_samples.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.total_pulls >= self.min_samples
-            }
-
-            /// Returns the number of updates performed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.total_pulls
-            }
-
-            /// Resets shape/rate to initial priors.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.shapes.fill(self.initial_shape);
-                self.rates.fill(self.initial_rate);
-                self.total_pulls = 0;
-            }
-        }
-
-        impl $builder {
-            /// Sets the number of arms (required, >= 2).
-            #[inline]
-            #[must_use]
-            pub fn arms(mut self, n: usize) -> Self {
-                self.arms = Option::Some(n);
-                self
-            }
-
-            /// Sets the initial shape prior (default: 1.0, must be > 0).
-            #[inline]
-            #[must_use]
-            pub fn initial_shape(mut self, s: $ty) -> Self {
-                self.initial_shape = s;
-                self
-            }
-
-            /// Sets the initial rate prior (default: 1.0, must be > 0).
-            #[inline]
-            #[must_use]
-            pub fn initial_rate(mut self, r: $ty) -> Self {
-                self.initial_rate = r;
-                self
-            }
-
-            /// Sets the decay factor (default: 1.0, in (0, 1]).
-            #[inline]
-            #[must_use]
-            pub fn decay(mut self, d: $ty) -> Self {
-                self.decay = d;
-                self
-            }
-
-            /// Sets the minimum samples before `is_primed()` returns true.
-            #[inline]
-            #[must_use]
-            pub fn min_samples(mut self, n: u64) -> Self {
-                self.min_samples = Option::Some(n);
-                self
-            }
-
-            /// Builds the bandit.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let arms = self
-                    .arms
-                    .ok_or(nexus_stats_core::ConfigError::Missing("arms"))?;
-                if arms < 2 {
-                    return Err(nexus_stats_core::ConfigError::Invalid("arms must be >= 2"));
-                }
-                if self.initial_shape <= 0.0 as $ty || !self.initial_shape.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "initial_shape must be positive and finite",
-                    ));
-                }
-                if self.initial_rate <= 0.0 as $ty || !self.initial_rate.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "initial_rate must be positive and finite",
-                    ));
-                }
-                if self.decay <= 0.0 as $ty || self.decay > 1.0 as $ty || !self.decay.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "decay must be in (0, 1]",
-                    ));
-                }
-                let min_samples = self.min_samples.unwrap_or(arms as u64);
-                Ok($name {
-                    shapes: vec![self.initial_shape; arms].into_boxed_slice(),
-                    rates: vec![self.initial_rate; arms].into_boxed_slice(),
-                    initial_shape: self.initial_shape,
-                    initial_rate: self.initial_rate,
-                    decay: self.decay,
-                    total_pulls: 0,
-                    num_arms: arms,
-                    min_samples,
-                })
-            }
-        }
-    };
+/// Thompson Sampling with Gamma prior.
+///
+/// Each arm maintains Gamma(shape, rate) parameters. Selection
+/// samples from each arm's Gamma posterior and picks the highest
+/// sample. For positive continuous rewards where Beta (bounded
+/// [0, 1]) is too restrictive.
+///
+/// Conjugate update: shape += reward, rate += 1.
+/// Posterior mean: shape / rate (approximates sample mean).
+///
+/// # Parameters
+///
+/// - `arms` — number of arms (>= 2)
+/// - `initial_shape` — prior shape for all arms (default: 1.0)
+/// - `initial_rate` — prior rate for all arms (default: 1.0)
+/// - `decay` — multiplicative discount on shape, rate per update (default: 1.0)
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::learning::ThompsonGammaF64;
+///
+/// let mut bandit = ThompsonGammaF64::builder()
+///     .arms(3)
+///     .build()
+///     .unwrap();
+///
+/// let mut s: u64 = 42;
+/// let mut rng = || -> f64 {
+///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     (s >> 33) as f64 / (1u64 << 31) as f64
+/// };
+/// let arm = bandit.select(&mut rng);
+/// bandit.update(arm, 2.5).unwrap();
+/// ```
+#[derive(Debug, Clone)]
+pub struct ThompsonGammaF64 {
+    shapes: Box<[f64]>,
+    rates: Box<[f64]>,
+    initial_shape: f64,
+    initial_rate: f64,
+    decay: f64,
+    total_pulls: u64,
+    num_arms: usize,
+    min_samples: u64,
 }
 
-impl_thompson_gamma!(ThompsonGammaF64, ThompsonGammaF64Builder, f64, f64_impl);
-impl_thompson_gamma!(ThompsonGammaF32, ThompsonGammaF32Builder, f32, f32_impl);
+/// Builder for [`ThompsonGammaF64`].
+#[derive(Debug, Clone)]
+pub struct ThompsonGammaF64Builder {
+    arms: Option<usize>,
+    initial_shape: f64,
+    initial_rate: f64,
+    decay: f64,
+    min_samples: Option<u64>,
+}
+
+impl ThompsonGammaF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> ThompsonGammaF64Builder {
+        ThompsonGammaF64Builder {
+            arms: None,
+            initial_shape: 1.0,
+            initial_rate: 1.0,
+            decay: 1.0,
+            min_samples: None,
+        }
+    }
+
+    /// Samples from each arm's Gamma posterior, returns the arm
+    /// with the highest sample.
+    ///
+    /// `rng` must return independent uniform samples in [0, 1).
+    #[must_use]
+    pub fn select(&self, rng: &mut impl FnMut() -> f64) -> usize {
+        let mut best_arm = 0;
+        let mut best_sample = f64::NEG_INFINITY;
+        for (i, (&shape, &rate)) in self.shapes.iter().zip(self.rates.iter()).enumerate() {
+            let g = f64_impl::gamma_sample(shape, rng);
+            let sample = g / rate;
+            if sample > best_sample {
+                best_sample = sample;
+                best_arm = i;
+            }
+        }
+        best_arm
+    }
+
+    /// Records a positive reward for an arm.
+    ///
+    /// Updates: shape += reward, rate += 1.
+    /// If `decay < 1.0`, all shape/rate are discounted first.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError` if reward is NaN, infinite, or <= 0.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `arm >= num_arms`.
+    #[inline]
+    pub fn update(&mut self, arm: usize, reward: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(reward);
+        if reward <= 0.0 {
+            return Err(nexus_stats_core::DataError::Negative);
+        }
+        assert!(
+            arm < self.num_arms,
+            "arm {arm} >= num_arms {}",
+            self.num_arms
+        );
+
+        if self.decay < 1.0 {
+            let decay = self.decay;
+            for (s, r) in self.shapes.iter_mut().zip(self.rates.iter_mut()) {
+                *s *= decay;
+                *r *= decay;
+            }
+        }
+
+        self.shapes[arm] += reward;
+        self.rates[arm] += 1.0;
+        self.total_pulls += 1;
+        Ok(())
+    }
+
+    /// Posterior mean for an arm: shape / rate.
+    #[inline]
+    #[must_use]
+    pub fn mean_reward(&self, arm: usize) -> f64 {
+        assert!(
+            arm < self.num_arms,
+            "arm {arm} >= num_arms {}",
+            self.num_arms
+        );
+        self.shapes[arm] / self.rates[arm]
+    }
+
+    /// Total pulls across all arms.
+    #[inline]
+    #[must_use]
+    pub fn total_pulls(&self) -> u64 {
+        self.total_pulls
+    }
+
+    /// Number of arms.
+    #[inline]
+    #[must_use]
+    pub fn num_arms(&self) -> usize {
+        self.num_arms
+    }
+
+    /// Whether total pulls >= min_samples.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.total_pulls >= self.min_samples
+    }
+
+    /// Returns the number of updates performed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.total_pulls
+    }
+
+    /// Resets shape/rate to initial priors.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.shapes.fill(self.initial_shape);
+        self.rates.fill(self.initial_rate);
+        self.total_pulls = 0;
+    }
+}
+
+impl ThompsonGammaF64Builder {
+    /// Sets the number of arms (required, >= 2).
+    #[inline]
+    #[must_use]
+    pub fn arms(mut self, n: usize) -> Self {
+        self.arms = Some(n);
+        self
+    }
+
+    /// Sets the initial shape prior (default: 1.0, must be > 0).
+    #[inline]
+    #[must_use]
+    pub fn initial_shape(mut self, s: f64) -> Self {
+        self.initial_shape = s;
+        self
+    }
+
+    /// Sets the initial rate prior (default: 1.0, must be > 0).
+    #[inline]
+    #[must_use]
+    pub fn initial_rate(mut self, r: f64) -> Self {
+        self.initial_rate = r;
+        self
+    }
+
+    /// Sets the decay factor (default: 1.0, in (0, 1]).
+    #[inline]
+    #[must_use]
+    pub fn decay(mut self, d: f64) -> Self {
+        self.decay = d;
+        self
+    }
+
+    /// Sets the minimum samples before `is_primed()` returns true.
+    #[inline]
+    #[must_use]
+    pub fn min_samples(mut self, n: u64) -> Self {
+        self.min_samples = Some(n);
+        self
+    }
+
+    /// Builds the bandit.
+    #[inline]
+    pub fn build(self) -> Result<ThompsonGammaF64, nexus_stats_core::ConfigError> {
+        let arms = self
+            .arms
+            .ok_or(nexus_stats_core::ConfigError::Missing("arms"))?;
+        if arms < 2 {
+            return Err(nexus_stats_core::ConfigError::Invalid("arms must be >= 2"));
+        }
+        if self.initial_shape <= 0.0 || !self.initial_shape.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "initial_shape must be positive and finite",
+            ));
+        }
+        if self.initial_rate <= 0.0 || !self.initial_rate.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "initial_rate must be positive and finite",
+            ));
+        }
+        if self.decay <= 0.0 || self.decay > 1.0 || !self.decay.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "decay must be in (0, 1]",
+            ));
+        }
+        let min_samples = self.min_samples.unwrap_or(arms as u64);
+        Ok(ThompsonGammaF64 {
+            shapes: vec![self.initial_shape; arms].into_boxed_slice(),
+            rates: vec![self.initial_rate; arms].into_boxed_slice(),
+            initial_shape: self.initial_shape,
+            initial_rate: self.initial_rate,
+            decay: self.decay,
+            total_pulls: 0,
+            num_arms: arms,
+            min_samples,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

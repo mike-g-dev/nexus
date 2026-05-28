@@ -89,10 +89,10 @@ impl SignalDecayCurve {
     #[must_use]
     pub fn useful_horizon(&self, threshold: f64) -> Option<usize> {
         for (i, p) in self.predictors.iter().enumerate() {
-            if let Some(r2) = p.r_squared() {
-                if r2 < threshold {
-                    return Some(self.lags[i]);
-                }
+            if let Some(r2) = p.r_squared()
+                && r2 < threshold
+            {
+                return Some(self.lags[i]);
             }
         }
         None

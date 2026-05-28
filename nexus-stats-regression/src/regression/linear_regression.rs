@@ -7,512 +7,487 @@
 
 use nexus_stats_core::math::MulAdd;
 
-macro_rules! impl_linear_regression {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Online linear regression with closed-form solve.
-        ///
-        /// Accumulates 5 sufficient statistics and solves directly —
-        /// no matrix operations, no loops. With intercept: `y = ax + b`.
-        /// Without intercept (through origin): `y = ax`.
-        ///
-        /// # Complexity
-        /// - O(1) per update (~6 adds, 2 muls), O(1) per query.
-        /// - 48 bytes state (f64), 28 bytes (f32). Zero allocation.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        #[doc = concat!("use nexus_stats_regression::regression::", stringify!($name), ";")]
-        ///
-        #[doc = concat!("let mut r = ", stringify!($name), "::new();")]
-        #[doc = concat!("for x in 0..100u64 { r.update(x as ", stringify!($ty), ", 2.0 as ", stringify!($ty), " * x as ", stringify!($ty), " + 3.0 as ", stringify!($ty), "); }")]
-        /// let slope = r.slope().unwrap();
-        #[doc = concat!("assert!((slope - 2.0 as ", stringify!($ty), ").abs() < 0.001 as ", stringify!($ty), ");")]
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            sum_x: $ty,
-            sum_x2: $ty,
-            sum_y: $ty,
-            sum_xy: $ty,
-            sum_y2: $ty,
-            count: u64,
-            intercept: bool,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            intercept: bool,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder { intercept: true }
-            }
-
-            /// Linear regression with intercept: `y = ax + b`.
-            #[inline]
-            #[must_use]
-            pub fn new() -> Self {
-                Self {
-                    sum_x: 0.0 as $ty,
-                    sum_x2: 0.0 as $ty,
-                    sum_y: 0.0 as $ty,
-                    sum_xy: 0.0 as $ty,
-                    sum_y2: 0.0 as $ty,
-                    count: 0,
-                    intercept: true,
-                }
-            }
-
-            /// Linear regression through the origin: `y = ax`.
-            #[inline]
-            #[must_use]
-            pub fn through_origin() -> Self {
-                Self {
-                    sum_x: 0.0 as $ty,
-                    sum_x2: 0.0 as $ty,
-                    sum_y: 0.0 as $ty,
-                    sum_xy: 0.0 as $ty,
-                    sum_y2: 0.0 as $ty,
-                    count: 0,
-                    intercept: false,
-                }
-            }
-
-            /// System dimension: 2 with intercept, 1 without.
-            #[inline]
-            fn dim(&self) -> usize {
-                1 + self.intercept as usize
-            }
-
-            /// Feeds an (x, y) observation.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if either value is NaN, or
-            /// `DataError::Infinite` if either value is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                self.count += 1;
-                self.sum_x += x;
-                self.sum_x2 = x.fma(x, self.sum_x2);
-                self.sum_y += y;
-                self.sum_xy = x.fma(y, self.sum_xy);
-                self.sum_y2 = y.fma(y, self.sum_y2);
-                Ok(())
-            }
-
-            /// Slope of the fit, or `None` if not primed.
-            #[must_use]
-            pub fn slope(&self) -> Option<$ty> {
-                if (self.count as usize) < self.dim() {
-                    return Option::None;
-                }
-                if self.intercept {
-                    let n = self.count as $ty;
-                    let denom = n.fma(self.sum_x2, -(self.sum_x * self.sum_x));
-                    if denom == 0.0 as $ty {
-                        return Option::None;
-                    }
-                    Option::Some(n.fma(self.sum_xy, -(self.sum_x * self.sum_y)) / denom)
-                } else {
-                    if self.sum_x2 == 0.0 as $ty {
-                        return Option::None;
-                    }
-                    Option::Some(self.sum_xy / self.sum_x2)
-                }
-            }
-
-            /// Intercept value, or `None` if not primed or no intercept.
-            #[must_use]
-            pub fn intercept_value(&self) -> Option<$ty> {
-                if !self.intercept {
-                    return Option::None;
-                }
-                let slope = self.slope()?;
-                let n = self.count as $ty;
-                Option::Some(slope.fma(-self.sum_x, self.sum_y) / n)
-            }
-
-            /// R² goodness of fit, or `None` if not enough data.
-            ///
-            /// With intercept: centered R² = 1 - SS_res/SS_tot.
-            /// Without intercept: uncentered R² = 1 - SS_res/Σy².
-            #[must_use]
-            #[allow(clippy::suboptimal_flops)]
-            pub fn r_squared(&self) -> Option<$ty> {
-                let slope = self.slope()?;
-                let n = self.count as $ty;
-
-                // SS_res = Σy² - 2*slope*Σxy - 2*intercept*Σy + slope²*Σx² + 2*slope*intercept*Σx + n*intercept²
-                // Simplified via the closed-form:
-                let (ss_res, ss_tot) = if self.intercept {
-                    let intercept = (self.sum_y - slope * self.sum_x) / n;
-                    let ss_res = self.sum_y2
-                        - 2.0 as $ty * slope * self.sum_xy
-                        - 2.0 as $ty * intercept * self.sum_y
-                        + slope * slope * self.sum_x2
-                        + 2.0 as $ty * slope * intercept * self.sum_x
-                        + n * intercept * intercept;
-                    let ss_tot = self.sum_y2 - self.sum_y * self.sum_y / n;
-                    (ss_res, ss_tot)
-                } else {
-                    let ss_res = self.sum_y2
-                        - 2.0 as $ty * slope * self.sum_xy
-                        + slope * slope * self.sum_x2;
-                    (ss_res, self.sum_y2)
-                };
-
-                if ss_tot <= 0.0 as $ty {
-                    return Option::None;
-                }
-
-                Option::Some(1.0 as $ty - ss_res / ss_tot)
-            }
-
-            /// Predict y for a given x.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                let slope = self.slope()?;
-                if self.intercept {
-                    let intercept = self.intercept_value()?;
-                    Option::Some(slope.fma(x, intercept))
-                } else {
-                    Option::Some(slope * x)
-                }
-            }
-
-            /// Number of observations processed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.count
-            }
-
-            /// Whether enough data to solve (>= 2 with intercept, >= 1 without).
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                (self.count as usize) >= self.dim()
-            }
-
-            /// Whether the intercept is included.
-            #[inline]
-            #[must_use]
-            pub fn has_intercept(&self) -> bool {
-                self.intercept
-            }
-
-            /// Resets to empty state. Intercept setting unchanged.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.sum_x = 0.0 as $ty;
-                self.sum_x2 = 0.0 as $ty;
-                self.sum_y = 0.0 as $ty;
-                self.sum_xy = 0.0 as $ty;
-                self.sum_y2 = 0.0 as $ty;
-                self.count = 0;
-            }
-        }
-
-        impl Default for $name {
-            #[inline]
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl $builder {
-            /// Whether to include the constant term. Default: `true`.
-            #[inline]
-            #[must_use]
-            pub fn intercept(mut self, intercept: bool) -> Self {
-                self.intercept = intercept;
-                self
-            }
-
-            /// Builds the regression.
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                Ok($name {
-                    sum_x: 0.0 as $ty,
-                    sum_x2: 0.0 as $ty,
-                    sum_y: 0.0 as $ty,
-                    sum_xy: 0.0 as $ty,
-                    sum_y2: 0.0 as $ty,
-                    count: 0,
-                    intercept: self.intercept,
-                })
-            }
-        }
-    };
+/// Online linear regression with closed-form solve.
+///
+/// Accumulates 5 sufficient statistics and solves directly —
+/// no matrix operations, no loops. With intercept: `y = ax + b`.
+/// Without intercept (through origin): `y = ax`.
+///
+/// # Complexity
+/// - O(1) per update (~6 adds, 2 muls), O(1) per query.
+/// - 48 bytes state. Zero allocation.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::regression::LinearRegressionF64;
+///
+/// let mut r = LinearRegressionF64::new();
+/// for x in 0..100u64 { r.update(x as f64, 2.0 * x as f64 + 3.0); }
+/// let slope = r.slope().unwrap();
+/// assert!((slope - 2.0).abs() < 0.001);
+/// ```
+#[derive(Debug, Clone)]
+pub struct LinearRegressionF64 {
+    sum_x: f64,
+    sum_x2: f64,
+    sum_y: f64,
+    sum_xy: f64,
+    sum_y2: f64,
+    count: u64,
+    intercept: bool,
 }
 
-impl_linear_regression!(LinearRegressionF64, LinearRegressionF64Builder, f64);
-impl_linear_regression!(LinearRegressionF32, LinearRegressionF32Builder, f32);
+/// Builder for [`LinearRegressionF64`].
+#[derive(Debug, Clone)]
+pub struct LinearRegressionF64Builder {
+    intercept: bool,
+}
+
+impl LinearRegressionF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> LinearRegressionF64Builder {
+        LinearRegressionF64Builder { intercept: true }
+    }
+
+    /// Linear regression with intercept: `y = ax + b`.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            sum_x: 0.0,
+            sum_x2: 0.0,
+            sum_y: 0.0,
+            sum_xy: 0.0,
+            sum_y2: 0.0,
+            count: 0,
+            intercept: true,
+        }
+    }
+
+    /// Linear regression through the origin: `y = ax`.
+    #[inline]
+    #[must_use]
+    pub fn through_origin() -> Self {
+        Self {
+            sum_x: 0.0,
+            sum_x2: 0.0,
+            sum_y: 0.0,
+            sum_xy: 0.0,
+            sum_y2: 0.0,
+            count: 0,
+            intercept: false,
+        }
+    }
+
+    /// System dimension: 2 with intercept, 1 without.
+    #[inline]
+    fn dim(&self) -> usize {
+        1 + self.intercept as usize
+    }
+
+    /// Feeds an (x, y) observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if either value is NaN, or
+    /// `DataError::Infinite` if either value is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        self.count += 1;
+        self.sum_x += x;
+        self.sum_x2 = x.fma(x, self.sum_x2);
+        self.sum_y += y;
+        self.sum_xy = x.fma(y, self.sum_xy);
+        self.sum_y2 = y.fma(y, self.sum_y2);
+        Ok(())
+    }
+
+    /// Slope of the fit, or `None` if not primed.
+    #[must_use]
+    pub fn slope(&self) -> Option<f64> {
+        if (self.count as usize) < self.dim() {
+            return None;
+        }
+        if self.intercept {
+            let n = self.count as f64;
+            let denom = n.fma(self.sum_x2, -(self.sum_x * self.sum_x));
+            if denom == 0.0 {
+                return None;
+            }
+            Some(n.fma(self.sum_xy, -(self.sum_x * self.sum_y)) / denom)
+        } else {
+            if self.sum_x2 == 0.0 {
+                return None;
+            }
+            Some(self.sum_xy / self.sum_x2)
+        }
+    }
+
+    /// Intercept value, or `None` if not primed or no intercept.
+    #[must_use]
+    pub fn intercept_value(&self) -> Option<f64> {
+        if !self.intercept {
+            return None;
+        }
+        let slope = self.slope()?;
+        let n = self.count as f64;
+        Some(slope.fma(-self.sum_x, self.sum_y) / n)
+    }
+
+    /// R² goodness of fit, or `None` if not enough data.
+    ///
+    /// With intercept: centered R² = 1 - SS_res/SS_tot.
+    /// Without intercept: uncentered R² = 1 - SS_res/Σy².
+    #[must_use]
+    #[allow(clippy::suboptimal_flops)]
+    pub fn r_squared(&self) -> Option<f64> {
+        let slope = self.slope()?;
+        let n = self.count as f64;
+
+        // SS_res = Σy² - 2*slope*Σxy - 2*intercept*Σy + slope²*Σx² + 2*slope*intercept*Σx + n*intercept²
+        // Simplified via the closed-form:
+        let (ss_res, ss_tot) = if self.intercept {
+            let intercept = (self.sum_y - slope * self.sum_x) / n;
+            let ss_res = self.sum_y2 - 2.0 * slope * self.sum_xy - 2.0 * intercept * self.sum_y
+                + slope * slope * self.sum_x2
+                + 2.0 * slope * intercept * self.sum_x
+                + n * intercept * intercept;
+            let ss_tot = self.sum_y2 - self.sum_y * self.sum_y / n;
+            (ss_res, ss_tot)
+        } else {
+            let ss_res = self.sum_y2 - 2.0 * slope * self.sum_xy + slope * slope * self.sum_x2;
+            (ss_res, self.sum_y2)
+        };
+
+        if ss_tot <= 0.0 {
+            return None;
+        }
+
+        Some(1.0 - ss_res / ss_tot)
+    }
+
+    /// Predict y for a given x.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        let slope = self.slope()?;
+        if self.intercept {
+            let intercept = self.intercept_value()?;
+            Some(slope.fma(x, intercept))
+        } else {
+            Some(slope * x)
+        }
+    }
+
+    /// Number of observations processed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Whether enough data to solve (>= 2 with intercept, >= 1 without).
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        (self.count as usize) >= self.dim()
+    }
+
+    /// Whether the intercept is included.
+    #[inline]
+    #[must_use]
+    pub fn has_intercept(&self) -> bool {
+        self.intercept
+    }
+
+    /// Resets to empty state. Intercept setting unchanged.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.sum_x = 0.0;
+        self.sum_x2 = 0.0;
+        self.sum_y = 0.0;
+        self.sum_xy = 0.0;
+        self.sum_y2 = 0.0;
+        self.count = 0;
+    }
+}
+
+impl Default for LinearRegressionF64 {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LinearRegressionF64Builder {
+    /// Whether to include the constant term. Default: `true`.
+    #[inline]
+    #[must_use]
+    pub fn intercept(mut self, intercept: bool) -> Self {
+        self.intercept = intercept;
+        self
+    }
+
+    /// Builds the regression.
+    pub fn build(self) -> Result<LinearRegressionF64, nexus_stats_core::ConfigError> {
+        Ok(LinearRegressionF64 {
+            sum_x: 0.0,
+            sum_x2: 0.0,
+            sum_y: 0.0,
+            sum_xy: 0.0,
+            sum_y2: 0.0,
+            count: 0,
+            intercept: self.intercept,
+        })
+    }
+}
 
 // ============================================================================
 // EW Linear Regression
 // ============================================================================
 
-macro_rules! impl_ew_linear_regression {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Exponentially-weighted online linear regression.
-        ///
-        /// Same closed-form solve as the non-EW linear regression types
-        /// but with exponential decay on accumulators. Recent data
-        /// dominates, making the fit adaptive to trend changes.
-        ///
-        /// # Complexity
-        /// - O(1) per update, O(1) per query.
-        /// - ~64 bytes state (f64). Zero allocation.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        #[doc = concat!("use nexus_stats_regression::regression::", stringify!($name), ";")]
-        ///
-        #[doc = concat!("let mut r = ", stringify!($name), "::builder()")]
-        ///     .alpha(0.05)
-        ///     .build()
-        ///     .unwrap();
-        #[doc = concat!("for x in 0..200u64 { r.update(x as ", stringify!($ty), ", 2.0 as ", stringify!($ty), " * x as ", stringify!($ty), "); }")]
-        /// assert!(r.slope().is_some());
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            sum_x: $ty,
-            sum_x2: $ty,
-            sum_y: $ty,
-            sum_xy: $ty,
-            sum_y2: $ty,
-            alpha: $ty,
-            one_minus_alpha: $ty,
-            effective_n: $ty,
-            count: u64,
-            intercept: bool,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            alpha: Option<$ty>,
-            intercept: bool,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    alpha: Option::None,
-                    intercept: true,
-                }
-            }
-
-            fn dim(&self) -> usize {
-                1 + self.intercept as usize
-            }
-
-            /// Feeds an (x, y) observation.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if either value is NaN, or
-            /// `DataError::Infinite` if either value is infinite.
-            #[inline]
-            pub fn update(&mut self, x: $ty, y: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(x);
-                check_finite!(y);
-                self.count += 1;
-                self.effective_n = self.one_minus_alpha.fma(self.effective_n, 1.0 as $ty);
-                self.sum_x = self.one_minus_alpha.fma(self.sum_x, x);
-                self.sum_x2 = self.one_minus_alpha.fma(self.sum_x2, x * x);
-                self.sum_y = self.one_minus_alpha.fma(self.sum_y, y);
-                self.sum_xy = self.one_minus_alpha.fma(self.sum_xy, x * y);
-                self.sum_y2 = self.one_minus_alpha.fma(self.sum_y2, y * y);
-                Ok(())
-            }
-
-            /// Slope, or `None` if not primed.
-            #[must_use]
-            pub fn slope(&self) -> Option<$ty> {
-                if (self.effective_n as usize) < self.dim() {
-                    return Option::None;
-                }
-                if self.intercept {
-                    let n = self.effective_n;
-                    let denom = n.fma(self.sum_x2, -(self.sum_x * self.sum_x));
-                    if denom == 0.0 as $ty {
-                        return Option::None;
-                    }
-                    Option::Some(n.fma(self.sum_xy, -(self.sum_x * self.sum_y)) / denom)
-                } else {
-                    if self.sum_x2 == 0.0 as $ty {
-                        return Option::None;
-                    }
-                    Option::Some(self.sum_xy / self.sum_x2)
-                }
-            }
-
-            /// Intercept value, or `None` if not primed or no intercept.
-            #[must_use]
-            pub fn intercept_value(&self) -> Option<$ty> {
-                if !self.intercept {
-                    return Option::None;
-                }
-                let slope = self.slope()?;
-                Option::Some(slope.fma(-self.sum_x, self.sum_y) / self.effective_n)
-            }
-
-            /// R² goodness of fit.
-            #[must_use]
-            #[allow(clippy::suboptimal_flops)]
-            pub fn r_squared(&self) -> Option<$ty> {
-                let slope = self.slope()?;
-                let n = self.effective_n;
-
-                let (ss_res, ss_tot) = if self.intercept {
-                    let intercept = (self.sum_y - slope * self.sum_x) / n;
-                    let ss_res = self.sum_y2
-                        - 2.0 as $ty * slope * self.sum_xy
-                        - 2.0 as $ty * intercept * self.sum_y
-                        + slope * slope * self.sum_x2
-                        + 2.0 as $ty * slope * intercept * self.sum_x
-                        + n * intercept * intercept;
-                    let ss_tot = self.sum_y2 - self.sum_y * self.sum_y / n;
-                    (ss_res, ss_tot)
-                } else {
-                    let ss_res = self.sum_y2
-                        - 2.0 as $ty * slope * self.sum_xy
-                        + slope * slope * self.sum_x2;
-                    (ss_res, self.sum_y2)
-                };
-
-                if ss_tot <= 0.0 as $ty {
-                    return Option::None;
-                }
-
-                Option::Some(1.0 as $ty - ss_res / ss_tot)
-            }
-
-            /// Predict y.
-            #[must_use]
-            pub fn predict(&self, x: $ty) -> Option<$ty> {
-                let slope = self.slope()?;
-                if self.intercept {
-                    let intercept = self.intercept_value()?;
-                    Option::Some(slope.fma(x, intercept))
-                } else {
-                    Option::Some(slope * x)
-                }
-            }
-
-            /// Number of observations.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.count
-            }
-
-            /// Effective sample count.
-            #[inline]
-            #[must_use]
-            pub fn effective_count(&self) -> $ty {
-                self.effective_n
-            }
-
-            /// Alpha.
-            #[inline]
-            #[must_use]
-            pub fn alpha(&self) -> $ty {
-                self.alpha
-            }
-
-            /// Whether primed.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                (self.effective_n as usize) >= self.dim()
-            }
-
-            /// Whether intercept is included.
-            #[inline]
-            #[must_use]
-            pub fn has_intercept(&self) -> bool {
-                self.intercept
-            }
-
-            /// Reset. Config unchanged.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.sum_x = 0.0 as $ty;
-                self.sum_x2 = 0.0 as $ty;
-                self.sum_y = 0.0 as $ty;
-                self.sum_xy = 0.0 as $ty;
-                self.sum_y2 = 0.0 as $ty;
-                self.effective_n = 0.0 as $ty;
-                self.count = 0;
-            }
-        }
-
-        impl $builder {
-            /// Weight on new observation, in (0, 1). Required.
-            #[inline]
-            #[must_use]
-            pub fn alpha(mut self, alpha: $ty) -> Self {
-                self.alpha = Option::Some(alpha);
-                self
-            }
-
-            /// Whether to include the constant term. Default: `true`.
-            #[inline]
-            #[must_use]
-            pub fn intercept(mut self, intercept: bool) -> Self {
-                self.intercept = intercept;
-                self
-            }
-
-            /// Builds the regression.
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let alpha = self.alpha
-                    .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
-                if !(alpha > 0.0 as $ty && alpha < 1.0 as $ty) {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "alpha must be in (0, 1) exclusive",
-                    ));
-                }
-
-                Ok($name {
-                    sum_x: 0.0 as $ty,
-                    sum_x2: 0.0 as $ty,
-                    sum_y: 0.0 as $ty,
-                    sum_xy: 0.0 as $ty,
-                    sum_y2: 0.0 as $ty,
-                    alpha,
-                    one_minus_alpha: 1.0 as $ty - alpha,
-                    effective_n: 0.0 as $ty,
-                    count: 0,
-                    intercept: self.intercept,
-                })
-            }
-        }
-    };
+/// Exponentially-weighted online linear regression.
+///
+/// Same closed-form solve as the non-EW linear regression types
+/// but with exponential decay on accumulators. Recent data
+/// dominates, making the fit adaptive to trend changes.
+///
+/// # Complexity
+/// - O(1) per update, O(1) per query.
+/// - ~64 bytes state. Zero allocation.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::regression::EwLinearRegressionF64;
+///
+/// let mut r = EwLinearRegressionF64::builder()
+///     .alpha(0.05)
+///     .build()
+///     .unwrap();
+/// for x in 0..200u64 { r.update(x as f64, 2.0 * x as f64); }
+/// assert!(r.slope().is_some());
+/// ```
+#[derive(Debug, Clone)]
+pub struct EwLinearRegressionF64 {
+    sum_x: f64,
+    sum_x2: f64,
+    sum_y: f64,
+    sum_xy: f64,
+    sum_y2: f64,
+    alpha: f64,
+    one_minus_alpha: f64,
+    effective_n: f64,
+    count: u64,
+    intercept: bool,
 }
 
-impl_ew_linear_regression!(EwLinearRegressionF64, EwLinearRegressionF64Builder, f64);
-impl_ew_linear_regression!(EwLinearRegressionF32, EwLinearRegressionF32Builder, f32);
+/// Builder for [`EwLinearRegressionF64`].
+#[derive(Debug, Clone)]
+pub struct EwLinearRegressionF64Builder {
+    alpha: Option<f64>,
+    intercept: bool,
+}
+
+impl EwLinearRegressionF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> EwLinearRegressionF64Builder {
+        EwLinearRegressionF64Builder {
+            alpha: None,
+            intercept: true,
+        }
+    }
+
+    fn dim(&self) -> usize {
+        1 + self.intercept as usize
+    }
+
+    /// Feeds an (x, y) observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if either value is NaN, or
+    /// `DataError::Infinite` if either value is infinite.
+    #[inline]
+    pub fn update(&mut self, x: f64, y: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(x);
+        check_finite!(y);
+        self.count += 1;
+        self.effective_n = self.one_minus_alpha.fma(self.effective_n, 1.0);
+        self.sum_x = self.one_minus_alpha.fma(self.sum_x, x);
+        self.sum_x2 = self.one_minus_alpha.fma(self.sum_x2, x * x);
+        self.sum_y = self.one_minus_alpha.fma(self.sum_y, y);
+        self.sum_xy = self.one_minus_alpha.fma(self.sum_xy, x * y);
+        self.sum_y2 = self.one_minus_alpha.fma(self.sum_y2, y * y);
+        Ok(())
+    }
+
+    /// Slope, or `None` if not primed.
+    #[must_use]
+    pub fn slope(&self) -> Option<f64> {
+        if (self.effective_n as usize) < self.dim() {
+            return None;
+        }
+        if self.intercept {
+            let n = self.effective_n;
+            let denom = n.fma(self.sum_x2, -(self.sum_x * self.sum_x));
+            if denom == 0.0 {
+                return None;
+            }
+            Some(n.fma(self.sum_xy, -(self.sum_x * self.sum_y)) / denom)
+        } else {
+            if self.sum_x2 == 0.0 {
+                return None;
+            }
+            Some(self.sum_xy / self.sum_x2)
+        }
+    }
+
+    /// Intercept value, or `None` if not primed or no intercept.
+    #[must_use]
+    pub fn intercept_value(&self) -> Option<f64> {
+        if !self.intercept {
+            return None;
+        }
+        let slope = self.slope()?;
+        Some(slope.fma(-self.sum_x, self.sum_y) / self.effective_n)
+    }
+
+    /// R² goodness of fit.
+    #[must_use]
+    #[allow(clippy::suboptimal_flops)]
+    pub fn r_squared(&self) -> Option<f64> {
+        let slope = self.slope()?;
+        let n = self.effective_n;
+
+        let (ss_res, ss_tot) = if self.intercept {
+            let intercept = (self.sum_y - slope * self.sum_x) / n;
+            let ss_res = self.sum_y2 - 2.0 * slope * self.sum_xy - 2.0 * intercept * self.sum_y
+                + slope * slope * self.sum_x2
+                + 2.0 * slope * intercept * self.sum_x
+                + n * intercept * intercept;
+            let ss_tot = self.sum_y2 - self.sum_y * self.sum_y / n;
+            (ss_res, ss_tot)
+        } else {
+            let ss_res = self.sum_y2 - 2.0 * slope * self.sum_xy + slope * slope * self.sum_x2;
+            (ss_res, self.sum_y2)
+        };
+
+        if ss_tot <= 0.0 {
+            return None;
+        }
+
+        Some(1.0 - ss_res / ss_tot)
+    }
+
+    /// Predict y.
+    #[must_use]
+    pub fn predict(&self, x: f64) -> Option<f64> {
+        let slope = self.slope()?;
+        if self.intercept {
+            let intercept = self.intercept_value()?;
+            Some(slope.fma(x, intercept))
+        } else {
+            Some(slope * x)
+        }
+    }
+
+    /// Number of observations.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Effective sample count.
+    #[inline]
+    #[must_use]
+    pub fn effective_count(&self) -> f64 {
+        self.effective_n
+    }
+
+    /// Alpha.
+    #[inline]
+    #[must_use]
+    pub fn alpha(&self) -> f64 {
+        self.alpha
+    }
+
+    /// Whether primed.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        (self.effective_n as usize) >= self.dim()
+    }
+
+    /// Whether intercept is included.
+    #[inline]
+    #[must_use]
+    pub fn has_intercept(&self) -> bool {
+        self.intercept
+    }
+
+    /// Reset. Config unchanged.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.sum_x = 0.0;
+        self.sum_x2 = 0.0;
+        self.sum_y = 0.0;
+        self.sum_xy = 0.0;
+        self.sum_y2 = 0.0;
+        self.effective_n = 0.0;
+        self.count = 0;
+    }
+}
+
+impl EwLinearRegressionF64Builder {
+    /// Weight on new observation, in (0, 1). Required.
+    #[inline]
+    #[must_use]
+    pub fn alpha(mut self, alpha: f64) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
+    /// Whether to include the constant term. Default: `true`.
+    #[inline]
+    #[must_use]
+    pub fn intercept(mut self, intercept: bool) -> Self {
+        self.intercept = intercept;
+        self
+    }
+
+    /// Builds the regression.
+    pub fn build(self) -> Result<EwLinearRegressionF64, nexus_stats_core::ConfigError> {
+        let alpha = self
+            .alpha
+            .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
+        if !(alpha > 0.0 && alpha < 1.0) {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "alpha must be in (0, 1) exclusive",
+            ));
+        }
+
+        Ok(EwLinearRegressionF64 {
+            sum_x: 0.0,
+            sum_x2: 0.0,
+            sum_y: 0.0,
+            sum_xy: 0.0,
+            sum_y2: 0.0,
+            alpha,
+            one_minus_alpha: 1.0 - alpha,
+            effective_n: 0.0,
+            count: 0,
+            intercept: self.intercept,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -628,15 +603,6 @@ mod tests {
     }
 
     #[test]
-    fn f32_basic() {
-        let mut r = LinearRegressionF32::new();
-        for x in 0..100u32 {
-            r.update(x as f32, 2.0 * x as f32 + 3.0).unwrap();
-        }
-        assert!((r.slope().unwrap() - 2.0).abs() < 0.01);
-    }
-
-    #[test]
     fn default_is_new() {
         let r = LinearRegressionF64::default();
         assert_eq!(r.count(), 0);
@@ -699,18 +665,6 @@ mod tests {
         r.reset();
         assert_eq!(r.count(), 0);
         assert!(r.slope().is_none());
-    }
-
-    #[test]
-    fn ew_f32() {
-        let mut r = EwLinearRegressionF32::builder()
-            .alpha(0.05)
-            .build()
-            .unwrap();
-        for x in 0..200u32 {
-            r.update(x as f32, x as f32).unwrap();
-        }
-        assert!(r.is_primed());
     }
 
     #[test]

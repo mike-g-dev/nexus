@@ -12,251 +12,235 @@
     clippy::neg_cmp_op_on_partial_ord
 )]
 
-macro_rules! impl_gamma_poisson {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Bayesian event rate estimator using the Gamma-Poisson conjugate prior.
-        ///
-        /// Maintains a Gamma posterior over the Poisson rate parameter.
-        /// Each observation adds event counts and exposure time, updating the
-        /// posterior analytically — no sampling, no iteration.
-        ///
-        /// # Use Cases
-        /// - "What's the expected message arrival rate given what we've seen?"
-        /// - Estimating fill rates, error rates, or tick rates with uncertainty
-        /// - Credible intervals on event rates from limited data
-        ///
-        /// # Complexity
-        /// - O(1) per observation, O(1) per query.
-        /// - 32 bytes state (f64), 16 bytes (f32). Zero allocation.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        #[doc = concat!("use nexus_stats_regression::estimation::", stringify!($name), ";")]
-        ///
-        #[doc = concat!("let mut gp = ", stringify!($name), "::new();")]
-        /// gp.update(100, 10.0);  // 100 events in 10 seconds
-        /// let rate = gp.rate();
-        /// // With weak prior (1,1), rate ≈ 101/11 ≈ 9.18
-        #[doc = concat!("assert!((rate - 9.18 as ", stringify!($ty), ").abs() < 0.01 as ", stringify!($ty), ");")]
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            alpha: $ty,
-            beta: $ty,
-            prior_alpha: $ty,
-            prior_beta: $ty,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            alpha: $ty,
-            beta: $ty,
-        }
-
-        impl $name {
-            /// Creates a builder with default prior (alpha=1, beta=1).
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    alpha: 1.0 as $ty,
-                    beta: 1.0 as $ty,
-                }
-            }
-
-            /// Creates an estimator with a weakly informative prior (alpha=1, beta=1).
-            #[inline]
-            #[must_use]
-            pub fn new() -> Self {
-                Self {
-                    alpha: 1.0 as $ty,
-                    beta: 1.0 as $ty,
-                    prior_alpha: 1.0 as $ty,
-                    prior_beta: 1.0 as $ty,
-                }
-            }
-
-            /// Creates an estimator with a specific Gamma prior.
-            ///
-            /// # Errors
-            ///
-            /// Returns `ConfigError::Invalid` if `alpha <= 0` or `beta <= 0`.
-            #[inline]
-            pub fn with_prior(alpha: $ty, beta: $ty) -> Result<Self, nexus_stats_core::ConfigError> {
-                if !(alpha > 0.0 as $ty) {
-                    return Err(nexus_stats_core::ConfigError::Invalid("alpha must be > 0"));
-                }
-                if !(beta > 0.0 as $ty) {
-                    return Err(nexus_stats_core::ConfigError::Invalid("beta must be > 0"));
-                }
-                Ok(Self {
-                    alpha,
-                    beta,
-                    prior_alpha: alpha,
-                    prior_beta: beta,
-                })
-            }
-
-            /// Updates with an observation: `count` events observed over `exposure` time.
-            ///
-            /// Updates the posterior: alpha += count, beta += exposure.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if the exposure is NaN, or
-            /// `DataError::Infinite` if the exposure is infinite.
-            #[inline]
-            pub fn update(&mut self, count: u64, exposure: $ty) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(exposure);
-                self.alpha += count as $ty;
-                self.beta += exposure;
-                Ok(())
-            }
-
-            /// Posterior mean rate (alpha / beta).
-            #[inline]
-            #[must_use]
-            pub fn rate(&self) -> $ty {
-                self.alpha / self.beta
-            }
-
-            /// Posterior variance (alpha / beta²).
-            #[inline]
-            #[must_use]
-            pub fn variance(&self) -> $ty {
-                self.alpha / (self.beta * self.beta)
-            }
-
-            /// Approximate credible interval using normal approximation.
-            ///
-            /// Returns `(lower, upper)` bounds for the given confidence level,
-            /// or `None` if no exposure has been observed or confidence is not in (0, 1).
-            ///
-            /// Uses the Abramowitz & Stegun rational approximation for the
-            /// inverse normal CDF.
-            #[cfg(any(feature = "std", feature = "libm"))]
-            #[inline]
-            #[must_use]
-            pub fn credible_interval(&self, confidence: $ty) -> Option<($ty, $ty)> {
-                if self.total_exposure() <= 0.0 as $ty {
-                    return Option::None;
-                }
-                if !(confidence > 0.0 as $ty && confidence < 1.0 as $ty) {
-                    return Option::None;
-                }
-
-                let tail = (1.0 as $ty - confidence) / 2.0 as $ty;
-
-                // Abramowitz & Stegun rational approximation for inverse normal
-                #[allow(clippy::cast_possible_truncation)]
-                let t = nexus_stats_core::math::sqrt(
-                    -2.0 * nexus_stats_core::math::ln(tail as f64),
-                ) as $ty;
-                let z = t
-                    - (2.515517 as $ty + 0.802853 as $ty * t + 0.010328 as $ty * t * t)
-                        / (1.0 as $ty
-                            + 1.432788 as $ty * t
-                            + 0.189269 as $ty * t * t
-                            + 0.001308 as $ty * t * t * t);
-
-                #[allow(clippy::cast_possible_truncation)]
-                let std_dev = nexus_stats_core::math::sqrt(self.variance() as f64) as $ty;
-                let mean = self.rate();
-
-                let lower = (mean - z * std_dev).max(0.0 as $ty);
-                Option::Some((lower, mean + z * std_dev))
-            }
-
-            /// Total event count observed (excluding prior).
-            #[inline]
-            #[must_use]
-            pub fn total_count(&self) -> $ty {
-                self.alpha - self.prior_alpha
-            }
-
-            /// Total exposure time observed (excluding prior).
-            #[inline]
-            #[must_use]
-            pub fn total_exposure(&self) -> $ty {
-                self.beta - self.prior_beta
-            }
-
-            /// Total event count as integer.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.total_count() as u64
-            }
-
-            /// Whether any exposure has been observed.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.total_exposure() > 0.0 as $ty
-            }
-
-            /// Resets to the original prior, discarding all observations.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.alpha = self.prior_alpha;
-                self.beta = self.prior_beta;
-            }
-        }
-
-        impl Default for $name {
-            #[inline]
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl $builder {
-            /// Sets the shape parameter (prior alpha). Must be > 0.
-            #[inline]
-            #[must_use]
-            pub fn alpha(mut self, alpha: $ty) -> Self {
-                self.alpha = alpha;
-                self
-            }
-
-            /// Sets the rate parameter (prior beta). Must be > 0.
-            #[inline]
-            #[must_use]
-            pub fn beta(mut self, beta: $ty) -> Self {
-                self.beta = beta;
-                self
-            }
-
-            /// Builds the estimator, validating parameters.
-            ///
-            /// # Errors
-            ///
-            /// Returns `ConfigError::Invalid` if alpha or beta are not positive.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                if !(self.alpha > 0.0 as $ty) {
-                    return Err(nexus_stats_core::ConfigError::Invalid("alpha must be > 0"));
-                }
-                if !(self.beta > 0.0 as $ty) {
-                    return Err(nexus_stats_core::ConfigError::Invalid("beta must be > 0"));
-                }
-                Ok($name {
-                    alpha: self.alpha,
-                    beta: self.beta,
-                    prior_alpha: self.alpha,
-                    prior_beta: self.beta,
-                })
-            }
-        }
-    };
+/// Bayesian event rate estimator using the Gamma-Poisson conjugate prior.
+///
+/// Maintains a Gamma posterior over the Poisson rate parameter.
+/// Each observation adds event counts and exposure time, updating the
+/// posterior analytically — no sampling, no iteration.
+///
+/// # Use Cases
+/// - "What's the expected message arrival rate given what we've seen?"
+/// - Estimating fill rates, error rates, or tick rates with uncertainty
+/// - Credible intervals on event rates from limited data
+///
+/// # Complexity
+/// - O(1) per observation, O(1) per query.
+/// - 32 bytes state. Zero allocation.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::estimation::GammaPoissonF64;
+///
+/// let mut gp = GammaPoissonF64::new();
+/// gp.update(100, 10.0);  // 100 events in 10 seconds
+/// let rate = gp.rate();
+/// // With weak prior (1,1), rate ≈ 101/11 ≈ 9.18
+/// assert!((rate - 9.18).abs() < 0.01);
+/// ```
+#[derive(Debug, Clone)]
+pub struct GammaPoissonF64 {
+    alpha: f64,
+    beta: f64,
+    prior_alpha: f64,
+    prior_beta: f64,
 }
 
-impl_gamma_poisson!(GammaPoissonF64, GammaPoissonF64Builder, f64);
-impl_gamma_poisson!(GammaPoissonF32, GammaPoissonF32Builder, f32);
+/// Builder for [`GammaPoissonF64`].
+#[derive(Debug, Clone)]
+pub struct GammaPoissonF64Builder {
+    alpha: f64,
+    beta: f64,
+}
+
+impl GammaPoissonF64 {
+    /// Creates a builder with default prior (alpha=1, beta=1).
+    #[inline]
+    #[must_use]
+    pub fn builder() -> GammaPoissonF64Builder {
+        GammaPoissonF64Builder {
+            alpha: 1.0,
+            beta: 1.0,
+        }
+    }
+
+    /// Creates an estimator with a weakly informative prior (alpha=1, beta=1).
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            alpha: 1.0,
+            beta: 1.0,
+            prior_alpha: 1.0,
+            prior_beta: 1.0,
+        }
+    }
+
+    /// Creates an estimator with a specific Gamma prior.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError::Invalid` if `alpha <= 0` or `beta <= 0`.
+    #[inline]
+    pub fn with_prior(alpha: f64, beta: f64) -> Result<Self, nexus_stats_core::ConfigError> {
+        if !(alpha > 0.0) {
+            return Err(nexus_stats_core::ConfigError::Invalid("alpha must be > 0"));
+        }
+        if !(beta > 0.0) {
+            return Err(nexus_stats_core::ConfigError::Invalid("beta must be > 0"));
+        }
+        Ok(Self {
+            alpha,
+            beta,
+            prior_alpha: alpha,
+            prior_beta: beta,
+        })
+    }
+
+    /// Updates with an observation: `count` events observed over `exposure` time.
+    ///
+    /// Updates the posterior: alpha += count, beta += exposure.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if the exposure is NaN, or
+    /// `DataError::Infinite` if the exposure is infinite.
+    #[inline]
+    pub fn update(&mut self, count: u64, exposure: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(exposure);
+        self.alpha += count as f64;
+        self.beta += exposure;
+        Ok(())
+    }
+
+    /// Posterior mean rate (alpha / beta).
+    #[inline]
+    #[must_use]
+    pub fn rate(&self) -> f64 {
+        self.alpha / self.beta
+    }
+
+    /// Posterior variance (alpha / beta²).
+    #[inline]
+    #[must_use]
+    pub fn variance(&self) -> f64 {
+        self.alpha / (self.beta * self.beta)
+    }
+
+    /// Approximate credible interval using normal approximation.
+    ///
+    /// Returns `(lower, upper)` bounds for the given confidence level,
+    /// or `None` if no exposure has been observed or confidence is not in (0, 1).
+    ///
+    /// Uses the Abramowitz & Stegun rational approximation for the
+    /// inverse normal CDF.
+    #[cfg(any(feature = "std", feature = "libm"))]
+    #[inline]
+    #[must_use]
+    pub fn credible_interval(&self, confidence: f64) -> Option<(f64, f64)> {
+        if self.total_exposure() <= 0.0 {
+            return None;
+        }
+        if !(confidence > 0.0 && confidence < 1.0) {
+            return None;
+        }
+
+        let tail = (1.0 - confidence) / 2.0;
+
+        // Abramowitz & Stegun rational approximation for inverse normal
+        let t = nexus_stats_core::math::sqrt(-2.0 * nexus_stats_core::math::ln(tail));
+        let z = t
+            - (2.515_517 + 0.802_853 * t + 0.010_328 * t * t)
+                / (1.0 + 1.432_788 * t + 0.189_269 * t * t + 0.001_308 * t * t * t);
+
+        let std_dev = nexus_stats_core::math::sqrt(self.variance());
+        let mean = self.rate();
+
+        let lower = (mean - z * std_dev).max(0.0);
+        Some((lower, mean + z * std_dev))
+    }
+
+    /// Total event count observed (excluding prior).
+    #[inline]
+    #[must_use]
+    pub fn total_count(&self) -> f64 {
+        self.alpha - self.prior_alpha
+    }
+
+    /// Total exposure time observed (excluding prior).
+    #[inline]
+    #[must_use]
+    pub fn total_exposure(&self) -> f64 {
+        self.beta - self.prior_beta
+    }
+
+    /// Total event count as integer.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.total_count() as u64
+    }
+
+    /// Whether any exposure has been observed.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.total_exposure() > 0.0
+    }
+
+    /// Resets to the original prior, discarding all observations.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.alpha = self.prior_alpha;
+        self.beta = self.prior_beta;
+    }
+}
+
+impl Default for GammaPoissonF64 {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GammaPoissonF64Builder {
+    /// Sets the shape parameter (prior alpha). Must be > 0.
+    #[inline]
+    #[must_use]
+    pub fn alpha(mut self, alpha: f64) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    /// Sets the rate parameter (prior beta). Must be > 0.
+    #[inline]
+    #[must_use]
+    pub fn beta(mut self, beta: f64) -> Self {
+        self.beta = beta;
+        self
+    }
+
+    /// Builds the estimator, validating parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError::Invalid` if alpha or beta are not positive.
+    #[inline]
+    pub fn build(self) -> Result<GammaPoissonF64, nexus_stats_core::ConfigError> {
+        if !(self.alpha > 0.0) {
+            return Err(nexus_stats_core::ConfigError::Invalid("alpha must be > 0"));
+        }
+        if !(self.beta > 0.0) {
+            return Err(nexus_stats_core::ConfigError::Invalid("beta must be > 0"));
+        }
+        Ok(GammaPoissonF64 {
+            alpha: self.alpha,
+            beta: self.beta,
+            prior_alpha: self.alpha,
+            prior_beta: self.beta,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -320,15 +304,6 @@ mod tests {
         assert!(GammaPoissonF64::with_prior(f64::NAN, 1.0).is_err());
         assert!(GammaPoissonF64::with_prior(1.0, f64::NAN).is_err());
         assert!(GammaPoissonF64::with_prior(1.0, 1.0).is_ok());
-    }
-
-    #[test]
-    fn f32_variant() {
-        let mut gp = GammaPoissonF32::new();
-        gp.update(50, 5.0).unwrap();
-        let rate = gp.rate();
-        // Gamma(51, 6) → 51/6 = 8.5
-        assert!((rate - 8.5_f32).abs() < 0.01);
     }
 
     #[test]

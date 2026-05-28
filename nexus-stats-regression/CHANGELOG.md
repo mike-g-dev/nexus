@@ -10,6 +10,29 @@ contained.
 
 ## [Unreleased]
 
+### Removed
+
+- `LinearRegressionF32`, `LinearRegressionF32Builder` — use `LinearRegressionF64`
+- `EwLinearRegressionF32`, `EwLinearRegressionF32Builder` — use `EwLinearRegressionF64`
+- `CoefficientsF32` — use `CoefficientsF64`
+- `PolynomialRegressionF32`, `PolynomialRegressionF32Builder` — use `PolynomialRegressionF64`
+- `EwPolynomialRegressionF32`, `EwPolynomialRegressionF32Builder` — use `EwPolynomialRegressionF64`
+- `ExponentialRegressionF32` — use `ExponentialRegressionF64`
+- `LogarithmicRegressionF32` — use `LogarithmicRegressionF64`
+- `PowerRegressionF32` — use `PowerRegressionF64`
+- `BetaBinomialF32`, `BetaBinomialF32Builder` — use `BetaBinomialF64`
+- `GammaPoissonF32`, `GammaPoissonF32Builder` — use `GammaPoissonF64`
+- `Kalman2dF32`, `Kalman2dF32Builder` — use `Kalman2dF64`
+- `Kalman3dF32`, `Kalman3dF32Builder` — use `Kalman3dF64`
+- `Ucb1F32`, `Ucb1F32Builder` — use `Ucb1F64`
+- `ThompsonBetaF32`, `ThompsonBetaF32Builder` — use `ThompsonBetaF64`
+- `ThompsonGammaF32`, `ThompsonGammaF32Builder` — use `ThompsonGammaF64`
+- `EpsilonGreedyF32`, `EpsilonGreedyF32Builder` — use `EpsilonGreedyF64`
+- `Exp3F32`, `Exp3F32Builder` — use `Exp3F64`
+- `RlsFilterF32`, `RlsFilterF32Builder` — use `RlsFilterF64`
+- `LmsFilterF32`, `LmsFilterF32Builder` — use `LmsFilterF64`
+- `NlmsFilterF32`, `NlmsFilterF32Builder` — use `NlmsFilterF64`
+
 ## [1.3.1] — 2026-05-26
 
 ## [1.3.0] — 2026-05-19

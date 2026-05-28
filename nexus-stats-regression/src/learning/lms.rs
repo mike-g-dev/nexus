@@ -11,408 +11,391 @@ use alloc::boxed::Box;
 use alloc::vec;
 use nexus_stats_core::math::MulAdd;
 
-macro_rules! impl_lms_filter {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Least Mean Squares adaptive filter.
-        ///
-        /// Learns linear relationships between feature vectors and a scalar
-        /// target by gradient descent on the squared error. Convergence rate
-        /// depends on `learning_rate` and the eigenvalue spread of the input
-        /// correlation matrix.
-        ///
-        /// # Use Cases
-        /// - Online linear regression
-        /// - Noise cancellation
-        /// - System identification
-        ///
-        /// # Complexity
-        /// O(dims) per update, heap-allocated weight vector.
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            weights: Box<[$ty]>,
-            learning_rate: $ty,
-            dims: usize,
-            count: u64,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            dimensions: Option<usize>,
-            learning_rate: Option<$ty>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    dimensions: Option::None,
-                    learning_rate: Option::None,
-                }
-            }
-
-            /// Computes the dot product w·x.
-            ///
-            /// # Panics
-            /// Panics if `features.len() != self.dimensions()`.
-            #[inline]
-            #[must_use]
-            pub fn predict(&self, features: &[$ty]) -> $ty {
-                assert_eq!(
-                    features.len(),
-                    self.dims,
-                    "feature length {} != dimensions {}",
-                    features.len(),
-                    self.dims,
-                );
-                let mut sum = 0.0 as $ty;
-                for i in 0..self.dims {
-                    sum = self.weights[i].fma(features[i], sum);
-                }
-                sum
-            }
-
-            /// Updates weights: w += lr * (target - predict(features)) * features.
-            ///
-            /// # Panics
-            /// Panics if `features.len() != self.dimensions()`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if the target is NaN, or
-            /// `DataError::Infinite` if the target is infinite.
-            #[inline]
-            pub fn update(
-                &mut self,
-                features: &[$ty],
-                target: $ty,
-            ) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(target);
-                debug_assert!(
-                    features.iter().all(|f| f.is_finite()),
-                    "features must be finite"
-                );
-                let prediction = self.predict(features);
-                let error = target - prediction;
-                let step = self.learning_rate * error;
-                for i in 0..self.dims {
-                    self.weights[i] = step.fma(features[i], self.weights[i]);
-                }
-                self.count += 1;
-                Ok(())
-            }
-
-            /// Returns the current weight vector.
-            #[inline]
-            #[must_use]
-            pub fn weights(&self) -> &[$ty] {
-                &self.weights
-            }
-
-            /// Returns the number of dimensions.
-            #[inline]
-            #[must_use]
-            pub fn dimensions(&self) -> usize {
-                self.dims
-            }
-
-            /// Returns the learning rate.
-            #[inline]
-            #[must_use]
-            pub fn learning_rate(&self) -> $ty {
-                self.learning_rate
-            }
-
-            /// Returns the number of updates performed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.count
-            }
-
-            /// Whether any updates have been performed.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.count > 0
-            }
-
-            /// Zeros all weights, keeping configuration intact.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.weights.fill(0.0 as $ty);
-                self.count = 0;
-            }
-        }
-
-        impl $builder {
-            /// Sets the number of input dimensions (required, >= 1).
-            #[inline]
-            #[must_use]
-            pub fn dimensions(mut self, dims: usize) -> Self {
-                self.dimensions = Option::Some(dims);
-                self
-            }
-
-            /// Sets the learning rate (required, > 0).
-            #[inline]
-            #[must_use]
-            pub fn learning_rate(mut self, lr: $ty) -> Self {
-                self.learning_rate = Option::Some(lr);
-                self
-            }
-
-            /// Builds the filter. Returns an error if parameters are missing or invalid.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let dims = self
-                    .dimensions
-                    .ok_or(nexus_stats_core::ConfigError::Missing("dimensions"))?;
-                let lr = self
-                    .learning_rate
-                    .ok_or(nexus_stats_core::ConfigError::Missing("learning_rate"))?;
-                if dims < 1 {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "dimensions must be >= 1",
-                    ));
-                }
-                if lr <= 0.0 as $ty {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "learning_rate must be positive",
-                    ));
-                }
-                Ok($name {
-                    weights: vec![0.0 as $ty; dims].into_boxed_slice(),
-                    learning_rate: lr,
-                    dims,
-                    count: 0,
-                })
-            }
-        }
-    };
+/// Least Mean Squares adaptive filter.
+///
+/// Learns linear relationships between feature vectors and a scalar
+/// target by gradient descent on the squared error. Convergence rate
+/// depends on `learning_rate` and the eigenvalue spread of the input
+/// correlation matrix.
+///
+/// # Use Cases
+/// - Online linear regression
+/// - Noise cancellation
+/// - System identification
+///
+/// # Complexity
+/// O(dims) per update, heap-allocated weight vector.
+#[derive(Debug, Clone)]
+pub struct LmsFilterF64 {
+    weights: Box<[f64]>,
+    learning_rate: f64,
+    dims: usize,
+    count: u64,
 }
 
-macro_rules! impl_nlms_filter {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Normalized Least Mean Squares adaptive filter.
-        ///
-        /// Like LMS but normalizes the step size by input power (x·x + epsilon),
-        /// making convergence robust to varying input scales. The epsilon term
-        /// prevents division by zero when the input is near-silent.
-        ///
-        /// # Use Cases
-        /// - Adaptive noise cancellation with varying input power
-        /// - Echo cancellation
-        /// - Channel equalization
-        ///
-        /// # Complexity
-        /// O(dims) per update, heap-allocated weight vector.
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            weights: Box<[$ty]>,
-            learning_rate: $ty,
-            epsilon: $ty,
-            dims: usize,
-            count: u64,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            dimensions: Option<usize>,
-            learning_rate: Option<$ty>,
-            epsilon: Option<$ty>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    dimensions: Option::None,
-                    learning_rate: Option::None,
-                    epsilon: Option::None,
-                }
-            }
-
-            /// Computes the dot product w·x.
-            ///
-            /// # Panics
-            /// Panics if `features.len() != self.dimensions()`.
-            #[inline]
-            #[must_use]
-            pub fn predict(&self, features: &[$ty]) -> $ty {
-                assert_eq!(
-                    features.len(),
-                    self.dims,
-                    "feature length {} != dimensions {}",
-                    features.len(),
-                    self.dims,
-                );
-                let mut sum = 0.0 as $ty;
-                for i in 0..self.dims {
-                    sum = self.weights[i].fma(features[i], sum);
-                }
-                sum
-            }
-
-            /// Updates weights: w += (lr / (x·x + epsilon)) * (target - predict(features)) * features.
-            ///
-            /// # Panics
-            /// Panics if `features.len() != self.dimensions()`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if the target is NaN, or
-            /// `DataError::Infinite` if the target is infinite.
-            #[inline]
-            pub fn update(
-                &mut self,
-                features: &[$ty],
-                target: $ty,
-            ) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(target);
-                debug_assert!(
-                    features.iter().all(|f| f.is_finite()),
-                    "features must be finite"
-                );
-                let prediction = self.predict(features);
-                let error = target - prediction;
-                let mut norm_sq = 0.0 as $ty;
-                for i in 0..self.dims {
-                    norm_sq = features[i].fma(features[i], norm_sq);
-                }
-                let step = (self.learning_rate / (norm_sq + self.epsilon)) * error;
-                for i in 0..self.dims {
-                    self.weights[i] = step.fma(features[i], self.weights[i]);
-                }
-                self.count += 1;
-                Ok(())
-            }
-
-            /// Returns the current weight vector.
-            #[inline]
-            #[must_use]
-            pub fn weights(&self) -> &[$ty] {
-                &self.weights
-            }
-
-            /// Returns the number of dimensions.
-            #[inline]
-            #[must_use]
-            pub fn dimensions(&self) -> usize {
-                self.dims
-            }
-
-            /// Returns the learning rate.
-            #[inline]
-            #[must_use]
-            pub fn learning_rate(&self) -> $ty {
-                self.learning_rate
-            }
-
-            /// Returns the epsilon (regularization) parameter.
-            #[inline]
-            #[must_use]
-            pub fn epsilon(&self) -> $ty {
-                self.epsilon
-            }
-
-            /// Returns the number of updates performed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.count
-            }
-
-            /// Whether any updates have been performed.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.count > 0
-            }
-
-            /// Zeros all weights, keeping configuration intact.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.weights.fill(0.0 as $ty);
-                self.count = 0;
-            }
-        }
-
-        impl $builder {
-            /// Sets the number of input dimensions (required, >= 1).
-            #[inline]
-            #[must_use]
-            pub fn dimensions(mut self, dims: usize) -> Self {
-                self.dimensions = Option::Some(dims);
-                self
-            }
-
-            /// Sets the learning rate (required, > 0).
-            #[inline]
-            #[must_use]
-            pub fn learning_rate(mut self, lr: $ty) -> Self {
-                self.learning_rate = Option::Some(lr);
-                self
-            }
-
-            /// Sets the regularization term (default 1e-8, must be > 0).
-            #[inline]
-            #[must_use]
-            pub fn epsilon(mut self, eps: $ty) -> Self {
-                self.epsilon = Option::Some(eps);
-                self
-            }
-
-            /// Builds the filter. Returns an error if parameters are missing or invalid.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let dims = self
-                    .dimensions
-                    .ok_or(nexus_stats_core::ConfigError::Missing("dimensions"))?;
-                let lr = self
-                    .learning_rate
-                    .ok_or(nexus_stats_core::ConfigError::Missing("learning_rate"))?;
-                let eps = self.epsilon.unwrap_or(1e-8 as $ty);
-                if dims < 1 {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "dimensions must be >= 1",
-                    ));
-                }
-                if lr <= 0.0 as $ty {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "learning_rate must be positive",
-                    ));
-                }
-                if eps <= 0.0 as $ty {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "epsilon must be positive",
-                    ));
-                }
-                Ok($name {
-                    weights: vec![0.0 as $ty; dims].into_boxed_slice(),
-                    learning_rate: lr,
-                    epsilon: eps,
-                    dims,
-                    count: 0,
-                })
-            }
-        }
-    };
+/// Builder for [`LmsFilterF64`].
+#[derive(Debug, Clone)]
+pub struct LmsFilterF64Builder {
+    dimensions: Option<usize>,
+    learning_rate: Option<f64>,
 }
 
-impl_lms_filter!(LmsFilterF64, LmsFilterF64Builder, f64);
-impl_lms_filter!(LmsFilterF32, LmsFilterF32Builder, f32);
-impl_nlms_filter!(NlmsFilterF64, NlmsFilterF64Builder, f64);
-impl_nlms_filter!(NlmsFilterF32, NlmsFilterF32Builder, f32);
+impl LmsFilterF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> LmsFilterF64Builder {
+        LmsFilterF64Builder {
+            dimensions: None,
+            learning_rate: None,
+        }
+    }
+
+    /// Computes the dot product w·x.
+    ///
+    /// # Panics
+    /// Panics if `features.len() != self.dimensions()`.
+    #[inline]
+    #[must_use]
+    pub fn predict(&self, features: &[f64]) -> f64 {
+        assert_eq!(
+            features.len(),
+            self.dims,
+            "feature length {} != dimensions {}",
+            features.len(),
+            self.dims,
+        );
+        let mut sum = 0.0;
+        for i in 0..self.dims {
+            sum = self.weights[i].fma(features[i], sum);
+        }
+        sum
+    }
+
+    /// Updates weights: w += lr * (target - predict(features)) * features.
+    ///
+    /// # Panics
+    /// Panics if `features.len() != self.dimensions()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if the target is NaN, or
+    /// `DataError::Infinite` if the target is infinite.
+    #[inline]
+    pub fn update(
+        &mut self,
+        features: &[f64],
+        target: f64,
+    ) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(target);
+        debug_assert!(
+            features.iter().all(|f| f.is_finite()),
+            "features must be finite"
+        );
+        let prediction = self.predict(features);
+        let error = target - prediction;
+        let step = self.learning_rate * error;
+        for i in 0..self.dims {
+            self.weights[i] = step.fma(features[i], self.weights[i]);
+        }
+        self.count += 1;
+        Ok(())
+    }
+
+    /// Returns the current weight vector.
+    #[inline]
+    #[must_use]
+    pub fn weights(&self) -> &[f64] {
+        &self.weights
+    }
+
+    /// Returns the number of dimensions.
+    #[inline]
+    #[must_use]
+    pub fn dimensions(&self) -> usize {
+        self.dims
+    }
+
+    /// Returns the learning rate.
+    #[inline]
+    #[must_use]
+    pub fn learning_rate(&self) -> f64 {
+        self.learning_rate
+    }
+
+    /// Returns the number of updates performed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Whether any updates have been performed.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.count > 0
+    }
+
+    /// Zeros all weights, keeping configuration intact.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.weights.fill(0.0);
+        self.count = 0;
+    }
+}
+
+impl LmsFilterF64Builder {
+    /// Sets the number of input dimensions (required, >= 1).
+    #[inline]
+    #[must_use]
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        self.dimensions = Some(dims);
+        self
+    }
+
+    /// Sets the learning rate (required, > 0).
+    #[inline]
+    #[must_use]
+    pub fn learning_rate(mut self, lr: f64) -> Self {
+        self.learning_rate = Some(lr);
+        self
+    }
+
+    /// Builds the filter. Returns an error if parameters are missing or invalid.
+    #[inline]
+    pub fn build(self) -> Result<LmsFilterF64, nexus_stats_core::ConfigError> {
+        let dims = self
+            .dimensions
+            .ok_or(nexus_stats_core::ConfigError::Missing("dimensions"))?;
+        let lr = self
+            .learning_rate
+            .ok_or(nexus_stats_core::ConfigError::Missing("learning_rate"))?;
+        if dims < 1 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "dimensions must be >= 1",
+            ));
+        }
+        if lr <= 0.0 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "learning_rate must be positive",
+            ));
+        }
+        Ok(LmsFilterF64 {
+            weights: vec![0.0; dims].into_boxed_slice(),
+            learning_rate: lr,
+            dims,
+            count: 0,
+        })
+    }
+}
+
+/// Normalized Least Mean Squares adaptive filter.
+///
+/// Like LMS but normalizes the step size by input power (x·x + epsilon),
+/// making convergence robust to varying input scales. The epsilon term
+/// prevents division by zero when the input is near-silent.
+///
+/// # Use Cases
+/// - Adaptive noise cancellation with varying input power
+/// - Echo cancellation
+/// - Channel equalization
+///
+/// # Complexity
+/// O(dims) per update, heap-allocated weight vector.
+#[derive(Debug, Clone)]
+pub struct NlmsFilterF64 {
+    weights: Box<[f64]>,
+    learning_rate: f64,
+    epsilon: f64,
+    dims: usize,
+    count: u64,
+}
+
+/// Builder for [`NlmsFilterF64`].
+#[derive(Debug, Clone)]
+pub struct NlmsFilterF64Builder {
+    dimensions: Option<usize>,
+    learning_rate: Option<f64>,
+    epsilon: Option<f64>,
+}
+
+impl NlmsFilterF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> NlmsFilterF64Builder {
+        NlmsFilterF64Builder {
+            dimensions: None,
+            learning_rate: None,
+            epsilon: None,
+        }
+    }
+
+    /// Computes the dot product w·x.
+    ///
+    /// # Panics
+    /// Panics if `features.len() != self.dimensions()`.
+    #[inline]
+    #[must_use]
+    pub fn predict(&self, features: &[f64]) -> f64 {
+        assert_eq!(
+            features.len(),
+            self.dims,
+            "feature length {} != dimensions {}",
+            features.len(),
+            self.dims,
+        );
+        let mut sum = 0.0;
+        for i in 0..self.dims {
+            sum = self.weights[i].fma(features[i], sum);
+        }
+        sum
+    }
+
+    /// Updates weights: w += (lr / (x·x + epsilon)) * (target - predict(features)) * features.
+    ///
+    /// # Panics
+    /// Panics if `features.len() != self.dimensions()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if the target is NaN, or
+    /// `DataError::Infinite` if the target is infinite.
+    #[inline]
+    pub fn update(
+        &mut self,
+        features: &[f64],
+        target: f64,
+    ) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(target);
+        debug_assert!(
+            features.iter().all(|f| f.is_finite()),
+            "features must be finite"
+        );
+        let prediction = self.predict(features);
+        let error = target - prediction;
+        let mut norm_sq = 0.0;
+        for i in 0..self.dims {
+            norm_sq = features[i].fma(features[i], norm_sq);
+        }
+        let step = (self.learning_rate / (norm_sq + self.epsilon)) * error;
+        for i in 0..self.dims {
+            self.weights[i] = step.fma(features[i], self.weights[i]);
+        }
+        self.count += 1;
+        Ok(())
+    }
+
+    /// Returns the current weight vector.
+    #[inline]
+    #[must_use]
+    pub fn weights(&self) -> &[f64] {
+        &self.weights
+    }
+
+    /// Returns the number of dimensions.
+    #[inline]
+    #[must_use]
+    pub fn dimensions(&self) -> usize {
+        self.dims
+    }
+
+    /// Returns the learning rate.
+    #[inline]
+    #[must_use]
+    pub fn learning_rate(&self) -> f64 {
+        self.learning_rate
+    }
+
+    /// Returns the epsilon (regularization) parameter.
+    #[inline]
+    #[must_use]
+    pub fn epsilon(&self) -> f64 {
+        self.epsilon
+    }
+
+    /// Returns the number of updates performed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Whether any updates have been performed.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.count > 0
+    }
+
+    /// Zeros all weights, keeping configuration intact.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.weights.fill(0.0);
+        self.count = 0;
+    }
+}
+
+impl NlmsFilterF64Builder {
+    /// Sets the number of input dimensions (required, >= 1).
+    #[inline]
+    #[must_use]
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        self.dimensions = Some(dims);
+        self
+    }
+
+    /// Sets the learning rate (required, > 0).
+    #[inline]
+    #[must_use]
+    pub fn learning_rate(mut self, lr: f64) -> Self {
+        self.learning_rate = Some(lr);
+        self
+    }
+
+    /// Sets the regularization term (default 1e-8, must be > 0).
+    #[inline]
+    #[must_use]
+    pub fn epsilon(mut self, eps: f64) -> Self {
+        self.epsilon = Some(eps);
+        self
+    }
+
+    /// Builds the filter. Returns an error if parameters are missing or invalid.
+    #[inline]
+    pub fn build(self) -> Result<NlmsFilterF64, nexus_stats_core::ConfigError> {
+        let dims = self
+            .dimensions
+            .ok_or(nexus_stats_core::ConfigError::Missing("dimensions"))?;
+        let lr = self
+            .learning_rate
+            .ok_or(nexus_stats_core::ConfigError::Missing("learning_rate"))?;
+        let eps = self.epsilon.unwrap_or(1e-8);
+        if dims < 1 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "dimensions must be >= 1",
+            ));
+        }
+        if lr <= 0.0 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "learning_rate must be positive",
+            ));
+        }
+        if eps <= 0.0 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "epsilon must be positive",
+            ));
+        }
+        Ok(NlmsFilterF64 {
+            weights: vec![0.0; dims].into_boxed_slice(),
+            learning_rate: lr,
+            epsilon: eps,
+            dims,
+            count: 0,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -550,26 +533,6 @@ mod tests {
             .epsilon(-1.0)
             .build();
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn f32_basic() {
-        let mut filter = LmsFilterF32::builder()
-            .dimensions(2)
-            .learning_rate(0.01)
-            .build()
-            .unwrap();
-
-        for i in 0..2000 {
-            let x1 = (i as f32 * 0.7).sin();
-            let x2 = (i as f32 * 1.3).cos();
-            let target = 2.0 * x1 + 3.0 * x2;
-            filter.update(&[x1, x2], target).unwrap();
-        }
-
-        let w = filter.weights();
-        assert!((w[0] - 2.0).abs() < 0.5, "w[0] = {}, expected ~2.0", w[0]);
-        assert!((w[1] - 3.0).abs() < 0.5, "w[1] = {}, expected ~3.0", w[1]);
     }
 
     #[test]

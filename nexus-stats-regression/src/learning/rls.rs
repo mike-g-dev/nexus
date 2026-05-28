@@ -3,339 +3,330 @@ use alloc::boxed::Box;
 use alloc::vec;
 use nexus_stats_core::math::MulAdd;
 
-macro_rules! impl_rls_filter {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Recursive Least Squares adaptive filter.
-        ///
-        /// Tracks linear relationships between feature vectors and a scalar
-        /// target using a recursive update of the covariance matrix. Converges
-        /// faster than LMS at the cost of O(d²) per update. The forgetting
-        /// factor controls how quickly old observations are downweighted.
-        ///
-        /// # Use Cases
-        /// - Online linear regression with fast convergence
-        /// - System identification with non-stationary parameters
-        /// - Adaptive noise cancellation
-        ///
-        /// # Complexity
-        /// O(d²) per update, heap-allocated weight vector and covariance matrix.
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            weights: Box<[$ty]>,
-            p_matrix: Box<[$ty]>,
-            scratch_px: Box<[$ty]>,
-            scratch_k: Box<[$ty]>,
-            forgetting_factor: $ty,
-            initial_covariance: $ty,
-            max_covariance: Option<$ty>,
-            dims: usize,
-            count: u64,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            dimensions: Option<usize>,
-            forgetting_factor: $ty,
-            initial_covariance: $ty,
-            max_covariance: Option<$ty>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    dimensions: Option::None,
-                    forgetting_factor: 1.0 as $ty,
-                    initial_covariance: 1000.0 as $ty,
-                    max_covariance: Option::None,
-                }
-            }
-
-            /// Computes the dot product w·x (predicted output).
-            ///
-            /// # Panics
-            /// Panics if `features.len() != self.dimensions()`.
-            #[inline]
-            #[must_use]
-            pub fn predict(&self, features: &[$ty]) -> $ty {
-                assert_eq!(
-                    features.len(),
-                    self.dims,
-                    "feature length {} != dimensions {}",
-                    features.len(),
-                    self.dims,
-                );
-                let mut sum = 0.0 as $ty;
-                for i in 0..self.dims {
-                    sum = self.weights[i].fma(features[i], sum);
-                }
-                sum
-            }
-
-            /// Updates weights using the Sherman-Morrison rank-1 update.
-            ///
-            /// Computes the Kalman gain, updates weights by the prediction
-            /// error, and updates the inverse covariance matrix.
-            ///
-            /// # Panics
-            /// Panics if `features.len() != self.dimensions()`.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if the target is NaN, or
-            /// `DataError::Infinite` if the target is infinite.
-            #[inline]
-            pub fn update(
-                &mut self,
-                features: &[$ty],
-                target: $ty,
-            ) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(target);
-                debug_assert!(
-                    features.iter().all(|f| f.is_finite()),
-                    "features must be finite"
-                );
-                assert_eq!(
-                    features.len(),
-                    self.dims,
-                    "feature length {} != dimensions {}",
-                    features.len(),
-                    self.dims,
-                );
-                let d = self.dims;
-                let lambda = self.forgetting_factor;
-
-                // px[i] = Σ_j P[i][j] * x[j]
-                for i in 0..d {
-                    let mut sum = 0.0 as $ty;
-                    for j in 0..d {
-                        sum = self.p_matrix[i * d + j].fma(features[j], sum);
-                    }
-                    self.scratch_px[i] = sum;
-                }
-
-                // xpx = Σ x[i] * px[i]
-                let mut xpx = 0.0 as $ty;
-                for i in 0..d {
-                    xpx = features[i].fma(self.scratch_px[i], xpx);
-                }
-
-                // k[i] = px[i] / (lambda + xpx)
-                // Epsilon floor prevents NaN if P degrades numerically.
-                // Reciprocal: one division outside the loop instead of d inside.
-                let inv_denom = 1.0 as $ty / (lambda + xpx).max(<$ty>::EPSILON);
-                for i in 0..d {
-                    self.scratch_k[i] = self.scratch_px[i] * inv_denom;
-                }
-
-                // error = target - w·x
-                let mut prediction = 0.0 as $ty;
-                for i in 0..d {
-                    prediction = self.weights[i].fma(features[i], prediction);
-                }
-                let error = target - prediction;
-
-                // w += k * error
-                for i in 0..d {
-                    self.weights[i] = self.scratch_k[i].fma(error, self.weights[i]);
-                }
-
-                // P[i][j] = (P[i][j] - k[i] * px[j]) / lambda
-                // Reciprocal: one division outside d² loop, multiply inside.
-                let inv_lambda = 1.0 as $ty / lambda;
-                for i in 0..d {
-                    for j in 0..d {
-                        self.p_matrix[i * d + j] = (-self.scratch_k[i])
-                            .fma(self.scratch_px[j], self.p_matrix[i * d + j])
-                            * inv_lambda;
-                    }
-                }
-
-                self.count += 1;
-
-                if let Option::Some(max) = self.max_covariance {
-                    let mut max_diag = 0.0 as $ty;
-                    for i in 0..d {
-                        let diag = self.p_matrix[i * d + i];
-                        if diag > max_diag {
-                            max_diag = diag;
-                        }
-                    }
-                    if max_diag > max {
-                        self.reset_covariance();
-                    }
-                }
-
-                Ok(())
-            }
-
-            #[cold]
-            fn reset_covariance(&mut self) {
-                let d = self.dims;
-                for p in self.p_matrix.iter_mut() {
-                    *p = 0.0 as $ty;
-                }
-                for i in 0..d {
-                    self.p_matrix[i * d + i] = self.initial_covariance;
-                }
-            }
-
-            /// Returns the current weight vector.
-            #[inline]
-            #[must_use]
-            pub fn weights(&self) -> &[$ty] {
-                &self.weights
-            }
-
-            /// Returns the number of dimensions.
-            #[inline]
-            #[must_use]
-            pub fn dimensions(&self) -> usize {
-                self.dims
-            }
-
-            /// Returns the forgetting factor.
-            #[inline]
-            #[must_use]
-            pub fn forgetting_factor(&self) -> $ty {
-                self.forgetting_factor
-            }
-
-            /// Returns the number of updates performed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.count
-            }
-
-            /// Returns the P matrix diagonal (covariance estimates).
-            #[inline]
-            #[must_use]
-            pub fn covariance(&self) -> &[$ty] {
-                &self.p_matrix
-            }
-
-            /// Whether any updates have been performed.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.count > 0
-            }
-
-            /// Zeros weights and resets covariance to initial state.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.weights.fill(0.0 as $ty);
-                self.scratch_px.fill(0.0 as $ty);
-                self.scratch_k.fill(0.0 as $ty);
-                let d = self.dims;
-                let delta = self.initial_covariance;
-                for i in 0..d {
-                    for j in 0..d {
-                        self.p_matrix[i * d + j] = if i == j { delta } else { 0.0 as $ty };
-                    }
-                }
-                self.count = 0;
-            }
-        }
-
-        impl $builder {
-            /// Sets the number of input dimensions (required, >= 1).
-            #[inline]
-            #[must_use]
-            pub fn dimensions(mut self, dims: usize) -> Self {
-                self.dimensions = Option::Some(dims);
-                self
-            }
-
-            /// Sets the forgetting factor (default 1.0, must be in (0, 1]).
-            ///
-            /// Values less than 1.0 downweight older observations exponentially.
-            /// A value of 1.0 gives equal weight to all observations (standard RLS).
-            #[inline]
-            #[must_use]
-            pub fn forgetting_factor(mut self, lambda: $ty) -> Self {
-                self.forgetting_factor = lambda;
-                self
-            }
-
-            /// Sets the initial covariance diagonal (default 1000.0, must be > 0).
-            ///
-            /// The initial covariance matrix P is set to `delta * I`.
-            /// Larger values mean less confidence in initial weights.
-            #[inline]
-            #[must_use]
-            pub fn initial_covariance(mut self, delta: $ty) -> Self {
-                self.initial_covariance = delta;
-                self
-            }
-
-            /// Maximum allowed diagonal covariance before auto-reset.
-            ///
-            /// When the largest P diagonal exceeds this threshold, P is reset
-            /// to `initial_covariance × I`. Prevents divergence in long-running
-            /// filters with forgetting factor < 1.0.
-            #[inline]
-            #[must_use]
-            pub fn max_covariance(mut self, threshold: $ty) -> Self {
-                self.max_covariance = Option::Some(threshold);
-                self
-            }
-
-            /// Builds the filter. Returns an error if parameters are missing or invalid.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let dims = self
-                    .dimensions
-                    .ok_or(nexus_stats_core::ConfigError::Missing("dimensions"))?;
-                let lambda = self.forgetting_factor;
-                let delta = self.initial_covariance;
-
-                if dims < 1 {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "dimensions must be >= 1",
-                    ));
-                }
-                if lambda <= 0.0 as $ty || lambda > 1.0 as $ty {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "forgetting_factor must be in (0, 1]",
-                    ));
-                }
-                if delta <= 0.0 as $ty {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "initial_covariance must be positive",
-                    ));
-                }
-
-                // Initialize P = delta * I
-                let mut p = vec![0.0 as $ty; dims * dims].into_boxed_slice();
-                for i in 0..dims {
-                    p[i * dims + i] = delta;
-                }
-
-                Ok($name {
-                    weights: vec![0.0 as $ty; dims].into_boxed_slice(),
-                    p_matrix: p,
-                    scratch_px: vec![0.0 as $ty; dims].into_boxed_slice(),
-                    scratch_k: vec![0.0 as $ty; dims].into_boxed_slice(),
-                    forgetting_factor: lambda,
-                    initial_covariance: delta,
-                    max_covariance: self.max_covariance,
-                    dims,
-                    count: 0,
-                })
-            }
-        }
-    };
+/// Recursive Least Squares adaptive filter.
+///
+/// Tracks linear relationships between feature vectors and a scalar
+/// target using a recursive update of the covariance matrix. Converges
+/// faster than LMS at the cost of O(d²) per update. The forgetting
+/// factor controls how quickly old observations are downweighted.
+///
+/// # Use Cases
+/// - Online linear regression with fast convergence
+/// - System identification with non-stationary parameters
+/// - Adaptive noise cancellation
+///
+/// # Complexity
+/// O(d²) per update, heap-allocated weight vector and covariance matrix.
+#[derive(Debug, Clone)]
+pub struct RlsFilterF64 {
+    weights: Box<[f64]>,
+    p_matrix: Box<[f64]>,
+    scratch_px: Box<[f64]>,
+    scratch_k: Box<[f64]>,
+    forgetting_factor: f64,
+    initial_covariance: f64,
+    max_covariance: Option<f64>,
+    dims: usize,
+    count: u64,
 }
 
-impl_rls_filter!(RlsFilterF64, RlsFilterF64Builder, f64);
-impl_rls_filter!(RlsFilterF32, RlsFilterF32Builder, f32);
+/// Builder for [`RlsFilterF64`].
+#[derive(Debug, Clone)]
+pub struct RlsFilterF64Builder {
+    dimensions: Option<usize>,
+    forgetting_factor: f64,
+    initial_covariance: f64,
+    max_covariance: Option<f64>,
+}
+
+impl RlsFilterF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> RlsFilterF64Builder {
+        RlsFilterF64Builder {
+            dimensions: None,
+            forgetting_factor: 1.0,
+            initial_covariance: 1000.0,
+            max_covariance: None,
+        }
+    }
+
+    /// Computes the dot product w·x (predicted output).
+    ///
+    /// # Panics
+    /// Panics if `features.len() != self.dimensions()`.
+    #[inline]
+    #[must_use]
+    pub fn predict(&self, features: &[f64]) -> f64 {
+        assert_eq!(
+            features.len(),
+            self.dims,
+            "feature length {} != dimensions {}",
+            features.len(),
+            self.dims,
+        );
+        let mut sum = 0.0;
+        for i in 0..self.dims {
+            sum = self.weights[i].fma(features[i], sum);
+        }
+        sum
+    }
+
+    /// Updates weights using the Sherman-Morrison rank-1 update.
+    ///
+    /// Computes the Kalman gain, updates weights by the prediction
+    /// error, and updates the inverse covariance matrix.
+    ///
+    /// # Panics
+    /// Panics if `features.len() != self.dimensions()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if the target is NaN, or
+    /// `DataError::Infinite` if the target is infinite.
+    #[inline]
+    pub fn update(
+        &mut self,
+        features: &[f64],
+        target: f64,
+    ) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(target);
+        debug_assert!(
+            features.iter().all(|f| f.is_finite()),
+            "features must be finite"
+        );
+        assert_eq!(
+            features.len(),
+            self.dims,
+            "feature length {} != dimensions {}",
+            features.len(),
+            self.dims,
+        );
+        let d = self.dims;
+        let lambda = self.forgetting_factor;
+
+        // px[i] = Σ_j P[i][j] * x[j]
+        for i in 0..d {
+            let mut sum = 0.0;
+            for j in 0..d {
+                sum = self.p_matrix[i * d + j].fma(features[j], sum);
+            }
+            self.scratch_px[i] = sum;
+        }
+
+        // xpx = Σ x[i] * px[i]
+        let mut xpx = 0.0;
+        for i in 0..d {
+            xpx = features[i].fma(self.scratch_px[i], xpx);
+        }
+
+        // k[i] = px[i] / (lambda + xpx)
+        // Epsilon floor prevents NaN if P degrades numerically.
+        // Reciprocal: one division outside the loop instead of d inside.
+        let inv_denom = 1.0 / (lambda + xpx).max(f64::EPSILON);
+        for i in 0..d {
+            self.scratch_k[i] = self.scratch_px[i] * inv_denom;
+        }
+
+        // error = target - w·x
+        let mut prediction = 0.0;
+        for i in 0..d {
+            prediction = self.weights[i].fma(features[i], prediction);
+        }
+        let error = target - prediction;
+
+        // w += k * error
+        for i in 0..d {
+            self.weights[i] = self.scratch_k[i].fma(error, self.weights[i]);
+        }
+
+        // P[i][j] = (P[i][j] - k[i] * px[j]) / lambda
+        // Reciprocal: one division outside d² loop, multiply inside.
+        let inv_lambda = 1.0 / lambda;
+        for i in 0..d {
+            for j in 0..d {
+                self.p_matrix[i * d + j] = (-self.scratch_k[i])
+                    .fma(self.scratch_px[j], self.p_matrix[i * d + j])
+                    * inv_lambda;
+            }
+        }
+
+        self.count += 1;
+
+        if let Some(max) = self.max_covariance {
+            let mut max_diag = 0.0;
+            for i in 0..d {
+                let diag = self.p_matrix[i * d + i];
+                if diag > max_diag {
+                    max_diag = diag;
+                }
+            }
+            if max_diag > max {
+                self.reset_covariance();
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cold]
+    fn reset_covariance(&mut self) {
+        let d = self.dims;
+        for p in &mut *self.p_matrix {
+            *p = 0.0;
+        }
+        for i in 0..d {
+            self.p_matrix[i * d + i] = self.initial_covariance;
+        }
+    }
+
+    /// Returns the current weight vector.
+    #[inline]
+    #[must_use]
+    pub fn weights(&self) -> &[f64] {
+        &self.weights
+    }
+
+    /// Returns the number of dimensions.
+    #[inline]
+    #[must_use]
+    pub fn dimensions(&self) -> usize {
+        self.dims
+    }
+
+    /// Returns the forgetting factor.
+    #[inline]
+    #[must_use]
+    pub fn forgetting_factor(&self) -> f64 {
+        self.forgetting_factor
+    }
+
+    /// Returns the number of updates performed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Returns the P matrix diagonal (covariance estimates).
+    #[inline]
+    #[must_use]
+    pub fn covariance(&self) -> &[f64] {
+        &self.p_matrix
+    }
+
+    /// Whether any updates have been performed.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.count > 0
+    }
+
+    /// Zeros weights and resets covariance to initial state.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.weights.fill(0.0);
+        self.scratch_px.fill(0.0);
+        self.scratch_k.fill(0.0);
+        let d = self.dims;
+        let delta = self.initial_covariance;
+        for i in 0..d {
+            for j in 0..d {
+                self.p_matrix[i * d + j] = if i == j { delta } else { 0.0 };
+            }
+        }
+        self.count = 0;
+    }
+}
+
+impl RlsFilterF64Builder {
+    /// Sets the number of input dimensions (required, >= 1).
+    #[inline]
+    #[must_use]
+    pub fn dimensions(mut self, dims: usize) -> Self {
+        self.dimensions = Some(dims);
+        self
+    }
+
+    /// Sets the forgetting factor (default 1.0, must be in (0, 1]).
+    ///
+    /// Values less than 1.0 downweight older observations exponentially.
+    /// A value of 1.0 gives equal weight to all observations (standard RLS).
+    #[inline]
+    #[must_use]
+    pub fn forgetting_factor(mut self, lambda: f64) -> Self {
+        self.forgetting_factor = lambda;
+        self
+    }
+
+    /// Sets the initial covariance diagonal (default 1000.0, must be > 0).
+    ///
+    /// The initial covariance matrix P is set to `delta * I`.
+    /// Larger values mean less confidence in initial weights.
+    #[inline]
+    #[must_use]
+    pub fn initial_covariance(mut self, delta: f64) -> Self {
+        self.initial_covariance = delta;
+        self
+    }
+
+    /// Maximum allowed diagonal covariance before auto-reset.
+    ///
+    /// When the largest P diagonal exceeds this threshold, P is reset
+    /// to `initial_covariance × I`. Prevents divergence in long-running
+    /// filters with forgetting factor < 1.0.
+    #[inline]
+    #[must_use]
+    pub fn max_covariance(mut self, threshold: f64) -> Self {
+        self.max_covariance = Some(threshold);
+        self
+    }
+
+    /// Builds the filter. Returns an error if parameters are missing or invalid.
+    #[inline]
+    pub fn build(self) -> Result<RlsFilterF64, nexus_stats_core::ConfigError> {
+        let dims = self
+            .dimensions
+            .ok_or(nexus_stats_core::ConfigError::Missing("dimensions"))?;
+        let lambda = self.forgetting_factor;
+        let delta = self.initial_covariance;
+
+        if dims < 1 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "dimensions must be >= 1",
+            ));
+        }
+        if lambda <= 0.0 || lambda > 1.0 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "forgetting_factor must be in (0, 1]",
+            ));
+        }
+        if delta <= 0.0 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "initial_covariance must be positive",
+            ));
+        }
+
+        // Initialize P = delta * I
+        let mut p = vec![0.0; dims * dims].into_boxed_slice();
+        for i in 0..dims {
+            p[i * dims + i] = delta;
+        }
+
+        Ok(RlsFilterF64 {
+            weights: vec![0.0; dims].into_boxed_slice(),
+            p_matrix: p,
+            scratch_px: vec![0.0; dims].into_boxed_slice(),
+            scratch_k: vec![0.0; dims].into_boxed_slice(),
+            forgetting_factor: lambda,
+            initial_covariance: delta,
+            max_covariance: self.max_covariance,
+            dims,
+            count: 0,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -501,22 +492,6 @@ mod tests {
             .initial_covariance(-1.0)
             .build();
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn f32_basic() {
-        let mut filter = RlsFilterF32::builder().dimensions(2).build().unwrap();
-
-        for i in 0..200 {
-            let x1 = (i as f32 * 0.7).sin();
-            let x2 = (i as f32 * 1.3).cos();
-            let target = 2.0 * x1 + 3.0 * x2;
-            filter.update(&[x1, x2], target).unwrap();
-        }
-
-        let w = filter.weights();
-        assert!((w[0] - 2.0).abs() < 0.1, "w[0] = {}, expected ~2.0", w[0]);
-        assert!((w[1] - 3.0).abs() < 0.1, "w[1] = {}, expected ~3.0", w[1]);
     }
 
     #[test]

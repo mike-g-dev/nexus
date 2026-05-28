@@ -2,274 +2,263 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec;
 
-macro_rules! impl_thompson_beta {
-    ($name:ident, $builder:ident, $ty:ty, $sampling:ident) => {
-        /// Thompson Sampling with Beta prior.
-        ///
-        /// Each arm maintains Beta(alpha, beta) parameters. Selection samples
-        /// from each arm's Beta posterior and picks the highest sample.
-        /// Arms with wider posteriors (more uncertain) are explored naturally.
-        ///
-        /// For binary rewards: alpha counts successes, beta counts failures.
-        /// For continuous [0, 1] rewards: alpha += reward, beta += (1 - reward).
-        ///
-        /// Thompson (1933), Agrawal & Goyal (2012).
-        ///
-        /// # Parameters
-        ///
-        /// - `arms` — number of arms (>= 2)
-        /// - `initial_alpha` — prior alpha for all arms (default: 1.0, uniform)
-        /// - `initial_beta` — prior beta for all arms (default: 1.0, uniform)
-        /// - `decay` — multiplicative discount on alpha, beta per update (default: 1.0)
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use nexus_stats_regression::learning::ThompsonBetaF64;
-        ///
-        /// let mut bandit = ThompsonBetaF64::builder()
-        ///     .arms(3)
-        ///     .build()
-        ///     .unwrap();
-        ///
-        /// let mut s: u64 = 42;
-        /// let mut rng = || -> f64 {
-        ///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
-        ///     (s >> 33) as f64 / (1u64 << 31) as f64
-        /// };
-        /// let arm = bandit.select(&mut rng);
-        /// bandit.update(arm, 1.0).unwrap();
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            alphas: Box<[$ty]>,
-            betas: Box<[$ty]>,
-            initial_alpha: $ty,
-            initial_beta: $ty,
-            decay: $ty,
-            total_pulls: u64,
-            num_arms: usize,
-            min_samples: u64,
-        }
+use super::sampling::f64_impl;
 
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            arms: Option<usize>,
-            initial_alpha: $ty,
-            initial_beta: $ty,
-            decay: $ty,
-            min_samples: Option<u64>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    arms: Option::None,
-                    initial_alpha: 1.0 as $ty,
-                    initial_beta: 1.0 as $ty,
-                    decay: 1.0 as $ty,
-                    min_samples: Option::None,
-                }
-            }
-
-            /// Samples from each arm's Beta posterior, returns the arm
-            /// with the highest sample.
-            ///
-            /// `rng` must return independent uniform samples in [0, 1).
-            #[must_use]
-            pub fn select(&self, rng: &mut impl FnMut() -> $ty) -> usize {
-                let mut best_arm = 0;
-                let mut best_sample = -(1.0 as $ty / 0.0 as $ty);
-                for (i, (&a, &b)) in self.alphas.iter().zip(self.betas.iter()).enumerate() {
-                    let sample = super::sampling::$sampling::beta_sample(a, b, rng);
-                    if sample > best_sample {
-                        best_sample = sample;
-                        best_arm = i;
-                    }
-                }
-                best_arm
-            }
-
-            /// Records a reward in [0, 1] for an arm.
-            ///
-            /// Updates: alpha += reward, beta += (1 - reward).
-            /// If `decay < 1.0`, all alpha/beta are discounted first.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError` if reward is NaN, infinite, or outside [0, 1].
-            ///
-            /// # Panics
-            ///
-            /// Panics if `arm >= num_arms`.
-            #[inline]
-            pub fn update(
-                &mut self,
-                arm: usize,
-                reward: $ty,
-            ) -> Result<(), nexus_stats_core::DataError> {
-                check_finite!(reward);
-                if reward < 0.0 as $ty || reward > 1.0 as $ty {
-                    return Err(nexus_stats_core::DataError::Negative);
-                }
-                assert!(
-                    arm < self.num_arms,
-                    "arm {arm} >= num_arms {}",
-                    self.num_arms
-                );
-
-                if self.decay < 1.0 as $ty {
-                    let decay = self.decay;
-                    for (a, b) in self.alphas.iter_mut().zip(self.betas.iter_mut()) {
-                        *a *= decay;
-                        *b *= decay;
-                    }
-                }
-
-                self.alphas[arm] += reward;
-                self.betas[arm] += 1.0 as $ty - reward;
-                self.total_pulls += 1;
-                Ok(())
-            }
-
-            /// Posterior mean for an arm: alpha / (alpha + beta).
-            #[inline]
-            #[must_use]
-            pub fn mean_reward(&self, arm: usize) -> $ty {
-                assert!(
-                    arm < self.num_arms,
-                    "arm {arm} >= num_arms {}",
-                    self.num_arms
-                );
-                self.alphas[arm] / (self.alphas[arm] + self.betas[arm])
-            }
-
-            /// Total pulls across all arms.
-            #[inline]
-            #[must_use]
-            pub fn total_pulls(&self) -> u64 {
-                self.total_pulls
-            }
-
-            /// Number of arms.
-            #[inline]
-            #[must_use]
-            pub fn num_arms(&self) -> usize {
-                self.num_arms
-            }
-
-            /// Whether total pulls >= min_samples.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.total_pulls >= self.min_samples
-            }
-
-            /// Returns the number of updates performed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.total_pulls
-            }
-
-            /// Resets alpha/beta to initial priors.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.alphas.fill(self.initial_alpha);
-                self.betas.fill(self.initial_beta);
-                self.total_pulls = 0;
-            }
-        }
-
-        impl $builder {
-            /// Sets the number of arms (required, >= 2).
-            #[inline]
-            #[must_use]
-            pub fn arms(mut self, n: usize) -> Self {
-                self.arms = Option::Some(n);
-                self
-            }
-
-            /// Sets the initial alpha prior (default: 1.0, must be > 0).
-            #[inline]
-            #[must_use]
-            pub fn initial_alpha(mut self, a: $ty) -> Self {
-                self.initial_alpha = a;
-                self
-            }
-
-            /// Sets the initial beta prior (default: 1.0, must be > 0).
-            #[inline]
-            #[must_use]
-            pub fn initial_beta(mut self, b: $ty) -> Self {
-                self.initial_beta = b;
-                self
-            }
-
-            /// Sets the decay factor (default: 1.0, in (0, 1]).
-            #[inline]
-            #[must_use]
-            pub fn decay(mut self, d: $ty) -> Self {
-                self.decay = d;
-                self
-            }
-
-            /// Sets the minimum samples before `is_primed()` returns true.
-            #[inline]
-            #[must_use]
-            pub fn min_samples(mut self, n: u64) -> Self {
-                self.min_samples = Option::Some(n);
-                self
-            }
-
-            /// Builds the bandit.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let arms = self
-                    .arms
-                    .ok_or(nexus_stats_core::ConfigError::Missing("arms"))?;
-                if arms < 2 {
-                    return Err(nexus_stats_core::ConfigError::Invalid("arms must be >= 2"));
-                }
-                if self.initial_alpha <= 0.0 as $ty || !self.initial_alpha.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "initial_alpha must be positive and finite",
-                    ));
-                }
-                if self.initial_beta <= 0.0 as $ty || !self.initial_beta.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "initial_beta must be positive and finite",
-                    ));
-                }
-                if self.decay <= 0.0 as $ty || self.decay > 1.0 as $ty || !self.decay.is_finite() {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "decay must be in (0, 1]",
-                    ));
-                }
-                let min_samples = self.min_samples.unwrap_or(arms as u64);
-                Ok($name {
-                    alphas: vec![self.initial_alpha; arms].into_boxed_slice(),
-                    betas: vec![self.initial_beta; arms].into_boxed_slice(),
-                    initial_alpha: self.initial_alpha,
-                    initial_beta: self.initial_beta,
-                    decay: self.decay,
-                    total_pulls: 0,
-                    num_arms: arms,
-                    min_samples,
-                })
-            }
-        }
-    };
+/// Thompson Sampling with Beta prior.
+///
+/// Each arm maintains Beta(alpha, beta) parameters. Selection samples
+/// from each arm's Beta posterior and picks the highest sample.
+/// Arms with wider posteriors (more uncertain) are explored naturally.
+///
+/// For binary rewards: alpha counts successes, beta counts failures.
+/// For continuous [0, 1] rewards: alpha += reward, beta += (1 - reward).
+///
+/// Thompson (1933), Agrawal & Goyal (2012).
+///
+/// # Parameters
+///
+/// - `arms` — number of arms (>= 2)
+/// - `initial_alpha` — prior alpha for all arms (default: 1.0, uniform)
+/// - `initial_beta` — prior beta for all arms (default: 1.0, uniform)
+/// - `decay` — multiplicative discount on alpha, beta per update (default: 1.0)
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_regression::learning::ThompsonBetaF64;
+///
+/// let mut bandit = ThompsonBetaF64::builder()
+///     .arms(3)
+///     .build()
+///     .unwrap();
+///
+/// let mut s: u64 = 42;
+/// let mut rng = || -> f64 {
+///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     (s >> 33) as f64 / (1u64 << 31) as f64
+/// };
+/// let arm = bandit.select(&mut rng);
+/// bandit.update(arm, 1.0).unwrap();
+/// ```
+#[derive(Debug, Clone)]
+pub struct ThompsonBetaF64 {
+    alphas: Box<[f64]>,
+    betas: Box<[f64]>,
+    initial_alpha: f64,
+    initial_beta: f64,
+    decay: f64,
+    total_pulls: u64,
+    num_arms: usize,
+    min_samples: u64,
 }
 
-impl_thompson_beta!(ThompsonBetaF64, ThompsonBetaF64Builder, f64, f64_impl);
-impl_thompson_beta!(ThompsonBetaF32, ThompsonBetaF32Builder, f32, f32_impl);
+/// Builder for [`ThompsonBetaF64`].
+#[derive(Debug, Clone)]
+pub struct ThompsonBetaF64Builder {
+    arms: Option<usize>,
+    initial_alpha: f64,
+    initial_beta: f64,
+    decay: f64,
+    min_samples: Option<u64>,
+}
+
+impl ThompsonBetaF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> ThompsonBetaF64Builder {
+        ThompsonBetaF64Builder {
+            arms: None,
+            initial_alpha: 1.0,
+            initial_beta: 1.0,
+            decay: 1.0,
+            min_samples: None,
+        }
+    }
+
+    /// Samples from each arm's Beta posterior, returns the arm
+    /// with the highest sample.
+    ///
+    /// `rng` must return independent uniform samples in [0, 1).
+    #[must_use]
+    pub fn select(&self, rng: &mut impl FnMut() -> f64) -> usize {
+        let mut best_arm = 0;
+        let mut best_sample = f64::NEG_INFINITY;
+        for (i, (&a, &b)) in self.alphas.iter().zip(self.betas.iter()).enumerate() {
+            let sample = f64_impl::beta_sample(a, b, rng);
+            if sample > best_sample {
+                best_sample = sample;
+                best_arm = i;
+            }
+        }
+        best_arm
+    }
+
+    /// Records a reward in [0, 1] for an arm.
+    ///
+    /// Updates: alpha += reward, beta += (1 - reward).
+    /// If `decay < 1.0`, all alpha/beta are discounted first.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError` if reward is NaN, infinite, or outside [0, 1].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `arm >= num_arms`.
+    #[inline]
+    pub fn update(&mut self, arm: usize, reward: f64) -> Result<(), nexus_stats_core::DataError> {
+        check_finite!(reward);
+        if reward < 0.0 || reward > 1.0 {
+            return Err(nexus_stats_core::DataError::Negative);
+        }
+        assert!(
+            arm < self.num_arms,
+            "arm {arm} >= num_arms {}",
+            self.num_arms
+        );
+
+        if self.decay < 1.0 {
+            let decay = self.decay;
+            for (a, b) in self.alphas.iter_mut().zip(self.betas.iter_mut()) {
+                *a *= decay;
+                *b *= decay;
+            }
+        }
+
+        self.alphas[arm] += reward;
+        self.betas[arm] += 1.0 - reward;
+        self.total_pulls += 1;
+        Ok(())
+    }
+
+    /// Posterior mean for an arm: alpha / (alpha + beta).
+    #[inline]
+    #[must_use]
+    pub fn mean_reward(&self, arm: usize) -> f64 {
+        assert!(
+            arm < self.num_arms,
+            "arm {arm} >= num_arms {}",
+            self.num_arms
+        );
+        self.alphas[arm] / (self.alphas[arm] + self.betas[arm])
+    }
+
+    /// Total pulls across all arms.
+    #[inline]
+    #[must_use]
+    pub fn total_pulls(&self) -> u64 {
+        self.total_pulls
+    }
+
+    /// Number of arms.
+    #[inline]
+    #[must_use]
+    pub fn num_arms(&self) -> usize {
+        self.num_arms
+    }
+
+    /// Whether total pulls >= min_samples.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.total_pulls >= self.min_samples
+    }
+
+    /// Returns the number of updates performed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.total_pulls
+    }
+
+    /// Resets alpha/beta to initial priors.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.alphas.fill(self.initial_alpha);
+        self.betas.fill(self.initial_beta);
+        self.total_pulls = 0;
+    }
+}
+
+impl ThompsonBetaF64Builder {
+    /// Sets the number of arms (required, >= 2).
+    #[inline]
+    #[must_use]
+    pub fn arms(mut self, n: usize) -> Self {
+        self.arms = Some(n);
+        self
+    }
+
+    /// Sets the initial alpha prior (default: 1.0, must be > 0).
+    #[inline]
+    #[must_use]
+    pub fn initial_alpha(mut self, a: f64) -> Self {
+        self.initial_alpha = a;
+        self
+    }
+
+    /// Sets the initial beta prior (default: 1.0, must be > 0).
+    #[inline]
+    #[must_use]
+    pub fn initial_beta(mut self, b: f64) -> Self {
+        self.initial_beta = b;
+        self
+    }
+
+    /// Sets the decay factor (default: 1.0, in (0, 1]).
+    #[inline]
+    #[must_use]
+    pub fn decay(mut self, d: f64) -> Self {
+        self.decay = d;
+        self
+    }
+
+    /// Sets the minimum samples before `is_primed()` returns true.
+    #[inline]
+    #[must_use]
+    pub fn min_samples(mut self, n: u64) -> Self {
+        self.min_samples = Some(n);
+        self
+    }
+
+    /// Builds the bandit.
+    #[inline]
+    pub fn build(self) -> Result<ThompsonBetaF64, nexus_stats_core::ConfigError> {
+        let arms = self
+            .arms
+            .ok_or(nexus_stats_core::ConfigError::Missing("arms"))?;
+        if arms < 2 {
+            return Err(nexus_stats_core::ConfigError::Invalid("arms must be >= 2"));
+        }
+        if self.initial_alpha <= 0.0 || !self.initial_alpha.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "initial_alpha must be positive and finite",
+            ));
+        }
+        if self.initial_beta <= 0.0 || !self.initial_beta.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "initial_beta must be positive and finite",
+            ));
+        }
+        if self.decay <= 0.0 || self.decay > 1.0 || !self.decay.is_finite() {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "decay must be in (0, 1]",
+            ));
+        }
+        let min_samples = self.min_samples.unwrap_or(arms as u64);
+        Ok(ThompsonBetaF64 {
+            alphas: vec![self.initial_alpha; arms].into_boxed_slice(),
+            betas: vec![self.initial_beta; arms].into_boxed_slice(),
+            initial_alpha: self.initial_alpha,
+            initial_beta: self.initial_beta,
+            decay: self.decay,
+            total_pulls: 0,
+            num_arms: arms,
+            min_samples,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
