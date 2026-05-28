@@ -1,6 +1,6 @@
 # PeakDetector
 
-**Types:** `PeakDetectorF64`, `PeakDetectorF32`
+**Types:** `PeakDetectorF64`, `PeakDetectorI64`
 **Import:** `use nexus_stats_control::control::PeakDetectorF64;`
 **Feature flags:** None required.
 
