@@ -20,8 +20,10 @@ impl HysteresisF64 {
     ///
     /// `low_threshold` must be less than `high_threshold`.
     #[inline]
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn new(low_threshold: f64, high_threshold: f64) -> Result<Self, crate::ConfigError> {
-        if low_threshold >= high_threshold {
+        // Negated form rejects NaN (all NaN comparisons are false, so !(NaN < x) → true → reject).
+        if !(low_threshold < high_threshold) {
             return Err(crate::ConfigError::Invalid(
                 "low threshold must be less than high",
             ));

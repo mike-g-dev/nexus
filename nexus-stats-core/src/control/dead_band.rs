@@ -87,7 +87,7 @@ impl DeadBandF64 {
 /// - Sensor noise filtering
 #[derive(Debug, Clone)]
 pub struct DeadBandI64 {
-    threshold: i64,
+    threshold: u64,
     last_reported: i64,
     initialized: bool,
 }
@@ -96,7 +96,7 @@ impl DeadBandI64 {
     /// Creates a new dead band filter with the given threshold.
     #[inline]
     #[must_use]
-    pub fn new(threshold: i64) -> Self {
+    pub fn new(threshold: u64) -> Self {
         Self {
             threshold,
             last_reported: 0,
@@ -117,10 +117,7 @@ impl DeadBandI64 {
             return Option::Some(sample);
         }
 
-        let delta = sample - self.last_reported;
-        let abs_delta = if delta < 0 { 0 - delta } else { delta };
-
-        if abs_delta > self.threshold {
+        if sample.abs_diff(self.last_reported) > self.threshold {
             self.last_reported = sample;
             Option::Some(sample)
         } else {
