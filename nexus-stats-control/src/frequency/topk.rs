@@ -71,11 +71,11 @@ impl<K: Eq + Clone, const CAP: usize> TopK<K, CAP> {
         let mut min_idx = 0;
         let mut min_count = u64::MAX;
         for (i, entry) in self.entries.iter().enumerate() {
-            if let Some(e) = entry {
-                if e.count < min_count {
-                    min_count = e.count;
-                    min_idx = i;
-                }
+            if let Some(e) = entry
+                && e.count < min_count
+            {
+                min_count = e.count;
+                min_idx = i;
             }
         }
 

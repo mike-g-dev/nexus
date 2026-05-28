@@ -67,7 +67,7 @@ impl FlexProportionGlobal {
     #[inline]
     pub fn update(&mut self) {
         self.total += 1;
-        if self.total % self.half_life == 0 {
+        if self.total.is_multiple_of(self.half_life) {
             self.period += 1;
         }
     }

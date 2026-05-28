@@ -10,6 +10,12 @@ contained.
 
 ## [Unreleased]
 
+### Removed
+
+- `PeakDetectorF32` — use `PeakDetectorF64`
+- `PeakDetectorI32` — use `PeakDetectorI64`
+- `PeakDetectorI128` — use `PeakDetectorI64`
+
 ## [1.0.3] — 2026-05-26
 
 ## [1.0.2] and earlier

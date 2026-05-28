@@ -22,7 +22,7 @@ The base control primitives (`DeadBand`, `Hysteresis`, `Debounce`, `LevelCrossin
 
 | Type | Module | Feature | Detects / Tracks |
 |------|--------|---------|-------------------|
-| `PeakDetectorF64` / `F32` | `control` | — | Local maxima above a prominence threshold |
+| `PeakDetectorF64` / `I64` | `control` | — | Local maxima above a prominence threshold |
 | `BoolWindow` | `control` | `alloc` | Rolling pass/fail fraction |
 | `TopK<K>` | `frequency` | `alloc` | Top-K frequent items (Space-Saving) |
 | `FlexProportion` / `FlexProportionAtomic` | `frequency` | — | Per-entity share of a streaming count |
