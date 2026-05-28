@@ -9,236 +9,216 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec;
 
-macro_rules! impl_entropy {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Shannon entropy over a categorical distribution.
-        ///
-        /// Maintains frequency counts and computes entropy on query.
-        /// Entropy measures how "spread out" or unpredictable a distribution
-        /// is — higher entropy means more uncertainty.
-        ///
-        /// # Use Cases
-        /// - "How predictable is the distribution of order types?"
-        /// - "Is the venue distribution concentrating or diversifying?"
-        /// - Monitoring regime change via entropy shifts
-        ///
-        /// # Complexity
-        /// - O(1) per observation, O(bins) per entropy query.
-        /// - Heap-allocated count vector.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        #[doc = concat!("use nexus_stats_detection::signal::", stringify!($name), ";")]
-        ///
-        /// // Uniform distribution over 4 categories → maximum entropy
-        #[doc = concat!("let mut e = ", stringify!($name), "::builder().bins(4).build().unwrap();")]
-        /// for i in 0..400u32 { e.update(i as usize % 4); }
-        /// let h = e.entropy().unwrap();
-        /// // ln(4) ≈ 1.386
-        /// assert!((h - 1.386).abs() < 0.01);
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            counts: Box<[u64]>,
-            bins: usize,
-            total: u64,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            bins: Option<usize>,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder { bins: Option::None }
-            }
-
-            /// Records an observation in the given category.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `category >= bins`.
-            #[inline]
-            pub fn update(&mut self, category: usize) {
-                assert!(
-                    category < self.bins,
-                    "category {category} out of range (bins={})",
-                    self.bins,
-                );
-                self.counts[category] += 1;
-                self.total += 1;
-            }
-
-            /// Shannon entropy in nats (natural logarithm base), or `None` if empty.
-            ///
-            /// Maximum entropy for K categories is ln(K) (uniform distribution).
-            /// Minimum is 0 (all observations in one category).
-            #[inline]
-            #[must_use]
-            pub fn entropy(&self) -> Option<$ty> {
-                if self.total == 0 {
-                    return Option::None;
-                }
-                let n = self.total as $ty;
-                let mut h = 0.0 as $ty;
-                for i in 0..self.bins {
-                    let c = self.counts[i];
-                    if c > 0 {
-                        let p = c as $ty / n;
-                        #[allow(clippy::cast_possible_truncation)]
-                        {
-                            h -= p * nexus_stats_core::math::ln(p as f64) as $ty;
-                        }
-                    }
-                }
-                Option::Some(h)
-            }
-
-            /// Entropy in bits (log base 2), or `None` if empty.
-            ///
-            /// `entropy_bits = entropy / ln(2)`.
-            #[inline]
-            #[must_use]
-            pub fn entropy_bits(&self) -> Option<$ty> {
-                self.entropy().map(|h| {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        h / nexus_stats_core::math::ln(2.0) as $ty
-                    }
-                })
-            }
-
-            /// Self-information of the given category: `-ln(p_i)`.
-            ///
-            /// High values indicate rare/surprising events.
-            /// Returns `None` if empty or the category has never been observed.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `category >= bins`.
-            #[inline]
-            #[must_use]
-            pub fn surprise(&self, category: usize) -> Option<$ty> {
-                assert!(
-                    category < self.bins,
-                    "category {category} out of range (bins={})",
-                    self.bins,
-                );
-                if self.total == 0 || self.counts[category] == 0 {
-                    return Option::None;
-                }
-                let p = self.counts[category] as $ty / self.total as $ty;
-                #[allow(clippy::cast_possible_truncation)]
-                {
-                    Option::Some(-(nexus_stats_core::math::ln(p as f64) as $ty))
-                }
-            }
-
-            /// Probability estimate for a category, or `None` if empty.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `category >= bins`.
-            #[inline]
-            #[must_use]
-            pub fn probability(&self, category: usize) -> Option<$ty> {
-                assert!(
-                    category < self.bins,
-                    "category {category} out of range (bins={})",
-                    self.bins,
-                );
-                if self.total == 0 {
-                    return Option::None;
-                }
-                Option::Some(self.counts[category] as $ty / self.total as $ty)
-            }
-
-            /// Number of configured categories.
-            #[inline]
-            #[must_use]
-            pub fn bins(&self) -> usize {
-                self.bins
-            }
-
-            /// Total observations across all categories.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.total
-            }
-
-            /// Whether any observations have been recorded.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.total > 0
-            }
-
-            /// Observation count for a specific category.
-            ///
-            /// # Panics
-            ///
-            /// Panics if `category >= bins`.
-            #[inline]
-            #[must_use]
-            pub fn category_count(&self, category: usize) -> u64 {
-                assert!(
-                    category < self.bins,
-                    "category {category} out of range (bins={})",
-                    self.bins,
-                );
-                self.counts[category]
-            }
-
-            /// Resets to empty state. Configuration and allocation preserved.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.counts.fill(0);
-                self.total = 0;
-            }
-        }
-
-        impl $builder {
-            /// Number of categories (required, >= 2).
-            #[inline]
-            #[must_use]
-            pub fn bins(mut self, bins: usize) -> Self {
-                self.bins = Option::Some(bins);
-                self
-            }
-
-            /// Builds the entropy tracker.
-            ///
-            /// # Errors
-            /// Returns `ConfigError` if bins is missing or < 2.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let bins = self
-                    .bins
-                    .ok_or(nexus_stats_core::ConfigError::Missing("bins"))?;
-                if bins < 2 {
-                    return Err(nexus_stats_core::ConfigError::Invalid("bins must be >= 2"));
-                }
-                Ok($name {
-                    counts: vec![0u64; bins].into_boxed_slice(),
-                    bins,
-                    total: 0,
-                })
-            }
-        }
-    };
+/// Shannon entropy over a categorical distribution.
+///
+/// Maintains frequency counts and computes entropy on query.
+/// Entropy measures how "spread out" or unpredictable a distribution
+/// is — higher entropy means more uncertainty.
+///
+/// # Use Cases
+/// - "How predictable is the distribution of order types?"
+/// - "Is the venue distribution concentrating or diversifying?"
+/// - Monitoring regime change via entropy shifts
+///
+/// # Complexity
+/// - O(1) per observation, O(bins) per entropy query.
+/// - Heap-allocated count vector.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_detection::signal::EntropyF64;
+///
+/// // Uniform distribution over 4 categories → maximum entropy
+/// let mut e = EntropyF64::builder().bins(4).build().unwrap();
+/// for i in 0..400u32 { e.update(i as usize % 4); }
+/// let h = e.entropy().unwrap();
+/// // ln(4) ≈ 1.386
+/// assert!((h - 1.386).abs() < 0.01);
+/// ```
+#[derive(Debug, Clone)]
+pub struct EntropyF64 {
+    counts: Box<[u64]>,
+    bins: usize,
+    total: u64,
 }
 
-impl_entropy!(EntropyF64, EntropyF64Builder, f64);
-impl_entropy!(EntropyF32, EntropyF32Builder, f32);
+/// Builder for [`EntropyF64`].
+#[derive(Debug, Clone)]
+pub struct EntropyF64Builder {
+    bins: Option<usize>,
+}
+
+impl EntropyF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> EntropyF64Builder {
+        EntropyF64Builder { bins: None }
+    }
+
+    /// Records an observation in the given category.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `category >= bins`.
+    #[inline]
+    pub fn update(&mut self, category: usize) {
+        assert!(
+            category < self.bins,
+            "category {category} out of range (bins={})",
+            self.bins,
+        );
+        self.counts[category] += 1;
+        self.total += 1;
+    }
+
+    /// Shannon entropy in nats (natural logarithm base), or `None` if empty.
+    ///
+    /// Maximum entropy for K categories is ln(K) (uniform distribution).
+    /// Minimum is 0 (all observations in one category).
+    #[inline]
+    #[must_use]
+    pub fn entropy(&self) -> Option<f64> {
+        if self.total == 0 {
+            return None;
+        }
+        let n = self.total as f64;
+        let mut h = 0.0;
+        for i in 0..self.bins {
+            let c = self.counts[i];
+            if c > 0 {
+                let p = c as f64 / n;
+                h -= p * nexus_stats_core::math::ln(p);
+            }
+        }
+        Some(h)
+    }
+
+    /// Entropy in bits (log base 2), or `None` if empty.
+    ///
+    /// `entropy_bits = entropy / ln(2)`.
+    #[inline]
+    #[must_use]
+    pub fn entropy_bits(&self) -> Option<f64> {
+        self.entropy().map(|h| h / nexus_stats_core::math::ln(2.0))
+    }
+
+    /// Self-information of the given category: `-ln(p_i)`.
+    ///
+    /// High values indicate rare/surprising events.
+    /// Returns `None` if empty or the category has never been observed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `category >= bins`.
+    #[inline]
+    #[must_use]
+    pub fn surprise(&self, category: usize) -> Option<f64> {
+        assert!(
+            category < self.bins,
+            "category {category} out of range (bins={})",
+            self.bins,
+        );
+        if self.total == 0 || self.counts[category] == 0 {
+            return None;
+        }
+        let p = self.counts[category] as f64 / self.total as f64;
+        Some(-nexus_stats_core::math::ln(p))
+    }
+
+    /// Probability estimate for a category, or `None` if empty.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `category >= bins`.
+    #[inline]
+    #[must_use]
+    pub fn probability(&self, category: usize) -> Option<f64> {
+        assert!(
+            category < self.bins,
+            "category {category} out of range (bins={})",
+            self.bins,
+        );
+        if self.total == 0 {
+            return None;
+        }
+        Some(self.counts[category] as f64 / self.total as f64)
+    }
+
+    /// Number of configured categories.
+    #[inline]
+    #[must_use]
+    pub fn bins(&self) -> usize {
+        self.bins
+    }
+
+    /// Total observations across all categories.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.total
+    }
+
+    /// Whether any observations have been recorded.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.total > 0
+    }
+
+    /// Observation count for a specific category.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `category >= bins`.
+    #[inline]
+    #[must_use]
+    pub fn category_count(&self, category: usize) -> u64 {
+        assert!(
+            category < self.bins,
+            "category {category} out of range (bins={})",
+            self.bins,
+        );
+        self.counts[category]
+    }
+
+    /// Resets to empty state. Configuration and allocation preserved.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.counts.fill(0);
+        self.total = 0;
+    }
+}
+
+impl EntropyF64Builder {
+    /// Number of categories (required, >= 2).
+    #[inline]
+    #[must_use]
+    pub fn bins(mut self, bins: usize) -> Self {
+        self.bins = Some(bins);
+        self
+    }
+
+    /// Builds the entropy tracker.
+    ///
+    /// # Errors
+    /// Returns `ConfigError` if bins is missing or < 2.
+    #[inline]
+    pub fn build(self) -> Result<EntropyF64, nexus_stats_core::ConfigError> {
+        let bins = self
+            .bins
+            .ok_or(nexus_stats_core::ConfigError::Missing("bins"))?;
+        if bins < 2 {
+            return Err(nexus_stats_core::ConfigError::Invalid("bins must be >= 2"));
+        }
+        Ok(EntropyF64 {
+            counts: vec![0u64; bins].into_boxed_slice(),
+            bins,
+            total: 0,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -378,16 +358,6 @@ mod tests {
         e.reset();
         assert_eq!(e.count(), 0);
         assert!(e.entropy().is_none());
-    }
-
-    #[test]
-    fn f32_basic() {
-        let mut e = EntropyF32::builder().bins(4).build().unwrap();
-        for i in 0..400u32 {
-            e.update(i as usize % 4);
-        }
-        let h = e.entropy().unwrap();
-        assert!((h - 1.386).abs() < 0.01, "f32 entropy = {h}");
     }
 
     #[test]

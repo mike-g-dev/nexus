@@ -272,13 +272,7 @@ macro_rules! impl_mosum {
 #[cfg(feature = "alloc")]
 impl_mosum!(MosumF64, MosumF64Builder, f64, float, 0.0);
 #[cfg(feature = "alloc")]
-impl_mosum!(MosumF32, MosumF32Builder, f32, float, 0.0);
-#[cfg(feature = "alloc")]
 impl_mosum!(MosumI64, MosumI64Builder, i64, int, 0);
-#[cfg(feature = "alloc")]
-impl_mosum!(MosumI32, MosumI32Builder, i32, int, 0);
-#[cfg(feature = "alloc")]
-impl_mosum!(MosumI128, MosumI128Builder, i128, int, 0);
 
 #[cfg(all(test, feature = "alloc"))]
 #[allow(clippy::float_cmp)]
@@ -411,20 +405,6 @@ mod tests {
             result,
             Err(nexus_stats_core::ConfigError::Missing("window_size"))
         ));
-    }
-
-    #[test]
-    fn i128_basic() {
-        let mut mosum = MosumI128::builder(1000)
-            .window_size(5)
-            .threshold(100)
-            .build()
-            .unwrap();
-
-        for _ in 0..5 {
-            let _ = mosum.update(1000);
-        }
-        assert_eq!(mosum.update(1000), Some(Direction::Neutral));
     }
 
     #[test]

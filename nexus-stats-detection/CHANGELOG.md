@@ -13,6 +13,18 @@ contained.
 ### Removed
 
 - `TrendAlertF32`, `TrendAlertF32Builder` — use `TrendAlertF64` (dependency `HoltF32` removed from smoothing crate)
+- `MosumF32`, `MosumF32Builder` — use `MosumF64`
+- `MosumI32`, `MosumI32Builder` — use `MosumI64`
+- `MosumI128`, `MosumI128Builder` — use `MosumI64`
+- `MultiGateF32`, `MultiGateF32Builder` — use `MultiGateF64`
+- `PageHinkleyF32`, `PageHinkleyF32Builder` — use `PageHinkleyF64`
+- `AdwinF32`, `AdwinF32Builder` — use `AdwinF64`
+- `DistDriftF32`, `DistDriftF32Builder` — use `DistDriftF64`
+- `AutocorrelationF32`, `AutocorrelationF32Builder` — use `AutocorrelationF64`
+- `AutocorrelationI32`, `AutocorrelationI32Builder` — use `AutocorrelationI64`
+- `CrossCorrelationF32`, `CrossCorrelationF32Builder` — use `CrossCorrelationF64`
+- `EntropyF32`, `EntropyF32Builder` — use `EntropyF64`
+- `PredictiveInfoBoundF32`, `PredictiveInfoBoundF32Builder` — use `PredictiveInfoBoundF64`
 
 ### Changed
 

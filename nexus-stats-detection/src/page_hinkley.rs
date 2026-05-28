@@ -1,207 +1,198 @@
 use nexus_stats_core::DataError;
 
-macro_rules! impl_page_hinkley {
-    ($name:ident, $builder:ident, $ty:ty) => {
-        /// Page-Hinkley — sequential test for mean drift.
-        ///
-        /// Accumulates deviations from the running mean. Fires when the
-        /// difference between the cumulative sum and its running minimum
-        /// (or maximum) exceeds the threshold. O(1) per update.
-        ///
-        /// Two-sided: detects both upward and downward mean shifts.
-        ///
-        /// # Parameters
-        ///
-        /// - `threshold` (λ) — detection sensitivity. Larger values
-        ///   reduce false positives but increase detection delay.
-        /// - `alpha` (δ) — magnitude tolerance. The minimum shift size
-        ///   worth detecting. Deviations smaller than `alpha` are absorbed.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use nexus_stats_detection::detection::PageHinkleyF64;
-        ///
-        /// let mut ph = PageHinkleyF64::builder()
-        ///     .threshold(50.0)
-        ///     .alpha(0.5)
-        ///     .build()
-        ///     .unwrap();
-        ///
-        /// // Stable signal — no detection
-        /// for _ in 0..100 {
-        ///     assert!(!ph.update(10.0).unwrap());
-        /// }
-        /// ```
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            threshold: $ty,
-            alpha: $ty,
-            mean: $ty,
-            sum_pos: $ty,
-            sum_neg: $ty,
-            min_pos: $ty,
-            max_neg: $ty,
-            count: u64,
-            min_samples: u64,
-        }
-
-        /// Builder for [`
-        #[doc = stringify!($name)]
-        /// `].
-        #[derive(Debug, Clone)]
-        pub struct $builder {
-            threshold: Option<$ty>,
-            alpha: Option<$ty>,
-            min_samples: u64,
-        }
-
-        impl $name {
-            /// Creates a builder.
-            #[inline]
-            #[must_use]
-            pub fn builder() -> $builder {
-                $builder {
-                    threshold: Option::None,
-                    alpha: Option::None,
-                    min_samples: 30,
-                }
-            }
-
-            /// Feeds a sample. Returns `Ok(true)` if mean drift detected.
-            ///
-            /// Detection is two-sided: fires on upward or downward shifts.
-            /// Returns `Ok(false)` while priming or when no drift detected.
-            ///
-            /// # Errors
-            ///
-            /// Returns `DataError::NotANumber` if the sample is NaN, or
-            /// `DataError::Infinite` if the sample is infinite.
-            #[inline]
-            pub fn update(&mut self, sample: $ty) -> Result<bool, DataError> {
-                check_finite!(sample);
-                self.count += 1;
-
-                self.mean += (sample - self.mean) / self.count as $ty;
-
-                self.sum_pos += sample - self.mean - self.alpha;
-                self.sum_neg += sample - self.mean + self.alpha;
-
-                if self.sum_pos < self.min_pos {
-                    self.min_pos = self.sum_pos;
-                }
-                if self.sum_neg > self.max_neg {
-                    self.max_neg = self.sum_neg;
-                }
-
-                if !self.is_primed() {
-                    return Ok(false);
-                }
-
-                Ok(self.sum_pos - self.min_pos > self.threshold
-                    || self.max_neg - self.sum_neg > self.threshold)
-            }
-
-            /// Number of samples processed.
-            #[inline]
-            #[must_use]
-            pub fn count(&self) -> u64 {
-                self.count
-            }
-
-            /// Whether the tracker has reached `min_samples`.
-            #[inline]
-            #[must_use]
-            pub fn is_primed(&self) -> bool {
-                self.count >= self.min_samples
-            }
-
-            /// Resets to uninitialized state. Parameters unchanged.
-            #[inline]
-            pub fn reset(&mut self) {
-                self.mean = 0.0 as $ty;
-                self.sum_pos = 0.0 as $ty;
-                self.sum_neg = 0.0 as $ty;
-                self.min_pos = 0.0 as $ty;
-                self.max_neg = 0.0 as $ty;
-                self.count = 0;
-            }
-        }
-
-        impl $builder {
-            /// Detection threshold (λ). Required, must be positive.
-            ///
-            /// Larger values reduce false positives but increase detection delay.
-            #[inline]
-            #[must_use]
-            pub fn threshold(mut self, threshold: $ty) -> Self {
-                self.threshold = Option::Some(threshold);
-                self
-            }
-
-            /// Magnitude tolerance (δ). Required, must be non-negative.
-            ///
-            /// The minimum shift size worth detecting. Set to 0 to detect
-            /// any shift.
-            #[inline]
-            #[must_use]
-            pub fn alpha(mut self, alpha: $ty) -> Self {
-                self.alpha = Option::Some(alpha);
-                self
-            }
-
-            /// Minimum samples before detection activates. Default: 30.
-            #[inline]
-            #[must_use]
-            pub fn min_samples(mut self, min: u64) -> Self {
-                self.min_samples = min;
-                self
-            }
-
-            /// Builds the Page-Hinkley detector.
-            ///
-            /// # Errors
-            ///
-            /// - Threshold must have been set and be positive.
-            /// - Alpha must have been set and be non-negative.
-            #[inline]
-            pub fn build(self) -> Result<$name, nexus_stats_core::ConfigError> {
-                let threshold = self
-                    .threshold
-                    .ok_or(nexus_stats_core::ConfigError::Missing("threshold"))?;
-                if !threshold.is_finite() || threshold <= 0.0 as $ty {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "PageHinkley threshold must be finite and positive",
-                    ));
-                }
-
-                let alpha = self
-                    .alpha
-                    .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
-                if !alpha.is_finite() || alpha < 0.0 as $ty {
-                    return Err(nexus_stats_core::ConfigError::Invalid(
-                        "PageHinkley alpha must be finite and non-negative",
-                    ));
-                }
-
-                Ok($name {
-                    threshold,
-                    alpha,
-                    mean: 0.0 as $ty,
-                    sum_pos: 0.0 as $ty,
-                    sum_neg: 0.0 as $ty,
-                    min_pos: 0.0 as $ty,
-                    max_neg: 0.0 as $ty,
-                    count: 0,
-                    min_samples: self.min_samples,
-                })
-            }
-        }
-    };
+/// Page-Hinkley — sequential test for mean drift.
+///
+/// Accumulates deviations from the running mean. Fires when the
+/// difference between the cumulative sum and its running minimum
+/// (or maximum) exceeds the threshold. O(1) per update.
+///
+/// Two-sided: detects both upward and downward mean shifts.
+///
+/// # Parameters
+///
+/// - `threshold` (lambda) — detection sensitivity. Larger values
+///   reduce false positives but increase detection delay.
+/// - `alpha` (delta) — magnitude tolerance. The minimum shift size
+///   worth detecting. Deviations smaller than `alpha` are absorbed.
+///
+/// # Examples
+///
+/// ```
+/// use nexus_stats_detection::detection::PageHinkleyF64;
+///
+/// let mut ph = PageHinkleyF64::builder()
+///     .threshold(50.0)
+///     .alpha(0.5)
+///     .build()
+///     .unwrap();
+///
+/// // Stable signal — no detection
+/// for _ in 0..100 {
+///     assert!(!ph.update(10.0).unwrap());
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct PageHinkleyF64 {
+    threshold: f64,
+    alpha: f64,
+    mean: f64,
+    sum_pos: f64,
+    sum_neg: f64,
+    min_pos: f64,
+    max_neg: f64,
+    count: u64,
+    min_samples: u64,
 }
 
-impl_page_hinkley!(PageHinkleyF64, PageHinkleyF64Builder, f64);
-impl_page_hinkley!(PageHinkleyF32, PageHinkleyF32Builder, f32);
+/// Builder for [`PageHinkleyF64`].
+#[derive(Debug, Clone)]
+pub struct PageHinkleyF64Builder {
+    threshold: Option<f64>,
+    alpha: Option<f64>,
+    min_samples: u64,
+}
+
+impl PageHinkleyF64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> PageHinkleyF64Builder {
+        PageHinkleyF64Builder {
+            threshold: None,
+            alpha: None,
+            min_samples: 30,
+        }
+    }
+
+    /// Feeds a sample. Returns `Ok(true)` if mean drift detected.
+    ///
+    /// Detection is two-sided: fires on upward or downward shifts.
+    /// Returns `Ok(false)` while priming or when no drift detected.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DataError::NotANumber` if the sample is NaN, or
+    /// `DataError::Infinite` if the sample is infinite.
+    #[inline]
+    pub fn update(&mut self, sample: f64) -> Result<bool, DataError> {
+        check_finite!(sample);
+        self.count += 1;
+
+        self.mean += (sample - self.mean) / self.count as f64;
+
+        self.sum_pos += sample - self.mean - self.alpha;
+        self.sum_neg += sample - self.mean + self.alpha;
+
+        if self.sum_pos < self.min_pos {
+            self.min_pos = self.sum_pos;
+        }
+        if self.sum_neg > self.max_neg {
+            self.max_neg = self.sum_neg;
+        }
+
+        if !self.is_primed() {
+            return Ok(false);
+        }
+
+        Ok(self.sum_pos - self.min_pos > self.threshold
+            || self.max_neg - self.sum_neg > self.threshold)
+    }
+
+    /// Number of samples processed.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Whether the tracker has reached `min_samples`.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.count >= self.min_samples
+    }
+
+    /// Resets to uninitialized state. Parameters unchanged.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.mean = 0.0;
+        self.sum_pos = 0.0;
+        self.sum_neg = 0.0;
+        self.min_pos = 0.0;
+        self.max_neg = 0.0;
+        self.count = 0;
+    }
+}
+
+impl PageHinkleyF64Builder {
+    /// Detection threshold (lambda). Required, must be positive.
+    ///
+    /// Larger values reduce false positives but increase detection delay.
+    #[inline]
+    #[must_use]
+    pub fn threshold(mut self, threshold: f64) -> Self {
+        self.threshold = Some(threshold);
+        self
+    }
+
+    /// Magnitude tolerance (delta). Required, must be non-negative.
+    ///
+    /// The minimum shift size worth detecting. Set to 0 to detect
+    /// any shift.
+    #[inline]
+    #[must_use]
+    pub fn alpha(mut self, alpha: f64) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
+    /// Minimum samples before detection activates. Default: 30.
+    #[inline]
+    #[must_use]
+    pub fn min_samples(mut self, min: u64) -> Self {
+        self.min_samples = min;
+        self
+    }
+
+    /// Builds the Page-Hinkley detector.
+    ///
+    /// # Errors
+    ///
+    /// - Threshold must have been set and be positive.
+    /// - Alpha must have been set and be non-negative.
+    #[inline]
+    pub fn build(self) -> Result<PageHinkleyF64, nexus_stats_core::ConfigError> {
+        let threshold = self
+            .threshold
+            .ok_or(nexus_stats_core::ConfigError::Missing("threshold"))?;
+        if !threshold.is_finite() || threshold <= 0.0 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "PageHinkley threshold must be finite and positive",
+            ));
+        }
+
+        let alpha = self
+            .alpha
+            .ok_or(nexus_stats_core::ConfigError::Missing("alpha"))?;
+        if !alpha.is_finite() || alpha < 0.0 {
+            return Err(nexus_stats_core::ConfigError::Invalid(
+                "PageHinkley alpha must be finite and non-negative",
+            ));
+        }
+
+        Ok(PageHinkleyF64 {
+            threshold,
+            alpha,
+            mean: 0.0,
+            sum_pos: 0.0,
+            sum_neg: 0.0,
+            min_pos: 0.0,
+            max_neg: 0.0,
+            count: 0,
+            min_samples: self.min_samples,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
