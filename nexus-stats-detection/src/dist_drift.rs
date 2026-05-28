@@ -409,7 +409,7 @@ mod tests {
         let js = drift.js_divergence().unwrap();
         let ln2 = nexus_stats_core::math::ln(2.0);
         assert!(js >= 0.0, "JS should be non-negative, got {js}");
-        assert!(js <= ln2 + 1e-10, "JS should be <= ln(2) = {ln2}, got {js}");
+        assert!(js <= ln2 + 1e-10, "JS should be <= ln(2) ≈ {ln2}, got {js}");
     }
 
     #[test]
@@ -487,7 +487,7 @@ mod tests {
         let w1 = drift.wasserstein1().unwrap();
         assert!(
             (w1 - 10.0).abs() < 2.0,
-            "W1 should be = 10 for shift=10, got {w1}"
+            "W1 should be ≈ 10 for shift=10, got {w1}"
         );
     }
 
