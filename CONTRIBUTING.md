@@ -38,6 +38,16 @@ If you're proposing a new feature, ask yourself:
 
 The answer to (3) is usually yes.
 
+### Show Me the Caller
+
+Every primitive and every method needs a concrete use case driving it. "This could be useful" is not a use case. "The FIX journal needs durable append with crash recovery" is a use case.
+
+This doesn't mean we reject ideas without an existing caller — exploring what *could* be in scope is valuable, and those conversations often reveal the design space. But features without a real caller get parked, not shipped. The question: who calls this, what does their code look like, and does this earn its place?
+
+If a feature is two lines of user code composing existing operations, it doesn't earn API surface — document the composition pattern instead. If it requires non-obvious knowledge (crash recovery invariants, protocol semantics, precision handling), it earns a method.
+
+This matters most during data structure design. A method that no one calls but touches the hot path is the wrong tradeoff — it costs every caller to benefit none. Discuss it before building it.
+
 ## Benchmarking Standards
 
 Performance claims require evidence. We have specific standards for how benchmarks should be conducted to produce reproducible, meaningful results.

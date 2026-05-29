@@ -77,6 +77,18 @@ a specific primitive, go there — not here.
 
 Rustdoc: `cargo doc --workspace --no-deps --open`.
 
+## Design documents
+
+Pre-implementation architecture planning for upcoming crates.
+Open questions are presented with both paths so tradeoffs can
+be discussed before code is written.
+
+- [`design/README.md`](design/README.md) — Index
+- [`design/nexus-shm.md`](design/nexus-shm.md) — Shared memory
+  primitives (mmap foundation, ring buffers, journal, slot, map)
+- [`design/nexus-fix.md`](design/nexus-fix.md) — FIX protocol
+  codec generation and session engine
+
 ## Architecture decisions
 
 - [`../CLAUDE.md`](../CLAUDE.md) — Workspace-level philosophy, crate
