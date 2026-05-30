@@ -125,9 +125,8 @@ impl AsyncWrite for MockAsyncReader<'_> {
 // =============================================================================
 
 async fn bench_inmemory_nexus(wire: &[u8], msg_count: u64) -> (Duration, u64) {
-    use nexus_async_net::ws::{WsReader, WsWriter};
-    use nexus_net::buf::WriteBuf;
-    use nexus_net::ws::{FrameReader, FrameWriter, Message, Role};
+    use nexus_async_net::ws::WsReader;
+    use nexus_net::ws::{FrameReader, Message, Role};
 
     let mut conn = AsyncReadAdapter::new(MockAsyncReader { data: wire, pos: 0 });
     let mut reader = WsReader::from_raw_parts(

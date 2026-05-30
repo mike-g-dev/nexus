@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking**: `WsStreamBuilder::connect()`, `connect_with()`, and
+  `accept()` now return `(WsReader, WsWriter, S)` tuples instead of
+  `WsStream`. The decomposed sans-IO API is the primary interface —
+  reader and writer are independent borrows, enabling zero-copy recv
+  while sending concurrently.
+- **Breaking**: Removed blanket `pub use nexus_net` re-export. Downstream
+  code that used `nexus_async_net::nexus_net::…` paths must import from
+  `nexus_net` directly or use the new targeted re-exports
+  (`CloseCode`, `FrameReader`, `FrameWriter`, `Message`, `Role`,
+  `WireStream`, `WriteBuf`, etc.).
+- `WsStream` (tokio only) demoted to Stream/Sink ecosystem adapter.
+  Construct via `WsStream::from_parts(reader, writer, conn)`. Uses
+  `OwnedMessage` (allocating) — prefer `WsReader`/`WsWriter` for
+  performance-sensitive paths.
+
+### Added
+
+- `WsReader` / `WsWriter` as the primary decomposed WebSocket API,
+  shared across tokio and nexus backends.
+- `WsReader::from_raw_parts()` and `WsWriter::from_raw_parts()` for
+  custom handshakes, testing, and benchmarks.
+
 ## [0.8.0] — 2026-05-11
 
 ### Changed
