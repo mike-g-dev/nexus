@@ -20,20 +20,30 @@
 //! assert!(reader.read().is_none()); // consumed
 //! ```
 
+#[cfg(not(loom))]
 use std::cell::UnsafeCell;
 use std::fmt;
+#[cfg(not(loom))]
 use std::mem::MaybeUninit;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering, fence};
+#[cfg(loom)]
+use std::marker::PhantomData;
 
-use crate::{Pod, atomic_load, atomic_store};
+use crate::Pod;
+#[cfg(not(loom))]
+use crate::{atomic_load, atomic_store};
+use crate::loom_impl::{Arc, AtomicUsize, Ordering, fence};
 
 /// Shared state between writer and reader.
 #[repr(C)]
 struct Inner<T> {
     /// Sequence number. Odd = write in progress, even = stable, 0 = never written.
     seq: AtomicUsize,
+    #[cfg(not(loom))]
     data: UnsafeCell<MaybeUninit<T>>,
+    #[cfg(loom)]
+    data: AtomicUsize,
+    #[cfg(loom)]
+    _marker: PhantomData<T>,
 }
 
 // SAFETY: Inner is shared via Arc between exactly one Writer and one Reader,
@@ -82,7 +92,12 @@ pub fn slot<T: Pod>() -> (Writer<T>, Reader<T>) {
     // "write complete" and odd for "write in progress": 2→3→4→5→...
     let inner = Arc::new(Inner {
         seq: AtomicUsize::new(2),
+        #[cfg(not(loom))]
         data: UnsafeCell::new(MaybeUninit::uninit()),
+        #[cfg(loom)]
+        data: AtomicUsize::new(0),
+        #[cfg(loom)]
+        _marker: PhantomData,
     });
 
     (
@@ -115,7 +130,13 @@ impl<T: Pod> Writer<T> {
         // sequence will spin. The data pointer is from UnsafeCell — no
         // references are created to the shared data, only raw pointer access
         // through word-at-a-time atomics.
-        unsafe { atomic_store(inner.data.get().cast::<T>(), &value) };
+        #[cfg(not(loom))]
+        // SAFETY: sole writer, data from UnsafeCell, word-at-a-time atomics.
+        unsafe {
+            atomic_store(inner.data.get().cast::<T>(), &value);
+        }
+        #[cfg(loom)]
+        crate::loom_impl::loom_store(&inner.data, &value);
 
         fence(Ordering::Release);
         self.local_seq = seq.wrapping_add(2);
@@ -162,7 +183,7 @@ impl<T: Pod> Reader<T> {
 
             // Write in progress
             if seq1 & 1 != 0 {
-                core::hint::spin_loop();
+                crate::loom_impl::spin_yield();
                 continue;
             }
 
@@ -172,7 +193,10 @@ impl<T: Pod> Reader<T> {
             // The Acquire fence synchronizes with the writer's Release fence.
             // If a concurrent write occurs, we detect it via seq2 != seq1.
             // No references are created — raw pointer access through atomics.
+            #[cfg(not(loom))]
             let value = unsafe { atomic_load(inner.data.get().cast::<T>()) };
+            #[cfg(loom)]
+            let value = crate::loom_impl::loom_load::<T>(&inner.data);
 
             fence(Ordering::Acquire);
             let seq2 = inner.seq.load(Ordering::Relaxed);
@@ -220,14 +244,17 @@ impl<T: Pod> Reader<T> {
             }
 
             if seq1 & 1 != 0 {
-                core::hint::spin_loop();
+                crate::loom_impl::spin_yield();
                 continue;
             }
 
             fence(Ordering::Acquire);
 
             // SAFETY: same as read() — seq1 is even and non-zero.
+            #[cfg(not(loom))]
             let value = unsafe { atomic_load(inner.data.get().cast::<T>()) };
+            #[cfg(loom)]
+            let value = crate::loom_impl::loom_load::<T>(&inner.data);
 
             fence(Ordering::Acquire);
             let seq2 = inner.seq.load(Ordering::Relaxed);
@@ -266,7 +293,7 @@ impl<T: Pod> fmt::Debug for Reader<T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod tests {
     use super::*;
 
@@ -389,7 +416,7 @@ mod tests {
 
         let handle = thread::spawn(move || {
             while reader.read().is_none() {
-                core::hint::spin_loop();
+                crate::loom_impl::spin_yield();
             }
         });
 
@@ -531,7 +558,7 @@ mod tests {
         let handle = thread::spawn(move || {
             for i in 0..10_000u64 {
                 while r1.read().is_none() {
-                    core::hint::spin_loop();
+                    crate::loom_impl::spin_yield();
                 }
                 w2.write(i);
             }
@@ -540,7 +567,7 @@ mod tests {
         for i in 0..10_000u64 {
             w1.write(i);
             while r2.read().is_none() {
-                core::hint::spin_loop();
+                crate::loom_impl::spin_yield();
             }
         }
 

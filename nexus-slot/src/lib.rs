@@ -57,8 +57,11 @@
 
 pub mod spmc;
 pub mod spsc;
+pub(crate) mod loom_impl;
 
+#[cfg(not(loom))]
 use std::mem::{MaybeUninit, align_of, size_of};
+#[cfg(not(loom))]
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 /// Marker trait for types safe to use in a conflated slot.
@@ -107,6 +110,7 @@ pub unsafe trait Pod: Sized {
 // This is the canonical set of Pod guarantees.
 unsafe impl<T: Copy> Pod for T {}
 
+#[cfg(not(loom))]
 /// Atomically stores `size_of::<T>()` bytes into shared memory.
 ///
 /// Word-at-a-time `AtomicUsize` stores when alignment permits,
@@ -151,6 +155,7 @@ pub(crate) unsafe fn atomic_store<T: Pod>(dst: *mut T, src: &T) {
     }
 }
 
+#[cfg(not(loom))]
 /// Atomically loads `size_of::<T>()` bytes from shared memory.
 ///
 /// Word-at-a-time `AtomicUsize` loads when alignment permits,

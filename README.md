@@ -67,7 +67,7 @@ Each crate is small, focused, and honest about its constraints. No kitchen sinks
 
 | Crate | Description |
 |-------|-------------|
-| [**nexus-slab**](./nexus-slab) | Manual memory management with SLUB-style slab allocation. `bounded::Slab` (fixed capacity) and `unbounded::Slab` (growable via chunks). `rc` feature adds `RcSlot` with borrow guards for shared ownership. 1 cycle alloc, sub-cycle free. |
+| [**nexus-slab**](./nexus-slab) | Manual memory management with SLUB-style slab allocation. `bounded::Slab` (fixed capacity) and `unbounded::Slab` (growable via chunks). `rc` feature adds `RcSlot` with borrow guards for shared ownership. 1 cycle alloc, sub-cycle free ([benchmarks](./nexus-slab/BENCHMARKS.md)). |
 | [**nexus-pool**](./nexus-pool) | Object pools with RAII guards. Single-threaded `BoundedPool` and thread-safe `sync::Pool` (one acquirer, any returner). |
 | [**nexus-smartptr**](./nexus-smartptr) | Inline and flexible smart pointers for type-erased storage. `FlatBox` (fixed inline), `FlexBox` (inline or heap). Avoids boxing for small handler types. |
 
@@ -75,13 +75,13 @@ Each crate is small, focused, and honest about its constraints. No kitchen sinks
 
 | Crate | Description |
 |-------|-------------|
-| [**nexus-collections**](./nexus-collections) | Slab-backed intrusive collections. O(1) linked lists, O(log n) heaps, red-black trees, B-trees. External allocation via `nexus-slab` — user owns the slab, collection wires pointers. 2-3 cycle list operations, 15 cycle tree lookups. |
+| [**nexus-collections**](./nexus-collections) | Slab-backed intrusive collections. O(1) linked lists, O(log n) heaps, red-black trees, B-trees. External allocation via `nexus-slab` — user owns the slab, collection wires pointers. 2-3 cycle list operations, 15 cycle tree lookups ([benchmarks](./nexus-collections/BENCHMARKS.md)). |
 
 ### Flow Control
 
 | Crate | Description |
 |-------|-------------|
-| [**nexus-rate**](./nexus-rate) | Rate limiting. GCRA, token bucket, sliding window counter. Single-threaded and thread-safe variants. Weighted requests. ~2-4 cycle hot path. |
+| [**nexus-rate**](./nexus-rate) | Rate limiting. GCRA, token bucket, sliding window counter. Single-threaded and thread-safe variants. Weighted requests. ~2-4 cycle hot path ([benchmarks](./nexus-rate/BENCHMARKS.md)). |
 
 ### Concurrency & Communication
 
@@ -90,15 +90,15 @@ Each crate is small, focused, and honest about its constraints. No kitchen sinks
 | [**nexus-queue**](./nexus-queue) | Lock-free SPSC, MPSC, and SPMC ring buffers with per-slot lap counters. Index-based (NUMA-friendly) and slot-based (shared-L3 friendly) implementations. |
 | [**nexus-channel**](./nexus-channel) | Blocking SPSC channel built on nexus-queue. Three-phase backoff (spin → yield → park) minimizes syscalls under load. |
 | [**nexus-slot**](./nexus-slot) | Single-value conflation slot. Writer always overwrites, reader gets latest value exactly once. For "latest wins" patterns like market data snapshots. |
-| [**nexus-notify**](./nexus-notify) | Cross-thread event queue with conflation and FIFO delivery. Non-blocking `event_queue` and blocking `event_channel`. Dedup flags + MPSC ring buffer — O(limit) poll, ~5 cycles/token. |
+| [**nexus-notify**](./nexus-notify) | Cross-thread event queue with conflation and FIFO delivery. Non-blocking `event_queue` and blocking `event_channel`. Dedup flags + MPSC ring buffer — O(limit) poll, ~5 cycles/token ([benchmarks](./nexus-notify/BENCHMARKS.md)). |
 | [**nexus-logbuf**](./nexus-logbuf) | Bounded SPSC and MPSC byte ring buffers. Claim-based API for variable-length messages. The hot-path primitive for getting data off the event loop without syscalls. |
 
 ### Networking
 
 | Crate | Description |
 |-------|-------------|
-| [**nexus-net**](./nexus-net) | Sans-IO WebSocket (RFC 6455) and HTTP/1.1 REST primitives. Zero-copy, SIMD-accelerated. 3x faster than tungstenite, 3x faster than reqwest. Typestate request builder, chunked transfer encoding, connection poisoning. 517/517 Autobahn + 16/16 httpbin conformance. |
-| [**nexus-async-net**](./nexus-async-net) | Async adapters for nexus-net. Tokio-compatible. WebSocket `WsStream<S>`, HTTP `AsyncHttpConnection<S>`, and `ClientPool`/`AtomicClientPool` with self-healing reconnect. `try_acquire` (fast path) and `acquire` (patient path with backoff). 3.5x faster than tokio-tungstenite. |
+| [**nexus-net**](./nexus-net) | Sans-IO WebSocket (RFC 6455) and HTTP/1.1 REST primitives. Zero-copy, SIMD-accelerated. 3x faster than tungstenite, 3x faster than reqwest ([benchmarks](./nexus-net/BENCHMARKS.md)). Typestate request builder, chunked transfer encoding, connection poisoning. 517/517 Autobahn + 16/16 httpbin conformance. |
+| [**nexus-async-net**](./nexus-async-net) | Async adapters for nexus-net. Tokio-compatible. WebSocket `WsStream<S>`, HTTP `AsyncHttpConnection<S>`, and `ClientPool`/`AtomicClientPool` with self-healing reconnect. `try_acquire` (fast path) and `acquire` (patient path with backoff). 3.5x faster than tokio-tungstenite ([benchmarks](./nexus-async-net/BENCHMARKS.md)). |
 
 ### Runtime
 
@@ -155,6 +155,15 @@ individual crate `BENCHMARKS.md` files for methodology and results.
 ### Minimal dependencies
 
 These are foundational crates. Dependency trees are kept small and intentional.
+
+## Benchmark Conditions
+
+Performance numbers are measured on an Intel Core Ultra 7 165U (12C/14T,
+12MB L3) running Arch Linux with `rustc 1.94.0`. Comparative numbers
+(speedup ratios) are measured with turbo boost disabled and cores pinned
+via `taskset`; finalized cycle counts are with turbo boost enabled. Results
+vary by hardware — each crate's `BENCHMARKS.md` records the specific
+machine, toolchain, comparison-crate versions, and reproduction steps.
 
 ## Platform Support
 

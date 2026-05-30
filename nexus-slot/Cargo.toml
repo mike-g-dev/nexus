@@ -10,6 +10,9 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 crossbeam-queue = "0.3"

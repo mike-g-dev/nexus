@@ -25,13 +25,18 @@
 //! assert!(reader2.read().is_none());
 //! ```
 
+#[cfg(not(loom))]
 use std::cell::UnsafeCell;
 use std::fmt;
+#[cfg(not(loom))]
 use std::mem::MaybeUninit;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
+#[cfg(loom)]
+use std::marker::PhantomData;
 
-use crate::{Pod, atomic_load, atomic_store};
+use crate::Pod;
+#[cfg(not(loom))]
+use crate::{atomic_load, atomic_store};
+use crate::loom_impl::{Arc, AtomicBool, AtomicUsize, Ordering, fence};
 
 /// Shared state between writer and readers.
 #[repr(C)]
@@ -40,7 +45,12 @@ struct Inner<T> {
     seq: AtomicUsize,
     /// Set to `false` when the writer is dropped.
     writer_alive: AtomicBool,
+    #[cfg(not(loom))]
     data: UnsafeCell<MaybeUninit<T>>,
+    #[cfg(loom)]
+    data: AtomicUsize,
+    #[cfg(loom)]
+    _marker: PhantomData<T>,
 }
 
 // SAFETY: Inner is shared via Arc between one Writer and multiple SharedReaders.
@@ -102,7 +112,12 @@ pub fn shared_slot<T: Pod>() -> (Writer<T>, SharedReader<T>) {
     let inner = Arc::new(Inner {
         seq: AtomicUsize::new(2),
         writer_alive: AtomicBool::new(true),
+        #[cfg(not(loom))]
         data: UnsafeCell::new(MaybeUninit::uninit()),
+        #[cfg(loom)]
+        data: AtomicUsize::new(0),
+        #[cfg(loom)]
+        _marker: PhantomData,
     });
 
     (
@@ -132,7 +147,13 @@ impl<T: Pod> Writer<T> {
 
         // SAFETY: Same as spsc::Writer::write — sole writer, data accessed
         // through word-at-a-time atomics, no references created.
-        unsafe { atomic_store(inner.data.get().cast::<T>(), &value) };
+        #[cfg(not(loom))]
+        // SAFETY: sole writer, data from UnsafeCell, word-at-a-time atomics.
+        unsafe {
+            atomic_store(inner.data.get().cast::<T>(), &value);
+        }
+        #[cfg(loom)]
+        crate::loom_impl::loom_store(&inner.data, &value);
 
         fence(Ordering::Release);
         self.local_seq = seq.wrapping_add(2);
@@ -183,14 +204,17 @@ impl<T: Pod> SharedReader<T> {
 
             // Write in progress
             if seq1 & 1 != 0 {
-                core::hint::spin_loop();
+                crate::loom_impl::spin_yield();
                 continue;
             }
 
             fence(Ordering::Acquire);
 
             // SAFETY: Same as spsc::Reader::read.
+            #[cfg(not(loom))]
             let value = unsafe { atomic_load(inner.data.get().cast::<T>()) };
+            #[cfg(loom)]
+            let value = crate::loom_impl::loom_load::<T>(&inner.data);
 
             fence(Ordering::Acquire);
             let seq2 = inner.seq.load(Ordering::Relaxed);
@@ -221,14 +245,17 @@ impl<T: Pod> SharedReader<T> {
             }
 
             if seq1 & 1 != 0 {
-                core::hint::spin_loop();
+                crate::loom_impl::spin_yield();
                 continue;
             }
 
             fence(Ordering::Acquire);
 
             // SAFETY: Same as spsc::Reader::read_versioned.
+            #[cfg(not(loom))]
             let value = unsafe { atomic_load(inner.data.get().cast::<T>()) };
+            #[cfg(loom)]
+            let value = crate::loom_impl::loom_load::<T>(&inner.data);
 
             fence(Ordering::Acquire);
             let seq2 = inner.seq.load(Ordering::Relaxed);
@@ -274,7 +301,7 @@ impl<T: Pod> fmt::Debug for SharedReader<T> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod tests {
     use super::*;
 
