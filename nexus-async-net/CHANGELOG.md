@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-30
+
 ### Changed
 
 - **Breaking**: `WsStreamBuilder::connect()`, `connect_with()`, and
