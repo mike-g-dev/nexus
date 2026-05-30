@@ -7,6 +7,7 @@ pub enum ShmError {
     UnsupportedLayout { found: u16, expected: u16 },
     EmptySegment,
     HugePagesUnavailable(std::io::Error),
+    OwnerActive,
     Os(std::io::Error),
 }
 
@@ -19,6 +20,7 @@ impl fmt::Display for ShmError {
             }
             Self::EmptySegment => write!(f, "segment has zero length"),
             Self::HugePagesUnavailable(e) => write!(f, "huge pages unavailable: {e}"),
+            Self::OwnerActive => write!(f, "segment already owned by a live process"),
             Self::Os(e) => write!(f, "{e}"),
         }
     }

@@ -1,6 +1,6 @@
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::num::NonZeroUsize;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, BorrowedFd};
 use std::path::Path;
 use std::ptr::NonNull;
 
@@ -17,7 +17,7 @@ pub struct MapOptions {
 pub(crate) struct Mapping {
     ptr: NonNull<u8>,
     len: NonZeroUsize,
-    _file: std::fs::File,
+    file: File,
 }
 
 impl Mapping {
@@ -43,7 +43,7 @@ impl Mapping {
         Self::map(file, len, opts)
     }
 
-    fn map(file: std::fs::File, len: NonZeroUsize, opts: MapOptions) -> Result<Self, ShmError> {
+    fn map(file: File, len: NonZeroUsize, opts: MapOptions) -> Result<Self, ShmError> {
         let mut flags = MapFlags::MAP_SHARED;
         if opts.populate {
             flags |= MapFlags::MAP_POPULATE;
@@ -74,12 +74,16 @@ impl Mapping {
         Ok(Self {
             ptr: ptr.cast(),
             len,
-            _file: file,
+            file,
         })
     }
 
     pub(crate) fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
+    }
+
+    pub(crate) fn as_fd(&self) -> BorrowedFd<'_> {
+        self.file.as_fd()
     }
 }
 

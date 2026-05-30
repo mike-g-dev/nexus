@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::control::{ControlBlock, status};
 use crate::error::ShmError;
+use crate::lock::{self, Liveness};
 use crate::region::{MapOptions, Mapping};
 
 const HEADER: usize = size_of::<ControlBlock>();
@@ -25,6 +26,10 @@ impl Segment {
             .map_err(|_| ShmError::EmptySegment)?;
         let mapping = Mapping::create(path, total, opts)?;
 
+        if !lock::acquire_owner(mapping.as_fd())? {
+            return Err(ShmError::OwnerActive);
+        }
+
         let cb = unsafe { &mut *mapping.as_ptr().cast::<ControlBlock>() };
         let generation = cb.generation().wrapping_add(1);
         cb.write_header(flags(opts), generation, std::process::id(), data_len as u64);
@@ -46,10 +51,14 @@ impl Segment {
 
     pub fn peer_status(&self) -> PeerStatus {
         match self.control().status() {
-            status::ALIVE => PeerStatus::Alive,
-            status::DEAD => PeerStatus::Dead,
+            s if s == status::ALIVE => PeerStatus::Alive,
+            s if s == status::DEAD => PeerStatus::Dead,
             _ => PeerStatus::Uninit,
         }
+    }
+
+    pub fn peer_liveness(&self) -> Liveness {
+        lock::owner_liveness(self.mapping.as_fd())
     }
 
     pub fn data(&self) -> *mut u8 {
@@ -84,6 +93,7 @@ fn flags(opts: MapOptions) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::{PeerStatus, Segment};
+    use crate::lock::Liveness;
     use crate::region::MapOptions;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
@@ -119,6 +129,21 @@ mod tests {
 
         let peer = Segment::attach(&path, MapOptions::default()).unwrap();
         assert_eq!(peer.peer_status(), PeerStatus::Dead);
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn kernel_liveness_tracks_owner() {
+        let path = temp_path("liveness");
+        let _ = std::fs::remove_file(&path);
+
+        let owner = Segment::create(&path, 64, MapOptions::default()).unwrap();
+        let peer = Segment::attach(&path, MapOptions::default()).unwrap();
+        assert_eq!(peer.peer_liveness(), Liveness::Alive);
+
+        drop(owner);
+        assert_eq!(peer.peer_liveness(), Liveness::Dead);
 
         std::fs::remove_file(&path).unwrap();
     }

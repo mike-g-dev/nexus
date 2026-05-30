@@ -14,4 +14,4 @@ workspace = true
 
 [dependencies]
 crossbeam-utils.workspace = true
-nix = { version = "0.30", features = ["mman"] }
+nix = { version = "0.30", features = ["mman", "fs"] }
