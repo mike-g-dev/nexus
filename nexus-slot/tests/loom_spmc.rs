@@ -56,19 +56,24 @@ fn writer_disconnect_ordering() {
             writer.write(42);
         });
 
+        let mut seen = false;
         loop {
             if reader.is_disconnected() {
                 if reader.has_update() {
                     let v = reader.read().unwrap();
                     assert_eq!(v, 42);
+                    seen = true;
                 }
                 break;
             }
             if let Some(v) = reader.read() {
                 assert_eq!(v, 42);
+                seen = true;
             }
             thread::yield_now();
         }
+
+        assert!(seen, "writer wrote but reader never observed the value");
 
         w.join().unwrap();
     });
