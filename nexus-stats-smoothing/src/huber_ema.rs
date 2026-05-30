@@ -270,7 +270,7 @@ mod tests {
             if i == 0 {
                 ema_val = v;
             } else {
-                ema_val = 0.1 * v + 0.9 * ema_val;
+                ema_val = 0.1f64.mul_add(v, 0.9 * ema_val);
             }
         }
         assert!(

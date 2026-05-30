@@ -284,7 +284,7 @@ fn bench_realistic_trading() -> Stats {
 
     for i in 0..OPERATIONS {
         // Advance timestamp if we'd overflow OR every BURST_SIZE to simulate time passing
-        if seq_in_ts >= SEQ_MAX || (i as u64 % BURST_SIZE == 0 && i > 0) {
+        if seq_in_ts >= SEQ_MAX || ((i as u64).is_multiple_of(BURST_SIZE) && i > 0) {
             current_ts += 1;
             seq_in_ts = 0;
         }

@@ -1634,14 +1634,14 @@ mod tests {
                     ctx.retries += 1;
                     x
                 },
-                &reg,
+                reg,
             )
-            .then(multiply, &reg)
+            .then(multiply, reg)
             .then(
                 |ctx: &mut ReconnectCtx, val: u64| {
                     ctx.last_result = Some(val > 0);
                 },
-                &reg,
+                reg,
             )
             .build();
 
@@ -1664,14 +1664,14 @@ mod tests {
         let reg = world.registry();
 
         let mut pipeline = CtxPipelineBuilder::<ReconnectCtx, u32>::new()
-            .then(|_ctx: &mut ReconnectCtx, x: u32| x, &reg)
-            .guard(|_ctx: &mut ReconnectCtx, x: &u32| *x > 10, &reg)
+            .then(|_ctx: &mut ReconnectCtx, x: u32| x, reg)
+            .guard(|_ctx: &mut ReconnectCtx, x: &u32| *x > 10, reg)
             .map(
                 |ctx: &mut ReconnectCtx, x: u32| {
                     ctx.retries += 1;
                     x * 2
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -1696,13 +1696,13 @@ mod tests {
         let reg = world.registry();
 
         let mut pipeline = CtxPipelineBuilder::<ReconnectCtx, u32>::new()
-            .then(|_ctx: &mut ReconnectCtx, x: u32| Some(x), &reg)
+            .then(|_ctx: &mut ReconnectCtx, x: u32| Some(x), reg)
             .and_then(
                 |ctx: &mut ReconnectCtx, x: u32| {
                     ctx.retries += 1;
                     if x > 5 { Some(x * 2) } else { None }
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -1731,20 +1731,20 @@ mod tests {
                         Err("zero".to_string())
                     }
                 },
-                &reg,
+                reg,
             )
             .catch(
                 |ctx: &mut ReconnectCtx, _err: String| {
                     ctx.retries += 1;
                 },
-                &reg,
+                reg,
             )
             .map(
                 |ctx: &mut ReconnectCtx, val: u32| {
                     ctx.last_result = Some(true);
                     val
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -1778,7 +1778,7 @@ mod tests {
         }
 
         let mut pipeline = CtxPipelineBuilder::<ReconnectCtx, u32>::new()
-            .then(accumulate, &reg)
+            .then(accumulate, reg)
             .build();
 
         let mut ctx = ReconnectCtx {
@@ -1804,9 +1804,9 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| -> Option<u32> {
                     if x > 0 { Some(x) } else { None }
                 },
-                &reg,
+                reg,
             )
-            .map(|_ctx: &mut ReconnectCtx, _x: u32| {}, &reg)
+            .map(|_ctx: &mut ReconnectCtx, _x: u32| {}, reg)
             .build();
 
         let mut ctx = ReconnectCtx {
@@ -1825,19 +1825,19 @@ mod tests {
         let reg = world.registry();
 
         let mut pipeline = CtxPipelineBuilder::<ReconnectCtx, u32>::new()
-            .then(|_ctx: &mut ReconnectCtx, x: u32| x * 2, &reg)
+            .then(|_ctx: &mut ReconnectCtx, x: u32| x * 2, reg)
             .tap(
                 |ctx: &mut ReconnectCtx, val: &u32| {
                     ctx.retries = *val;
                 },
-                &reg,
+                reg,
             )
             .then(
                 |_ctx: &mut ReconnectCtx, x: u32| {
                     // Value should pass through tap unchanged
                     assert_eq!(x, 10);
                 },
-                &reg,
+                reg,
             )
             .build();
 
@@ -1860,15 +1860,15 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| -> Result<u32, u32> {
                     if x > 0 { Ok(x) } else { Err(x) }
                 },
-                &reg,
+                reg,
             )
-            .map(|_ctx: &mut ReconnectCtx, x: u32| x * 10, &reg)
+            .map(|_ctx: &mut ReconnectCtx, x: u32| x * 10, reg)
             .map_err(
                 |ctx: &mut ReconnectCtx, e: u32| {
                     ctx.retries += 1;
                     format!("error: {e}")
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -1894,13 +1894,13 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| -> Result<u32, String> {
                     if x > 0 { Ok(x) } else { Err("zero".into()) }
                 },
-                &reg,
+                reg,
             )
             .inspect_err(
                 |ctx: &mut ReconnectCtx, _e: &String| {
                     ctx.retries += 1;
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -1922,8 +1922,8 @@ mod tests {
         let reg = world.registry();
 
         let mut pipeline = CtxPipelineBuilder::<ReconnectCtx, u32>::new()
-            .then(|_ctx: &mut ReconnectCtx, x: u32| Some(x), &reg)
-            .filter(|_ctx: &mut ReconnectCtx, x: &u32| *x > 10, &reg);
+            .then(|_ctx: &mut ReconnectCtx, x: u32| Some(x), reg)
+            .filter(|_ctx: &mut ReconnectCtx, x: &u32| *x > 10, reg);
 
         let mut ctx = ReconnectCtx {
             retries: 0,
@@ -1944,7 +1944,7 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| {
                     if x > 0 { Some(x) } else { None }
                 },
-                &reg,
+                reg,
             )
             .ok_or("was zero");
 
@@ -1967,7 +1967,7 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| {
                     if x > 0 { Some(x) } else { None }
                 },
-                &reg,
+                reg,
             )
             .unwrap_or(99);
 
@@ -1990,14 +1990,14 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| {
                     if x > 0 { Some(x) } else { None }
                 },
-                &reg,
+                reg,
             )
             .unwrap_or_else(
                 |ctx: &mut ReconnectCtx| {
                     ctx.retries += 1;
                     42
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -2021,13 +2021,13 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| {
                     if x > 0 { Some(x) } else { None }
                 },
-                &reg,
+                reg,
             )
             .inspect(
                 |ctx: &mut ReconnectCtx, val: &u32| {
                     ctx.retries = *val;
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -2054,13 +2054,13 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| {
                     if x > 0 { Some(x) } else { None }
                 },
-                &reg,
+                reg,
             )
             .on_none(
                 |ctx: &mut ReconnectCtx| {
                     ctx.retries += 1;
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -2089,7 +2089,7 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| -> Result<u32, String> {
                     if x > 0 { Ok(x) } else { Err("zero".into()) }
                 },
-                &reg,
+                reg,
             )
             .ok();
 
@@ -2112,7 +2112,7 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| -> Result<u32, String> {
                     if x > 0 { Ok(x) } else { Err("zero".into()) }
                 },
-                &reg,
+                reg,
             )
             .unwrap_or(99);
 
@@ -2135,13 +2135,13 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| -> Result<u32, String> {
                     if x > 0 { Ok(x) } else { Err("zero".into()) }
                 },
-                &reg,
+                reg,
             )
             .inspect(
                 |ctx: &mut ReconnectCtx, val: &u32| {
                     ctx.retries = *val;
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -2175,13 +2175,13 @@ mod tests {
                     let scale = *w.resource::<u64>();
                     u64::from(x) * scale
                 },
-                &reg,
+                reg,
             )
             .then(
                 |ctx: &mut ReconnectCtx, val: u64| {
                     ctx.last_result = Some(val > 0);
                 },
-                &reg,
+                reg,
             )
             .build();
 
@@ -2204,13 +2204,13 @@ mod tests {
 
         // Opaque ref step used as guard
         let mut pipeline = CtxPipelineBuilder::<ReconnectCtx, u32>::new()
-            .then(|_ctx: &mut ReconnectCtx, x: u32| x, &reg)
+            .then(|_ctx: &mut ReconnectCtx, x: u32| x, reg)
             .guard(
                 |_ctx: &mut ReconnectCtx, w: &mut World, x: &u32| {
                     let threshold = *w.resource::<u64>();
                     u64::from(*x) > threshold
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {
@@ -2235,14 +2235,14 @@ mod tests {
                 |_ctx: &mut ReconnectCtx, x: u32| {
                     if x > 0 { Some(x) } else { None }
                 },
-                &reg,
+                reg,
             )
             .unwrap_or_else(
                 |ctx: &mut ReconnectCtx, w: &mut World| {
                     ctx.retries += 1;
                     *w.resource::<u64>() as u32
                 },
-                &reg,
+                reg,
             );
 
         let mut ctx = ReconnectCtx {

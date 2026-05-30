@@ -534,7 +534,7 @@ mod tests {
         let (mut tx, mut rx) = test_channel(8192);
 
         try_send(&mut tx, b"hi");
-        try_send(&mut tx, &vec![0xABu8; 100]);
+        try_send(&mut tx, &[0xABu8; 100]);
         try_send(&mut tx, &vec![0xCDu8; 1000]);
 
         let msg = rx.try_recv().unwrap();

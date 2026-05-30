@@ -1654,7 +1654,7 @@ impl<K, V, const B: usize> BTree<K, V, B> {
     /// Creates a new empty B-tree with natural (`Ord`) key ordering.
     pub fn new() -> Self {
         assert!(B >= 4, "B must be >= 4");
-        assert!(B % 2 == 0, "B must be even");
+        assert!(B.is_multiple_of(2), "B must be even");
         assert!(
             std::mem::size_of::<BTreeNode<K, V, B>>() <= 1024,
             "BTreeNode exceeds 1024 bytes"
@@ -1700,7 +1700,7 @@ impl<K, V, const B: usize, C> BTree<K, V, B, C> {
     #[allow(unused_variables, clippy::needless_pass_by_value)]
     pub fn with_comparator(comparator: C) -> Self {
         assert!(B >= 4);
-        assert!(B % 2 == 0);
+        assert!(B.is_multiple_of(2));
         assert!(std::mem::size_of::<BTreeNode<K, V, B>>() <= 1024);
         BTree {
             root: ptr::null_mut(),
@@ -2345,15 +2345,15 @@ impl<K, V, const B: usize, C: Compare<K>, S: SlabOps<BTreeNode<K, V, B>>>
         let result = self.tree.remove_entry(self.slab, &key_copy);
 
         self.stack_len = 0;
-        if let Some((ref removed_key, _)) = result {
-            if !self.tree.is_empty() {
-                init_upper_bound_stack::<K, V, B, C>(
-                    self.tree.root,
-                    removed_key,
-                    &mut self.stack,
-                    &mut self.stack_len,
-                );
-            }
+        if let Some((ref removed_key, _)) = result
+            && !self.tree.is_empty()
+        {
+            init_upper_bound_stack::<K, V, B, C>(
+                self.tree.root,
+                removed_key,
+                &mut self.stack,
+                &mut self.stack_len,
+            );
         }
         result
     }

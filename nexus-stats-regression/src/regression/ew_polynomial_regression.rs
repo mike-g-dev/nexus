@@ -285,7 +285,7 @@ mod tests {
             .build()
             .unwrap();
         for x in 0..500 {
-            r.update(x as f64, 2.0 * x as f64 + 3.0).unwrap();
+            r.update(x as f64, 2.0f64.mul_add(x as f64, 3.0)).unwrap();
         }
         let c = r.coefficients().unwrap();
         assert!(

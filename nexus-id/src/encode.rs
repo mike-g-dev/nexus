@@ -32,7 +32,7 @@ const BASE36_SQ: u64 = 36 * 36;
 #[inline]
 pub(crate) fn hex_u64<const CAP: usize>(value: u64) -> AsciiString<CAP> {
     const { assert!(CAP >= 16, "hex_u64 requires CAP >= 16") };
-    const { assert!(CAP % 8 == 0, "CAP must be a multiple of 8") };
+    const { assert!(CAP.is_multiple_of(8), "CAP must be a multiple of 8") };
 
     let buf = crate::simd::hex_encode_u64(value);
     // SAFETY: All bytes are valid ASCII hex digits (produced by hex encoder)
@@ -45,7 +45,7 @@ pub(crate) fn hex_u64<const CAP: usize>(value: u64) -> AsciiString<CAP> {
 #[inline]
 pub(crate) fn hex_u128<const CAP: usize>(hi: u64, lo: u64) -> AsciiString<CAP> {
     const { assert!(CAP >= 32, "hex_u128 requires CAP >= 32") };
-    const { assert!(CAP % 8 == 0, "CAP must be a multiple of 8") };
+    const { assert!(CAP.is_multiple_of(8), "CAP must be a multiple of 8") };
 
     let buf = crate::simd::hex_encode_u128(hi, lo);
     // SAFETY: All bytes are valid ASCII hex digits (produced by hex encoder)
@@ -64,7 +64,7 @@ pub(crate) fn hex_u128<const CAP: usize>(hi: u64, lo: u64) -> AsciiString<CAP> {
 #[inline]
 pub(crate) fn base62_u64<const CAP: usize>(mut value: u64) -> AsciiString<CAP> {
     const { assert!(CAP >= 16, "base62_u64 requires CAP >= 16") };
-    const { assert!(CAP % 8 == 0, "CAP must be a multiple of 8") };
+    const { assert!(CAP.is_multiple_of(8), "CAP must be a multiple of 8") };
 
     let mut buf = [b'0'; 11];
 
@@ -116,7 +116,7 @@ pub(crate) fn base62_u64<const CAP: usize>(mut value: u64) -> AsciiString<CAP> {
 #[inline]
 pub(crate) fn base36_u64<const CAP: usize>(mut value: u64) -> AsciiString<CAP> {
     const { assert!(CAP >= 16, "base36_u64 requires CAP >= 16") };
-    const { assert!(CAP % 8 == 0, "CAP must be a multiple of 8") };
+    const { assert!(CAP.is_multiple_of(8), "CAP must be a multiple of 8") };
 
     let mut buf = [b'0'; 13];
 
@@ -167,7 +167,7 @@ pub(crate) fn base36_u64<const CAP: usize>(mut value: u64) -> AsciiString<CAP> {
 #[inline]
 pub(crate) fn uuid_dashed<const CAP: usize>(hi: u64, lo: u64) -> AsciiString<CAP> {
     const { assert!(CAP >= 40, "uuid_dashed requires CAP >= 40") };
-    const { assert!(CAP % 8 == 0, "CAP must be a multiple of 8") };
+    const { assert!(CAP.is_multiple_of(8), "CAP must be a multiple of 8") };
 
     let hi_hex = crate::simd::hex_encode_u64(hi);
     let lo_hex = crate::simd::hex_encode_u64(lo);
@@ -204,7 +204,7 @@ pub(crate) fn ulid_encode<const CAP: usize>(
     rand_lo: u64,
 ) -> AsciiString<CAP> {
     const { assert!(CAP >= 32, "ulid_encode requires CAP >= 32") };
-    const { assert!(CAP % 8 == 0, "CAP must be a multiple of 8") };
+    const { assert!(CAP.is_multiple_of(8), "CAP must be a multiple of 8") };
 
     let mut buf = [0u8; 26];
 

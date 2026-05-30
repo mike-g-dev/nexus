@@ -998,7 +998,7 @@ impl Runtime {
 
             // 6. Periodic non-blocking IO check every event_interval ticks.
             //    Prevents IO starvation under sustained task load.
-            if tick % self.event_interval == 0 {
+            if tick.is_multiple_of(self.event_interval) {
                 // SAFETY: single-threaded; UnsafeCell deref for interior mutability.
                 if let Err(e) = unsafe { &mut *self.io.get() }.poll_io(Some(Duration::ZERO)) {
                     assert!(
@@ -1218,6 +1218,15 @@ impl Drop for RuntimePresenceGuard {
 // =============================================================================
 
 #[cfg(test)]
+#[allow(
+    unused_must_use,
+    clippy::float_cmp,
+    dead_code,
+    clippy::ref_option,
+    clippy::redundant_closure_for_method_calls,
+    clippy::let_underscore_future,
+    clippy::semicolon_if_nothing_returned
+)]
 mod tests {
     use super::*;
     use nexus_rt::{Handler, IntoHandler, Res, ResMut, WorldBuilder};
@@ -1362,7 +1371,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "spawn_slab() called without a slab")]
     fn spawn_slab_without_slab_panics() {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
         let mut rt = Runtime::new(&mut world);
 
@@ -1454,7 +1463,7 @@ mod tests {
 
     #[test]
     fn claim_slab_drop_returns_slot() {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
 
         let bounded = unsafe { nexus_slab::byte::bounded::Slab::<256>::with_capacity(1) };
@@ -1475,7 +1484,7 @@ mod tests {
 
     #[test]
     fn try_claim_slab_returns_none_when_full() {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
 
         let bounded = unsafe { nexus_slab::byte::bounded::Slab::<256>::with_capacity(1) };
@@ -1572,7 +1581,7 @@ mod tests {
 
     #[test]
     fn sleep_zero_duration_ready_immediately() {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
         let mut rt = Runtime::new(&mut world);
 
@@ -1585,11 +1594,11 @@ mod tests {
 
     #[test]
     fn sleep_past_deadline_ready_immediately() {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
         let mut rt = Runtime::new(&mut world);
 
-        let past = Instant::now() - Duration::from_secs(1);
+        let past = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
         let before = Instant::now();
         rt.block_on(async move {
             crate::context::sleep_until(past).await;
@@ -1603,7 +1612,7 @@ mod tests {
 
     #[test]
     fn timeout_completes_before_deadline() {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
         let mut rt = Runtime::new(&mut world);
 
@@ -1616,7 +1625,7 @@ mod tests {
 
     #[test]
     fn timeout_expires() {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
         let mut rt = Runtime::new(&mut world);
 

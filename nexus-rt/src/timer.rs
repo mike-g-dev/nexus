@@ -551,7 +551,7 @@ mod tests {
         }
 
         let now = Instant::now();
-        let past = now - Duration::from_millis(10);
+        let past = now.checked_sub(Duration::from_millis(10)).unwrap();
 
         for _ in 0..3 {
             let h = inc.into_handler(world.registry());

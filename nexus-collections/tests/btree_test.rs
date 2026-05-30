@@ -284,7 +284,7 @@ fn drop_non_empty_btree_panics() {
     let err = result.expect_err("non-empty btree drop should panic in debug");
     let msg = err
         .downcast_ref::<String>()
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .or_else(|| err.downcast_ref::<&str>().copied())
         .unwrap_or("");
     assert!(

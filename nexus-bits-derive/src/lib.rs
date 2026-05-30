@@ -304,41 +304,41 @@ fn parse_variant_attr(attrs: &[syn::Attribute]) -> Result<u64> {
 // =============================================================================
 
 fn is_primitive(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(ident) = type_path.path.get_ident() {
-            return matches!(
-                ident.to_string().as_str(),
-                "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i32" | "i64" | "i128"
-            );
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(ident) = type_path.path.get_ident()
+    {
+        return matches!(
+            ident.to_string().as_str(),
+            "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i32" | "i64" | "i128"
+        );
     }
     false
 }
 
 fn is_signed_primitive(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(ident) = type_path.path.get_ident() {
-            return matches!(
-                ident.to_string().as_str(),
-                "i8" | "i16" | "i32" | "i64" | "i128"
-            );
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(ident) = type_path.path.get_ident()
+    {
+        return matches!(
+            ident.to_string().as_str(),
+            "i8" | "i16" | "i32" | "i64" | "i128"
+        );
     }
     false
 }
 
 fn primitive_bits(ty: &Type) -> u32 {
-    if let Type::Path(type_path) = ty {
-        if let Some(ident) = type_path.path.get_ident() {
-            return match ident.to_string().as_str() {
-                "u8" | "i8" => 8,
-                "u16" | "i16" => 16,
-                "u32" | "i32" => 32,
-                "u64" | "i64" => 64,
-                "u128" | "i128" => 128,
-                _ => 0,
-            };
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(ident) = type_path.path.get_ident()
+    {
+        return match ident.to_string().as_str() {
+            "u8" | "i8" => 8,
+            "u16" | "i16" => 16,
+            "u32" | "i32" => 32,
+            "u64" | "i64" => 64,
+            "u128" | "i128" => 128,
+            _ => 0,
+        };
     }
     0
 }
@@ -1105,22 +1105,22 @@ fn generate_enum_parent_impl(
             let validations: Vec<TokenStream2> = v.members
                 .iter()
                 .filter_map(|m| {
-                    if let MemberDef::Field { name: field_name, ty, range } = m {
-                        if !is_primitive(ty) {
-                            let start = range.start;
-                            let len = range.len;
-                            let repr_bit_count = repr_bits(repr);
-                            let mask = field_mask(repr, len, repr_bit_count);
-                            return Some(quote! {
-                                let field_repr = ((self.0 >> #start) & #mask);
-                                if <#ty as nexus_bits::IntEnum>::try_from_repr(field_repr as _).is_none() {
-                                    return Err(nexus_bits::UnknownDiscriminant {
-                                        field: stringify!(#field_name),
-                                        value: field_repr as #repr,
-                                    });
-                                }
-                            });
-                        }
+                    if let MemberDef::Field { name: field_name, ty, range } = m
+                        && !is_primitive(ty)
+                    {
+                        let start = range.start;
+                        let len = range.len;
+                        let repr_bit_count = repr_bits(repr);
+                        let mask = field_mask(repr, len, repr_bit_count);
+                        return Some(quote! {
+                            let field_repr = ((self.0 >> #start) & #mask);
+                            if <#ty as nexus_bits::IntEnum>::try_from_repr(field_repr as _).is_none() {
+                                return Err(nexus_bits::UnknownDiscriminant {
+                                    field: stringify!(#field_name),
+                                    value: field_repr as #repr,
+                                });
+                            }
+                        });
                     }
                     None
                 })

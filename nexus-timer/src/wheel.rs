@@ -465,10 +465,10 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
             self.len -= 1;
             if self.len == 0 {
                 self.min_deadline.set(None);
-            } else if let Some(cur) = self.min_deadline.get() {
-                if cancelled_deadline == cur {
-                    self.min_deadline.set(None);
-                }
+            } else if let Some(cur) = self.min_deadline.get()
+                && cancelled_deadline == cur
+            {
+                self.min_deadline.set(None);
             }
             // SAFETY: ptr was allocated from our slab via into_raw()
             self.slab.free(unsafe { Slot::from_raw(ptr) });
@@ -539,10 +539,11 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
         // we may have lost the min. insert_entry already handles
         // new < old (lowers cache), but can't detect old == cached
         // when moving later.
-        if let Some(cur) = self.min_deadline.get() {
-            if old_deadline == cur && new_ticks > cur {
-                self.min_deadline.set(None);
-            }
+        if let Some(cur) = self.min_deadline.get()
+            && old_deadline == cur
+            && new_ticks > cur
+        {
+            self.min_deadline.set(None);
         }
 
         TimerHandle::new(ptr)
@@ -770,10 +771,10 @@ impl<T: 'static, S: SlabStore<Item = WheelEntry<T>>> TimerWheel<T, S> {
 
         if self.len == 0 {
             self.min_deadline.set(None);
-        } else if let Some(cur) = self.min_deadline.get() {
-            if fired_deadline == cur {
-                self.min_deadline.set(None);
-            }
+        } else if let Some(cur) = self.min_deadline.get()
+            && fired_deadline == cur
+        {
+            self.min_deadline.set(None);
         }
 
         value

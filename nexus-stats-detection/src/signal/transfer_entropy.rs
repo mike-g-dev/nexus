@@ -63,7 +63,7 @@ use alloc::vec;
 /// let mut prev_x = 0usize;
 /// let mut rng = 42u64;
 /// for _ in 0..10000 {
-///     rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
 ///     let x_bin = ((rng >> 62) as usize) % 4;
 ///     let y_bin = prev_x;
 ///     te.update(x_bin, y_bin);
@@ -407,8 +407,8 @@ mod tests {
         let mut rng = 12345u64;
         for _ in 0..20000 {
             rng = rng
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             let x_bin = ((rng >> 62) as usize) % 4;
             let y_bin = prev_x;
             te.update(x_bin, y_bin);
@@ -436,8 +436,8 @@ mod tests {
         let mut rng = 99999u64;
         for i in 0..30000u32 {
             rng = rng
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             let x_bin = ((rng >> 62) as usize) % 4;
             let y_bin = if i >= 3 { hist[hpos] } else { 0 };
             te.update(x_bin, y_bin);
@@ -484,8 +484,8 @@ mod tests {
         let mut rng = 54321u64;
         for _ in 0..20000 {
             rng = rng
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             let x_bin = ((rng >> 62) as usize) % 4;
             let y_bin = prev_x;
             te.update(x_bin, y_bin);

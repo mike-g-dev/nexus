@@ -296,6 +296,15 @@ impl Default for BackoffBuilder {
 // =============================================================================
 
 #[cfg(test)]
+#[allow(
+    unused_must_use,
+    clippy::float_cmp,
+    dead_code,
+    clippy::ref_option,
+    clippy::redundant_closure_for_method_calls,
+    clippy::let_underscore_future,
+    clippy::semicolon_if_nothing_returned
+)]
 mod tests {
     use super::*;
 
@@ -431,7 +440,7 @@ mod tests {
         // Deadline in the past — immediately exhausted.
         let b = Backoff::builder()
             .initial(Duration::from_millis(10))
-            .deadline(Instant::now() - Duration::from_secs(1))
+            .deadline(Instant::now().checked_sub(Duration::from_secs(1)).unwrap())
             .build();
 
         assert!(b.is_exhausted());

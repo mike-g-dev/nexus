@@ -1,3 +1,9 @@
+#![allow(
+    clippy::float_cmp,
+    clippy::approx_constant,
+    clippy::clone_on_copy,
+    clippy::suboptimal_flops
+)]
 //! Compile tests for feature_vector! macro and optimizer integration.
 //!
 //! These tests verify that various macro invocations and usage patterns

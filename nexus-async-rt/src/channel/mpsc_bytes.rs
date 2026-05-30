@@ -648,6 +648,15 @@ unsafe impl Send for Receiver {}
 // =============================================================================
 
 #[cfg(test)]
+#[allow(
+    unused_must_use,
+    clippy::float_cmp,
+    dead_code,
+    clippy::ref_option,
+    clippy::redundant_closure_for_method_calls,
+    clippy::let_underscore_future,
+    clippy::semicolon_if_nothing_returned
+)]
 mod tests {
     use super::*;
 
@@ -742,7 +751,7 @@ mod tests {
         let (mut tx, mut rx) = test_channel(8192);
 
         try_send(&mut tx, b"hi");
-        try_send(&mut tx, &vec![0xABu8; 100]);
+        try_send(&mut tx, &[0xABu8; 100]);
         try_send(&mut tx, &vec![0xCDu8; 1000]);
 
         let msg = rx.try_recv().unwrap();

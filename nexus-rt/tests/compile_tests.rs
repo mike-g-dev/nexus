@@ -188,7 +188,7 @@ fn tap_log(_x: &u32) {}
 fn tap_log_with_res(_counter: Res<ResU64>, _x: &u32) {}
 
 fn filter_even(x: &u32) -> bool {
-    *x % 2 == 0
+    (*x).is_multiple_of(2)
 }
 
 fn inspect_option(x: &u32) {
@@ -2181,7 +2181,7 @@ fn dag_option_combinators() {
     let mut d = DagBuilder::<u32>::new()
         .root(root, r)
         .guard(|x: &u32| *x > 0, r)
-        .filter(|x: &u32| *x % 2 == 0, r)
+        .filter(|x: &u32| (*x).is_multiple_of(2), r)
         .inspect(|_x: &u32| {}, r)
         .map(dag_store_u32, r)
         .build();
@@ -4026,7 +4026,6 @@ fn hrtb_callback() {
 /// All types registered as World resources must satisfy Resource (Send + 'static).
 /// These compile tests catch regressions where internal raw pointers or
 /// UnsafeCell fields break the auto-Send derivation.
-
 #[cfg(feature = "timer")]
 #[test]
 fn timer_wheel_satisfies_resource_bound() {
@@ -5035,6 +5034,7 @@ mod reactors {
 
     /// Helper: access ReactorNotify via ResourceId to avoid borrow conflicts
     /// with world.registry(). Same pattern as ReactorSystem::dispatch.
+    #[allow(clippy::mut_from_ref)]
     fn notify_mut(world: &World, id: ResourceId) -> &mut ReactorNotify {
         unsafe { world.get_mut::<ReactorNotify>(id) }
     }
@@ -5275,7 +5275,7 @@ mod reactors {
 
             if frame <= 3 {
                 assert_eq!(world.resource::<Counter>().0, frame);
-                assert_eq!(system.reactor_count(&world), if frame < 3 { 1 } else { 0 });
+                assert_eq!(system.reactor_count(&world), usize::from(frame < 3));
             } else {
                 // Frame 4: reactor already removed, counter stays at 3
                 assert_eq!(world.resource::<Counter>().0, 3);

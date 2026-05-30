@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 //! Integration tests for PR 2 §2.4 `Runtime::shutdown_quiesce`.
 //!
 //! The canonical pre-shutdown step. Drives the executor until the
@@ -13,7 +31,7 @@ use nexus_rt::WorldBuilder;
 fn shutdown_quiesce_clean_runtime_returns_ok() {
     // Plan-specified test name: nothing was spawned, quiesce should
     // return Ok immediately.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
 
@@ -25,7 +43,7 @@ fn shutdown_quiesce_clean_runtime_returns_ok() {
 fn shutdown_quiesce_after_block_on_returns_ok() {
     // After a normal block_on, the runtime should be quiesced — all
     // tasks completed, queues empty.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
 
@@ -61,7 +79,7 @@ fn shutdown_quiesce_drains_cross_queue() {
     // For a richer test, see lib unit tests; this integration test
     // covers the public API contract: quiesce drains pending work and
     // returns Ok when done.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
 
@@ -82,7 +100,7 @@ fn shutdown_quiesce_drains_cross_queue() {
 fn shutdown_quiesce_then_drop_no_abort() {
     // Plan-specified test name. Full canonical sequence: block_on →
     // quiesce → drop. ShutdownStats counters all zero post-drop.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
 
@@ -112,7 +130,7 @@ fn shutdown_quiesce_then_drop_no_abort() {
 fn shutdown_quiesce_zero_timeout_clean_runtime_returns_ok() {
     // Edge case: timeout zero — quiesce checks the state once. Clean
     // runtime passes the check immediately.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
 
@@ -128,7 +146,7 @@ fn shutdown_quiesce_timeout() {
     // Plan-specified test name. Spawn a never-completing task,
     // quiesce briefly, expect timeout with non-zero outstanding ref
     // count and (most likely zero) cross-queue.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
 
@@ -190,7 +208,7 @@ fn shutdown_quiesce_completed_task_held_by_join_handle_times_out() {
     // Post-fix: quiesce checks `outstanding_tasks() == 0`
     // (`all_tasks.len()`). The held task is still tracked → quiesce
     // returns `Err(QuiesceTimeout)` with `remaining_outstanding_refs >= 1`.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
 

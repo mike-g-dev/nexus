@@ -387,12 +387,12 @@ impl ResponseReader {
                                 .and_then(|v| v.trim().parse::<usize>().ok())
                                 .ok_or(()),
                         );
-                    } else if h.name.eq_ignore_ascii_case("Transfer-Encoding") {
-                        if let Ok(te) = std::str::from_utf8(h.value) {
-                            self.cached_is_chunked = te
-                                .split(',')
-                                .any(|t| t.trim().eq_ignore_ascii_case("chunked"));
-                        }
+                    } else if h.name.eq_ignore_ascii_case("Transfer-Encoding")
+                        && let Ok(te) = std::str::from_utf8(h.value)
+                    {
+                        self.cached_is_chunked = te
+                            .split(',')
+                            .any(|t| t.trim().eq_ignore_ascii_case("chunked"));
                     }
                 }
 

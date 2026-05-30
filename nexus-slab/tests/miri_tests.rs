@@ -759,7 +759,7 @@ fn miri_bounded_alloc_through_stored_pointer() {
     // alloc (claim + write), read, free. Exercises the full provenance
     // chain through a stored pointer round-trip.
     let slab = unsafe { BoundedSlab::<u64>::with_capacity(4) };
-    let slab_ptr: *const BoundedSlab<u64> = &slab;
+    let slab_ptr: *const BoundedSlab<u64> = &raw const slab;
 
     // Access through raw pointer → &Slab (same as TLS round-trip)
     let slab_ref = unsafe { &*slab_ptr };
@@ -773,7 +773,7 @@ fn miri_bounded_alloc_cycle_through_stored_pointer() {
     // Multiple alloc/free cycles through stored pointer — exercises freelist
     // pointer provenance across reuse.
     let slab = unsafe { BoundedSlab::<u64>::with_capacity(2) };
-    let slab_ptr: *const BoundedSlab<u64> = &slab;
+    let slab_ptr: *const BoundedSlab<u64> = &raw const slab;
 
     for i in 0..10u64 {
         let slab_ref = unsafe { &*slab_ptr };
@@ -788,7 +788,7 @@ fn miri_bounded_two_slots_through_stored_pointer() {
     // Claim two slots via alloc, free in reverse order.
     // Exercises freelist pointer provenance when multiple slots are live.
     let slab = unsafe { BoundedSlab::<String>::with_capacity(4) };
-    let slab_ptr: *const BoundedSlab<String> = &slab;
+    let slab_ptr: *const BoundedSlab<String> = &raw const slab;
 
     let slab_ref = unsafe { &*slab_ptr };
     let slot1 = slab_ref.alloc(String::from("first"));
@@ -806,7 +806,7 @@ fn miri_bounded_claim_write_through_stored_pointer() {
     // Two-phase alloc (claim + write) through stored pointer.
     // Exercises claim_ptr → write_value provenance chain.
     let slab = unsafe { BoundedSlab::<u64>::with_capacity(4) };
-    let slab_ptr: *const BoundedSlab<u64> = &slab;
+    let slab_ptr: *const BoundedSlab<u64> = &raw const slab;
 
     let slab_ref = unsafe { &*slab_ptr };
     let claim = slab_ref.claim().unwrap();
@@ -819,7 +819,7 @@ fn miri_bounded_claim_write_through_stored_pointer() {
 fn miri_unbounded_claim_write_through_stored_pointer() {
     // Same pattern for unbounded slab — exercises chunk-based allocation.
     let slab = unsafe { UnboundedSlab::<u64>::with_chunk_capacity(4) };
-    let slab_ptr: *const UnboundedSlab<u64> = &slab;
+    let slab_ptr: *const UnboundedSlab<u64> = &raw const slab;
 
     for i in 0..20u64 {
         let slab_ref = unsafe { &*slab_ptr };
@@ -833,7 +833,7 @@ fn miri_unbounded_claim_write_through_stored_pointer() {
 fn miri_unbounded_stored_pointer_cross_chunk() {
     // Allocate enough to trigger chunk growth, all through stored pointer.
     let slab = unsafe { UnboundedSlab::<u64>::with_chunk_capacity(2) };
-    let slab_ptr: *const UnboundedSlab<u64> = &slab;
+    let slab_ptr: *const UnboundedSlab<u64> = &raw const slab;
 
     let slab_ref = unsafe { &*slab_ptr };
 

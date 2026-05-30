@@ -1,3 +1,10 @@
+#![allow(
+    unused_must_use,
+    dead_code,
+    clippy::float_cmp,
+    clippy::used_underscore_binding,
+    clippy::items_after_statements
+)]
 //! Integration tests for #[derive(Param)].
 
 use nexus_rt::{Handler, IntoHandler, Local, Param, Res, ResMut, Resource, WorldBuilder, no_event};

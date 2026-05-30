@@ -287,7 +287,7 @@ mod tests {
         let mut cov = basic_cov(2);
         for i in 0..200 {
             let x = i as f64;
-            cov.update(&[x, x * 2.0 + 1.0]).unwrap();
+            cov.update(&[x, x.mul_add(2.0, 1.0)]).unwrap();
         }
         let corr = cov.correlation(0, 1).unwrap();
         assert!(corr > 0.95, "expected high correlation, got {corr}");

@@ -478,7 +478,7 @@ fn main() {
         let mut samples = Vec::with_capacity(SAMPLES);
         for _ in 0..WARMUP {
             let mut sum: u64 = 0;
-            for (k, _) in map.iter() {
+            for (k, _) in &map {
                 sum = sum.wrapping_add(*k);
             }
             black_box(sum);
@@ -486,7 +486,7 @@ fn main() {
         for _ in 0..SAMPLES {
             let s = rdtsc_start();
             let mut sum: u64 = 0;
-            for (k, _) in map.iter() {
+            for (k, _) in &map {
                 sum = sum.wrapping_add(*k);
             }
             black_box(sum);

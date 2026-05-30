@@ -142,35 +142,6 @@ unsafe fn drop_fn(data: *const ()) {
     drop(unsafe { TaskRef::from_owned(data as *mut u8) });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::task::{RawWaker, Waker};
-
-    #[test]
-    fn task_ptr_from_local_waker_roundtrip() {
-        let sentinel = 0xDEAD_BEEF_usize as *mut u8;
-        // SAFETY: sentinel is not a real task pointer but we wrap it in
-        // ManuallyDrop so vtable functions (which would deref it) are never called.
-        let waker = unsafe { Waker::from_raw(RawWaker::new(sentinel.cast(), &VTABLE)) };
-        let waker = std::mem::ManuallyDrop::new(waker);
-
-        let ptr = task_ptr_from_local_waker(&waker);
-        assert_eq!(ptr, Some(sentinel));
-    }
-
-    #[test]
-    fn task_ptr_from_foreign_waker_returns_none() {
-        static OTHER: RawWakerVTable =
-            RawWakerVTable::new(|p| RawWaker::new(p, &OTHER), |_| {}, |_| {}, |_| {});
-        // SAFETY: all vtable functions are no-ops; null data is never dereferenced.
-        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &OTHER)) };
-        let waker = std::mem::ManuallyDrop::new(waker);
-
-        assert!(task_ptr_from_local_waker(&waker).is_none());
-    }
-}
-
 /// Push a terminal task pointer onto the executor's `DEFERRED_FREE`
 /// list. Returns `true` if the push succeeded, `false` if the TLS is
 /// null (called outside a poll cycle).
@@ -242,4 +213,33 @@ unsafe fn wake_impl(data: *const ()) {
             queue.push(task_ptr);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::task::{RawWaker, Waker};
+
+    #[test]
+    fn task_ptr_from_local_waker_roundtrip() {
+        let sentinel = 0xDEAD_BEEF_usize as *mut u8;
+        // SAFETY: sentinel is not a real task pointer but we wrap it in
+        // ManuallyDrop so vtable functions (which would deref it) are never called.
+        let waker = unsafe { Waker::from_raw(RawWaker::new(sentinel.cast(), &VTABLE)) };
+        let waker = std::mem::ManuallyDrop::new(waker);
+
+        let ptr = task_ptr_from_local_waker(&waker);
+        assert_eq!(ptr, Some(sentinel));
+    }
+
+    #[test]
+    fn task_ptr_from_foreign_waker_returns_none() {
+        static OTHER: RawWakerVTable =
+            RawWakerVTable::new(|p| RawWaker::new(p, &OTHER), |_| {}, |_| {}, |_| {});
+        // SAFETY: all vtable functions are no-ops; null data is never dereferenced.
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &OTHER)) };
+        let waker = std::mem::ManuallyDrop::new(waker);
+
+        assert!(task_ptr_from_local_waker(&waker).is_none());
+    }
 }

@@ -466,7 +466,7 @@ mod arc_tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc as StdArc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
     use std::task::{Context, Poll};
 
     struct ArcNoop;

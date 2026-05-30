@@ -391,7 +391,7 @@ fn main() {
 
     let mut guarded = DagBuilder::<u32>::new()
         .root(|x: u32| x, reg)
-        .guard(|x: &u32| *x % 2 == 0, reg)
+        .guard(|x: &u32| (*x).is_multiple_of(2), reg)
         .map(count_and_print, reg)
         .unwrap_or(())
         .build();

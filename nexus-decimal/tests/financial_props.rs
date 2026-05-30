@@ -166,10 +166,10 @@ proptest! {
     ) {
         let v = D64::from_raw(raw);
         let tick = D64::from_raw(tick_raw);
-        if let Some(shifted) = v.add_ticks(n, tick) {
-            if let Some(diff) = shifted.tick_diff(v, tick) {
-                prop_assert_eq!(diff, n);
-            }
+        if let Some(shifted) = v.add_ticks(n, tick)
+            && let Some(diff) = shifted.tick_diff(v, tick)
+        {
+            prop_assert_eq!(diff, n);
         }
     }
 
@@ -181,10 +181,10 @@ proptest! {
     ) {
         let v = D128::from_raw(raw);
         let tick = D128::from_raw(tick_raw);
-        if let Some(shifted) = v.add_ticks(n, tick) {
-            if let Some(diff) = shifted.tick_diff(v, tick) {
-                prop_assert_eq!(diff, n);
-            }
+        if let Some(shifted) = v.add_ticks(n, tick)
+            && let Some(diff) = shifted.tick_diff(v, tick)
+        {
+            prop_assert_eq!(diff, n);
         }
     }
 

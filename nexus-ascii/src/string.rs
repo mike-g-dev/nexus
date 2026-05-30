@@ -197,7 +197,10 @@ pub struct AsciiString<const CAP: usize> {
 impl<const CAP: usize> AsciiString<CAP> {
     /// Compile-time assertion that CAP is a multiple of 8.
     /// Required for word-aligned SIMD operations.
-    const _CAP_ASSERT: () = assert!(CAP % 8 == 0, "AsciiString CAP must be a multiple of 8");
+    const _CAP_ASSERT: () = assert!(
+        CAP.is_multiple_of(8),
+        "AsciiString CAP must be a multiple of 8"
+    );
 
     /// Creates an empty ASCII string.
     ///
@@ -1054,7 +1057,7 @@ impl<const CAP: usize> AsciiString<CAP> {
     /// # Compile-time Checks
     ///
     /// - `NEW_CAP >= CAP` (must be widening, not narrowing)
-    /// - `NEW_CAP % 8 == 0` (alignment requirement)
+    /// - `NEW_CAP.is_multiple_of(8)` (alignment requirement)
     ///
     /// # Example
     ///
@@ -1068,7 +1071,7 @@ impl<const CAP: usize> AsciiString<CAP> {
     /// ```
     #[inline]
     pub fn widen<const NEW_CAP: usize>(self) -> AsciiString<NEW_CAP> {
-        const { assert!(NEW_CAP % 8 == 0, "NEW_CAP must be a multiple of 8") }
+        const { assert!(NEW_CAP.is_multiple_of(8), "NEW_CAP must be a multiple of 8") }
         const {
             assert!(
                 NEW_CAP >= CAP,
@@ -1094,7 +1097,7 @@ impl<const CAP: usize> AsciiString<CAP> {
     /// # Compile-time Checks
     ///
     /// - `NEW_CAP <= CAP` (must be tightening, not widening)
-    /// - `NEW_CAP % 8 == 0` (alignment requirement)
+    /// - `NEW_CAP.is_multiple_of(8)` (alignment requirement)
     ///
     /// # Example
     ///
@@ -1112,7 +1115,7 @@ impl<const CAP: usize> AsciiString<CAP> {
     /// ```
     #[inline]
     pub fn tighten<const NEW_CAP: usize>(self) -> Result<AsciiString<NEW_CAP>, crate::AsciiError> {
-        const { assert!(NEW_CAP % 8 == 0, "NEW_CAP must be a multiple of 8") }
+        const { assert!(NEW_CAP.is_multiple_of(8), "NEW_CAP must be a multiple of 8") }
         const {
             assert!(
                 NEW_CAP <= CAP,
@@ -2287,7 +2290,7 @@ impl<const CAP: usize> Ord for AsciiString<CAP> {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         let mut i = 0;
         while i < CAP {
-            // SAFETY: CAP % 8 == 0 guarantees i + 8 <= CAP
+            // SAFETY: CAP.is_multiple_of(8) guarantees i + 8 <= CAP
             let a =
                 u64::from_be_bytes(unsafe { self.data.as_ptr().add(i).cast::<[u8; 8]>().read() });
             let b =

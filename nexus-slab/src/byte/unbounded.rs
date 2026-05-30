@@ -398,9 +398,8 @@ mod tests {
         let slab: Slab<64> = unsafe { Slab::with_chunk_capacity(256) };
         let claim = slab.claim();
         let val: u64 = 77;
-        let ptr = unsafe {
-            claim.write_raw(&val as *const u64 as *const u8, core::mem::size_of::<u64>())
-        };
+        let ptr =
+            unsafe { claim.write_raw(&raw const val as *const u8, core::mem::size_of::<u64>()) };
         assert_eq!(unsafe { *(ptr as *const u64) }, 77);
         let slot = unsafe { super::Slot::<u64>::from_raw(ptr) };
         slab.free(slot);

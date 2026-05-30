@@ -117,11 +117,11 @@ fn build_mlp_weights(layer_sizes: &[usize]) -> (Vec<f64>, Vec<f64>) {
     for i in 0..layer_sizes.len() - 1 {
         let n = layer_sizes[i] * layer_sizes[i + 1];
         for _ in 0..n {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             weights.push((seed >> 33) as f64 / (1u64 << 31) as f64 - 1.0);
         }
         for _ in 0..layer_sizes[i + 1] {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             biases.push((seed >> 33) as f64 / (1u64 << 31) as f64 * 0.1);
         }
     }
@@ -465,7 +465,7 @@ fn make_tcn(
 ) -> TinyTcn {
     let mut seed = 42u64;
     let mut next_f32 = || -> f32 {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         (seed >> 33) as f32 / (1u64 << 31) as f32 * 0.2 - 0.1
     };
 

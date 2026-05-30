@@ -501,7 +501,7 @@ mod tests {
     fn linear_exact_fit() {
         let mut r = LinearRegressionF64::new();
         for x in 0..100 {
-            r.update(x as f64, 2.0 * x as f64 + 3.0).unwrap();
+            r.update(x as f64, 2.0f64.mul_add(x as f64, 3.0)).unwrap();
         }
         assert!((r.slope().unwrap() - 2.0).abs() < 1e-8);
         assert!((r.intercept_value().unwrap() - 3.0).abs() < 1e-8);
@@ -523,7 +523,7 @@ mod tests {
     fn predict_linear() {
         let mut r = LinearRegressionF64::new();
         for x in 0..100 {
-            r.update(x as f64, 2.0 * x as f64 + 3.0).unwrap();
+            r.update(x as f64, 2.0f64.mul_add(x as f64, 3.0)).unwrap();
         }
         let y = r.predict(50.0).unwrap();
         assert!((y - 103.0).abs() < 1e-6, "predict(50) = {y}");
@@ -538,7 +538,7 @@ mod tests {
             rng ^= rng >> 7;
             rng ^= rng << 17;
             let noise = (rng % 100) as f64 - 50.0;
-            r.update(x as f64, 2.0 * x as f64 + noise).unwrap();
+            r.update(x as f64, 2.0f64.mul_add(x as f64, noise)).unwrap();
         }
         let r2 = r.r_squared().unwrap();
         assert!(r2 > 0.9 && r2 < 1.0, "R² with noise = {r2}");
@@ -620,7 +620,7 @@ mod tests {
             .build()
             .unwrap();
         for x in 0..500 {
-            r.update(x as f64, 2.0 * x as f64 + 3.0).unwrap();
+            r.update(x as f64, 2.0f64.mul_add(x as f64, 3.0)).unwrap();
         }
         let slope = r.slope().unwrap();
         assert!((slope - 2.0).abs() < 0.5, "ew slope = {slope}");

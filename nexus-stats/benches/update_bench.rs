@@ -1,3 +1,4 @@
+#![allow(unused_must_use)]
 //! Criterion benchmarks for nexus-stats hot-path update methods.
 //!
 //! Each benchmark primes the type with 1000 samples, then measures the
@@ -46,17 +47,26 @@ impl Lcg {
         Self(seed)
     }
     fn next_f64(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         // Map to [0, 100) range — realistic for most stats
         (self.0 >> 33) as f64 * (100.0 / (1u64 << 31) as f64)
     }
     fn next_feature(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         // Map to [-1, 1) range — realistic for feature vectors
-        ((self.0 >> 33) as f64 / (1u64 << 31) as f64) * 2.0 - 1.0
+        ((self.0 >> 33) as f64 / (1u64 << 31) as f64).mul_add(2.0, -1.0)
     }
     fn next_unit(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         (self.0 >> 33) as f64 / (1u64 << 31) as f64
     }
 }
@@ -613,14 +623,14 @@ fn bench_lms_filter(c: &mut Criterion) {
             .unwrap();
         let mut features: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
         for _ in 0..1000 {
-            for v in features.iter_mut() {
+            for v in &mut features {
                 *v = rng.next_feature();
             }
             let _ = f.update(&features, rng.next_f64());
         }
         c.bench_function(&format!("LmsFilterF64::update (d={dims})"), |b| {
             b.iter(|| {
-                for v in features.iter_mut() {
+                for v in &mut features {
                     *v = rng.next_feature();
                 }
                 f.update(black_box(&features), black_box(rng.next_f64()))
@@ -641,14 +651,14 @@ fn bench_nlms_filter(c: &mut Criterion) {
             .unwrap();
         let mut features: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
         for _ in 0..1000 {
-            for v in features.iter_mut() {
+            for v in &mut features {
                 *v = rng.next_feature();
             }
             let _ = f.update(&features, rng.next_f64());
         }
         c.bench_function(&format!("NlmsFilterF64::update (d={dims})"), |b| {
             b.iter(|| {
-                for v in features.iter_mut() {
+                for v in &mut features {
                     *v = rng.next_feature();
                 }
                 f.update(black_box(&features), black_box(rng.next_f64()))
@@ -669,14 +679,14 @@ fn bench_rls_filter(c: &mut Criterion) {
             .unwrap();
         let mut features: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
         for _ in 0..1000 {
-            for v in features.iter_mut() {
+            for v in &mut features {
                 *v = rng.next_feature();
             }
             let _ = f.update(&features, rng.next_f64());
         }
         c.bench_function(&format!("RlsFilterF64::update (d={dims})"), |b| {
             b.iter(|| {
-                for v in features.iter_mut() {
+                for v in &mut features {
                     *v = rng.next_feature();
                 }
                 f.update(black_box(&features), black_box(rng.next_f64()))
@@ -696,14 +706,14 @@ fn bench_logistic_regression(c: &mut Criterion) {
         .unwrap();
     let mut features: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
     for _ in 0..1000 {
-        for v in features.iter_mut() {
+        for v in &mut features {
             *v = rng.next_feature();
         }
         lr.update(&features, rng.next_f64() > 50.0);
     }
     c.bench_function("LogisticRegressionF64::update (d=5)", |b| {
         b.iter(|| {
-            for v in features.iter_mut() {
+            for v in &mut features {
                 *v = rng.next_feature();
             }
             lr.update(black_box(&features), black_box(rng.next_f64() > 50.0))
@@ -722,14 +732,14 @@ fn bench_online_kmeans(c: &mut Criterion) {
         .unwrap();
     let mut features: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
     for _ in 0..1000 {
-        for v in features.iter_mut() {
+        for v in &mut features {
             *v = rng.next_feature();
         }
         km.update(&features);
     }
     c.bench_function("OnlineKMeansF64::update (k=3, d=5)", |b| {
         b.iter(|| {
-            for v in features.iter_mut() {
+            for v in &mut features {
                 *v = rng.next_feature();
             }
             km.update(black_box(&features))
@@ -820,14 +830,14 @@ fn bench_online_gd(c: &mut Criterion) {
             .unwrap();
         let mut grad: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
         for _ in 0..1000 {
-            for v in grad.iter_mut() {
+            for v in &mut grad {
                 *v = rng.next_feature();
             }
             let _ = opt.step(&grad);
         }
         c.bench_function(&format!("OnlineGdF64::step (d={dims})"), |b| {
             b.iter(|| {
-                for v in grad.iter_mut() {
+                for v in &mut grad {
                     *v = rng.next_feature();
                 }
                 opt.step(black_box(&grad)).unwrap()
@@ -847,14 +857,14 @@ fn bench_adagrad(c: &mut Criterion) {
             .unwrap();
         let mut grad: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
         for _ in 0..1000 {
-            for v in grad.iter_mut() {
+            for v in &mut grad {
                 *v = rng.next_feature();
             }
             let _ = opt.step(&grad);
         }
         c.bench_function(&format!("AdaGradF64::step (d={dims})"), |b| {
             b.iter(|| {
-                for v in grad.iter_mut() {
+                for v in &mut grad {
                     *v = rng.next_feature();
                 }
                 opt.step(black_box(&grad)).unwrap()
@@ -874,14 +884,14 @@ fn bench_adam(c: &mut Criterion) {
             .unwrap();
         let mut grad: Vec<f64> = (0..dims).map(|_| rng.next_feature()).collect();
         for _ in 0..1000 {
-            for v in grad.iter_mut() {
+            for v in &mut grad {
                 *v = rng.next_feature();
             }
             let _ = opt.step(&grad);
         }
         c.bench_function(&format!("AdamF64::step (d={dims})"), |b| {
             b.iter(|| {
-                for v in grad.iter_mut() {
+                for v in &mut grad {
                     *v = rng.next_feature();
                 }
                 opt.step(black_box(&grad)).unwrap()

@@ -248,10 +248,10 @@ impl TcpStream {
         if let Err(e) = self.ensure_registered(cx) {
             return Poll::Ready(Err(e));
         }
-        if let Some(token) = self.token {
-            if self.io.readiness(token).readable {
-                return Poll::Ready(Ok(()));
-            }
+        if let Some(token) = self.token
+            && self.io.readiness(token).readable
+        {
+            return Poll::Ready(Ok(()));
         }
         Poll::Pending
     }
@@ -261,10 +261,10 @@ impl TcpStream {
         if let Err(e) = self.ensure_registered(cx) {
             return Poll::Ready(Err(e));
         }
-        if let Some(token) = self.token {
-            if self.io.readiness(token).writable {
-                return Poll::Ready(Ok(()));
-            }
+        if let Some(token) = self.token
+            && self.io.readiness(token).writable
+        {
+            return Poll::Ready(Ok(()));
         }
         Poll::Pending
     }
@@ -1012,6 +1012,15 @@ impl AsRawFd for TcpSocket {
 // =============================================================================
 
 #[cfg(test)]
+#[allow(
+    unused_must_use,
+    clippy::float_cmp,
+    dead_code,
+    clippy::ref_option,
+    clippy::redundant_closure_for_method_calls,
+    clippy::let_underscore_future,
+    clippy::semicolon_if_nothing_returned
+)]
 mod tests {
     use super::*;
     use crate::{Runtime, spawn_boxed};

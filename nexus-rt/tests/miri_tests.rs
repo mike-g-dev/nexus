@@ -1,3 +1,10 @@
+#![allow(
+    unused_must_use,
+    dead_code,
+    clippy::float_cmp,
+    clippy::used_underscore_binding,
+    clippy::items_after_statements
+)]
 //! Miri tests for World/ResourceId unsafe paths.
 //!
 //! Exercises type-erased resource storage via NonNull<u8>, Box reconstitution
@@ -8,7 +15,7 @@
 
 use std::cell::Cell;
 
-use nexus_rt::{Resource, World, WorldBuilder};
+use nexus_rt::{Resource, WorldBuilder};
 
 // =============================================================================
 // Helper types

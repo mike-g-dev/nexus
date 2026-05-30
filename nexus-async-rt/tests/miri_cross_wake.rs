@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 //! Integration tests for cross-thread wake paths.
 //!
 //! Tests the cross_task_wake fix (#5) through the tokio_compat public API.
@@ -78,7 +96,7 @@ fn cross_wake_multiple_tokio_spawns() {
             results.push(handle.await.unwrap());
         }
 
-        results.sort();
+        results.sort_unstable();
         let expected: Vec<u64> = (0..10).map(|i| i * 2).collect();
         assert_eq!(results, expected);
     });

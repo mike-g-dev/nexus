@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 //! Channel deadlock tests.
 //!
 //! Each test uses a timeout — if it doesn't complete within the limit,
@@ -41,9 +59,10 @@ fn must_complete_within(
             if done.get() {
                 return;
             }
-            if Instant::now() > deadline {
-                panic!("DEADLOCK: test did not complete within {timeout:?}");
-            }
+            assert!(
+                Instant::now() <= deadline,
+                "DEADLOCK: test did not complete within {timeout:?}"
+            );
             nexus_async_rt::yield_now().await;
         }
     });

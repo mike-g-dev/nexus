@@ -35,7 +35,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.94"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Abso1ut3Zer0/nexus"
 keywords = ["lock-free", "concurrent", "data-structures", "trading"]
@@ -84,3 +84,12 @@ wildcard_imports = "allow"
 cast_possible_wrap = "allow"
 cast_ptr_alignment = "allow"
 significant_drop_tightening = "allow"
+ignore_without_reason = "allow"
+items_after_statements = "allow"
+future_not_send = "allow"
+# Test-heavy lints — these fire legitimately in test modules
+float_cmp = "allow"
+used_underscore_binding = "allow"
+redundant_locals = "allow"
+ref_option = "allow"
+semicolon_if_nothing_returned = "allow"

@@ -245,7 +245,7 @@ mod tests {
             .unwrap();
 
         for i in 0..200 {
-            rs.update(100.0 + i as f64 * 0.1).unwrap();
+            rs.update((i as f64).mul_add(0.1, 100.0)).unwrap();
         }
 
         assert!(
@@ -265,7 +265,7 @@ mod tests {
         // Trend + bounce: negative autocov but rho > -1
         for i in 0..200 {
             let bounce = if i % 2 == 0 { 0.2 } else { -0.2 };
-            rs.update(100.0 + (i as f64) * 0.1 + bounce).unwrap();
+            rs.update((i as f64).mul_add(0.1, 100.0) + bounce).unwrap();
         }
 
         let roll = rs.spread().unwrap();

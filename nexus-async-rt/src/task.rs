@@ -1342,8 +1342,10 @@ mod tests {
         // Provide a free_fn that does Box dealloc (we box it manually below).
         type Storage = FutureOrOutput<Noop, u64>;
         unsafe fn slab_free(ptr: *mut u8) {
-            let layout = std::alloc::Layout::new::<Task<Storage>>();
-            std::alloc::dealloc(ptr, layout);
+            unsafe {
+                let layout = std::alloc::Layout::new::<Task<Storage>>();
+                std::alloc::dealloc(ptr, layout);
+            }
         }
 
         let task = new_joinable_slab(Noop, 0, slab_free, std::ptr::null());

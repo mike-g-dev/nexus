@@ -311,7 +311,7 @@ fn drop_non_empty_heap_panics() {
     let err = result.expect_err("non-empty heap drop should panic in debug");
     let msg = err
         .downcast_ref::<String>()
-        .map(|s| s.as_str())
+        .map(String::as_str)
         .or_else(|| err.downcast_ref::<&str>().copied())
         .unwrap_or("");
     assert!(

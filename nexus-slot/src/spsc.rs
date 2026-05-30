@@ -23,15 +23,15 @@
 #[cfg(not(loom))]
 use std::cell::UnsafeCell;
 use std::fmt;
-#[cfg(not(loom))]
-use std::mem::MaybeUninit;
 #[cfg(loom)]
 use std::marker::PhantomData;
+#[cfg(not(loom))]
+use std::mem::MaybeUninit;
 
 use crate::Pod;
+use crate::loom_impl::{Arc, AtomicUsize, Ordering, fence};
 #[cfg(not(loom))]
 use crate::{atomic_load, atomic_store};
-use crate::loom_impl::{Arc, AtomicUsize, Ordering, fence};
 
 /// Shared state between writer and reader.
 #[repr(C)]

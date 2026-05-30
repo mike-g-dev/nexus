@@ -225,7 +225,12 @@ mod tests {
         // Γ(5) = 4! = 24, so ln_gamma(5) = ln(24)
         assert!((ln_gamma(5.0) - ln(24.0)).abs() < 1e-12);
         // Γ(1/2) = √π, so ln_gamma(0.5) = 0.5 * ln(π)
-        assert!((ln_gamma(0.5) - 0.5 * ln(core::f64::consts::PI)).abs() < 1e-12);
+        assert!(
+            0.5f64
+                .mul_add(-ln(core::f64::consts::PI), ln_gamma(0.5))
+                .abs()
+                < 1e-12
+        );
     }
 
     #[test]

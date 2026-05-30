@@ -65,10 +65,10 @@ impl ShutdownHandle {
     pub fn trigger(&self) {
         self.flag.store(true, Ordering::Release);
         // Wake the task waker first — signal the future directly.
-        if let Ok(mut guard) = self.task_waker.lock() {
-            if let Some(w) = guard.take() {
-                w.wake();
-            }
+        if let Ok(mut guard) = self.task_waker.lock()
+            && let Some(w) = guard.take()
+        {
+            w.wake();
         }
         if let Some(w) = &self.mio_waker {
             let _ = w.wake();
@@ -225,6 +225,15 @@ pub fn install_signal_handlers(flag: &Arc<AtomicBool>, mio_waker: &Arc<mio::Wake
 }
 
 #[cfg(test)]
+#[allow(
+    unused_must_use,
+    clippy::float_cmp,
+    dead_code,
+    clippy::ref_option,
+    clippy::redundant_closure_for_method_calls,
+    clippy::let_underscore_future,
+    clippy::semicolon_if_nothing_returned
+)]
 mod tests {
     use super::*;
 
@@ -296,7 +305,7 @@ mod tests {
         let done = Rc::new(Cell::new(false));
         let flag = done.clone();
 
-        let sh = shutdown.clone();
+        let sh = shutdown;
         rt.block_on(async move {
             spawn_boxed(async move {
                 crate::context::sleep(std::time::Duration::from_millis(50)).await;
@@ -332,7 +341,7 @@ mod tests {
 
         // Second poll with a tracking waker — should overwrite.
         let woke = std::cell::Cell::new(false);
-        let flag_ptr = &woke as *const std::cell::Cell<bool> as *const ();
+        let flag_ptr = &raw const woke as *const ();
         // SAFETY: flag_ptr points to the stack-local `woke` Cell which
         // outlives the waker. The vtable wake/wake_by_ref cast back to
         // Cell<bool> and set true. clone copies the raw pointer. drop

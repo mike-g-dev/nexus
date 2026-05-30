@@ -334,7 +334,7 @@ mod tests {
 
         for i in 0..500u64 {
             let x = i as f64;
-            let y = x * 2.0 + 1.0;
+            let y = x.mul_add(2.0, 1.0);
             cc.update(x, y).unwrap();
             let _ = cov.update(x, y);
         }

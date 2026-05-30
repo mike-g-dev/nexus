@@ -4068,7 +4068,7 @@ mod tests {
             .root(root, reg)
             .then(
                 move |world: &mut World, val: &u32| {
-                    if *val % 2 == 0 {
+                    if (*val).is_multiple_of(2) {
                         arm_even(world, val)
                     } else {
                         arm_odd(world, val)
@@ -4202,7 +4202,7 @@ mod tests {
             .root(root, reg)
             .then(
                 |val: &u32| {
-                    if *val % 2 == 0 {
+                    if (*val).is_multiple_of(2) {
                         *val as u64 * 10
                     } else {
                         *val as u64

@@ -379,10 +379,10 @@ impl<T> Drop for Sender<T> {
         state.sender_count -= 1;
 
         // Last sender dropped — wake receiver so it sees RecvError.
-        if state.sender_count == 0 {
-            if let Some(waker) = state.rx_waker.take() {
-                waker.wake();
-            }
+        if state.sender_count == 0
+            && let Some(waker) = state.rx_waker.take()
+        {
+            waker.wake();
         }
     }
 }
@@ -545,10 +545,10 @@ impl<T> Future for Recv<'_, T> {
 
             // Wake one blocked sender.
             let waiter = unsafe { state.tx_waiters.pop_front() };
-            if !waiter.is_null() {
-                if let Some(waker) = unsafe { (*waiter).waker.take() } {
-                    waker.wake();
-                }
+            if !waiter.is_null()
+                && let Some(waker) = unsafe { (*waiter).waker.take() }
+            {
+                waker.wake();
             }
 
             return Poll::Ready(Ok(value));

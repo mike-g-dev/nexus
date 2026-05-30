@@ -1757,11 +1757,11 @@ mod tests {
         }
 
         let mut dag = CtxDagBuilder::<TradingCtx, u32>::new()
-            .root(decode, &reg)
+            .root(decode, reg)
             .fork()
-            .arm(|seed| seed.then(arm_a, &reg))
-            .arm(|seed| seed.then(arm_b, &reg))
-            .merge(merge_fn, &reg)
+            .arm(|seed| seed.then(arm_a, reg))
+            .arm(|seed| seed.then(arm_b, reg))
+            .merge(merge_fn, reg)
             .build();
 
         let mut ctx = TradingCtx {
@@ -1797,8 +1797,8 @@ mod tests {
         }
 
         let mut dag = CtxDagBuilder::<TradingCtx, u32>::new()
-            .root(root, &reg)
-            .then(store, &reg)
+            .root(root, reg)
+            .then(store, reg)
             .build();
 
         let mut ctx = TradingCtx {
@@ -1834,10 +1834,10 @@ mod tests {
         }
 
         let mut dag = CtxDagBuilder::<TradingCtx, u32>::new()
-            .root(root, &reg)
+            .root(root, reg)
             .fork()
-            .arm(|seed| seed.then(side_a, &reg))
-            .arm(|seed| seed.then(side_b, &reg))
+            .arm(|seed| seed.then(side_a, reg))
+            .arm(|seed| seed.then(side_b, reg))
             .join()
             .build();
 
@@ -1865,21 +1865,21 @@ mod tests {
         }
 
         let mut dag = CtxDagBuilder::<TradingCtx, u32>::new()
-            .root(root, &reg)
-            .guard(|_ctx: &mut TradingCtx, x: &u32| *x > 10, &reg)
+            .root(root, reg)
+            .guard(|_ctx: &mut TradingCtx, x: &u32| *x > 10, reg)
             .map(
                 |ctx: &mut TradingCtx, x: &u32| {
                     ctx.submissions += 1;
                     *x * 2
                 },
-                &reg,
+                reg,
             )
             .unwrap_or(0u32)
             .then(
                 |ctx: &mut TradingCtx, val: &u32| {
                     ctx.book_updates = *val;
                 },
-                &reg,
+                reg,
             )
             .build();
 
@@ -1937,12 +1937,12 @@ mod tests {
         }
 
         let mut dag = CtxDagBuilder::<TradingCtx, u32>::new()
-            .root(decode, &reg)
+            .root(decode, reg)
             .fork()
-            .arm(|seed| seed.then(arm_a, &reg))
-            .arm(|seed| seed.then(arm_b, &reg))
-            .arm(|seed| seed.then(arm_c, &reg))
-            .merge(merge3, &reg)
+            .arm(|seed| seed.then(arm_a, reg))
+            .arm(|seed| seed.then(arm_b, reg))
+            .arm(|seed| seed.then(arm_c, reg))
+            .merge(merge3, reg)
             .build();
 
         let mut ctx = TradingCtx {
@@ -1989,11 +1989,11 @@ mod tests {
         }
 
         let mut dag = CtxDagBuilder::<TradingCtx, u32>::new()
-            .root(decode, &reg)
+            .root(decode, reg)
             .fork()
-            .arm(|seed| seed.then(arm_a, &reg))
-            .arm(|seed| seed.then(arm_b, &reg))
-            .merge(merge_with_res, &reg)
+            .arm(|seed| seed.then(arm_a, reg))
+            .arm(|seed| seed.then(arm_b, reg))
+            .merge(merge_with_res, reg)
             .build();
 
         let mut ctx = TradingCtx {

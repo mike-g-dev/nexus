@@ -182,9 +182,10 @@ mod tests {
             err,
             RestError::RequestTooLarge { capacity: 32768 }
         ));
-        assert!(err
-            .to_string()
-            .contains("exceeds write buffer capacity (32768 bytes)"));
+        assert!(
+            err.to_string()
+                .contains("exceeds write buffer capacity (32768 bytes)")
+        );
     }
 
     #[test]
@@ -218,7 +219,10 @@ mod tests {
     #[test]
     fn rest_error_connection_closed() {
         let err = RestError::ConnectionClosed("during body read");
-        assert!(matches!(err, RestError::ConnectionClosed("during body read")));
+        assert!(matches!(
+            err,
+            RestError::ConnectionClosed("during body read")
+        ));
         assert_eq!(err.to_string(), "connection closed: during body read");
     }
 
@@ -246,12 +250,9 @@ mod tests {
         assert!(RestError::InvalidUrl("x".into()).source().is_none());
         assert!(RestError::ConnectionClosed("x").source().is_none());
         assert!(
-            RestError::BodyTooLarge {
-                size: 1,
-                max: 1
-            }
-            .source()
-            .is_none()
+            RestError::BodyTooLarge { size: 1, max: 1 }
+                .source()
+                .is_none()
         );
         assert!(
             RestError::RequestTooLarge { capacity: 1 }

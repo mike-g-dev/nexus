@@ -347,12 +347,11 @@ impl<S: WireStream + Unpin> HttpConnection<S> {
     #[cold]
     #[allow(clippy::unused_self)] // Matches sync API; may use stream for peek in future.
     fn diagnose_error(&self, err: RestError) -> RestError {
-        if let RestError::Io(ref io_err) = err {
-            if io_err.kind() == std::io::ErrorKind::TimedOut
-                || io_err.kind() == std::io::ErrorKind::WouldBlock
-            {
-                return RestError::ConnectionStale;
-            }
+        if let RestError::Io(ref io_err) = err
+            && (io_err.kind() == std::io::ErrorKind::TimedOut
+                || io_err.kind() == std::io::ErrorKind::WouldBlock)
+        {
+            return RestError::ConnectionStale;
         }
         err
     }

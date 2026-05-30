@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 //! Miri tests for CancellationToken.
 //!
 //! Exercises Treiber stack push/drain, waiter node lifecycle,

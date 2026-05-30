@@ -55,9 +55,9 @@
 
 #![warn(missing_docs)]
 
+pub(crate) mod loom_impl;
 pub mod spmc;
 pub mod spsc;
-pub(crate) mod loom_impl;
 
 #[cfg(not(loom))]
 use std::mem::{MaybeUninit, align_of, size_of};

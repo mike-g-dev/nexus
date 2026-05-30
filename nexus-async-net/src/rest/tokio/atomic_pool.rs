@@ -432,10 +432,10 @@ impl AtomicClientPoolBuilder {
                     // Re-acquire each one (they returned to the pool when
                     // their guards dropped above), shutdown the conn, drop.
                     for _ in 0..built {
-                        if let Some(mut slot) = pool.try_acquire() {
-                            if let Some(ref mut c) = slot.conn {
-                                graceful_shutdown(c).await;
-                            }
+                        if let Some(mut slot) = pool.try_acquire()
+                            && let Some(ref mut c) = slot.conn
+                        {
+                            graceful_shutdown(c).await;
                         }
                     }
                     return Err(e);

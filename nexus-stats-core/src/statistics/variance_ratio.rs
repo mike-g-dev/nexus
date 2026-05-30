@@ -220,7 +220,7 @@ mod tests {
         let mut price = 100.0;
         for i in 0..500 {
             // Trending with noise
-            price += 1.0 + (i as f64 * 0.001);
+            price += (i as f64).mul_add(0.001, 1.0);
             vr.update(price).unwrap();
         }
 

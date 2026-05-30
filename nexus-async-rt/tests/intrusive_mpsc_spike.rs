@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 //! Spike: compare Vec-based ready queue vs intrusive MPSC queue.
 //!
 //! Measures the cost of CAS-based push vs Vec push for the executor's
@@ -39,7 +57,7 @@ struct IntrusiveMpsc {
 impl IntrusiveMpsc {
     fn new() -> Self {
         let stub = Box::new(Node::new());
-        let stub_ptr = &*stub as *const Node as *mut Node;
+        let stub_ptr = (&raw const *stub).cast_mut();
         Self {
             head: stub_ptr,
             tail: AtomicPtr::new(stub_ptr),
@@ -64,7 +82,7 @@ impl IntrusiveMpsc {
         let mut next = unsafe { (*head).next.load(Ordering::Acquire) };
 
         // Skip stub
-        let stub_ptr = &*self.stub as *const Node as *mut Node;
+        let stub_ptr = (&raw const *self.stub).cast_mut();
         if head == stub_ptr {
             if next.is_null() {
                 return std::ptr::null_mut();
@@ -144,7 +162,7 @@ fn spike_intrusive_mpsc_push_pop() {
 
     // Warmup
     for node in &mut nodes[..WARMUP] {
-        let ptr = &mut **node as *mut Node;
+        let ptr = &raw mut **node;
         queue.push(ptr);
     }
     loop {
@@ -157,7 +175,7 @@ fn spike_intrusive_mpsc_push_pop() {
     // Measure push+pop
     let start = Instant::now();
     for node in &mut nodes {
-        let ptr = &mut **node as *mut Node;
+        let ptr = &raw mut **node;
         queue.push(black_box(ptr));
     }
     let mut count = 0usize;
@@ -210,7 +228,7 @@ fn spike_pingpong_vec() {
 fn spike_pingpong_intrusive() {
     let mut queue = IntrusiveMpsc::new();
     let mut node = Box::new(Node::new());
-    let ptr = &mut *node as *mut Node;
+    let ptr = &raw mut *node;
 
     // Warmup
     for _ in 0..WARMUP {

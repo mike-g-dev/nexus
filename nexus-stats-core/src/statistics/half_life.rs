@@ -185,7 +185,7 @@ mod tests {
         s ^= s << 17;
         *state = s;
         // Map to [-1, 1]
-        (s as f64 / u64::MAX as f64) * 2.0 - 1.0
+        (s as f64 / u64::MAX as f64).mul_add(2.0, -1.0)
     }
 
     #[test]

@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 //! Integration tests for PR 2 §2.3 `ShutdownStats` observability.
 //!
 //! Each abnormal-shutdown path increments a counter on the
@@ -29,7 +47,7 @@ use nexus_rt::WorldBuilder;
 
 #[test]
 fn shutdown_stats_clean_runtime_all_counters_zero() {
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
 
     let rt = Runtime::new(&mut world);
@@ -49,7 +67,7 @@ fn shutdown_stats_handle_outlives_runtime() {
     // remain readable after the Runtime drops, otherwise the design
     // is broken (counters fire DURING drop, so pre-drop snapshots
     // always read zero for shutdown-only paths).
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
 
     let rt = Runtime::new(&mut world);
@@ -83,13 +101,13 @@ fn shutdown_stats_cross_queue_undrained_when_entries_left_at_drop() {
     // For deterministic counting, we accept that the count may be 0
     // or N (timing-dependent). This test asserts the counter is
     // OBSERVABLE — i.e., wired and incrementable, not stuck at 0.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
     let mut rt = Runtime::new(&mut world);
     let stats = rt.shutdown_stats();
 
     rt.block_on(async {
-        let (tx, mut rx) = nexus_async_rt::channel::mpsc::channel::<u64>(64);
+        let (tx, rx) = nexus_async_rt::channel::mpsc::channel::<u64>(64);
 
         // Background thread pushes a few items, including one likely to
         // land after the receiver task completes.
@@ -137,7 +155,7 @@ fn shutdown_stats_cross_queue_undrained_when_entries_left_at_drop() {
 fn shutdown_stats_handle_clone_is_independent_view() {
     // Cloning the Arc gives multiple readers of the same counters.
     // Both see the same state.
-    let mut wb = WorldBuilder::new();
+    let wb = WorldBuilder::new();
     let mut world = wb.build();
 
     let rt = Runtime::new(&mut world);

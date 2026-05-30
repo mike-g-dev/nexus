@@ -1,3 +1,10 @@
+#![allow(
+    unused_must_use,
+    dead_code,
+    clippy::float_cmp,
+    clippy::used_underscore_binding,
+    clippy::items_after_statements
+)]
 //! Criterion benchmarks for nexus-rt dispatch hot paths.
 //!
 //! Run:
@@ -36,7 +43,7 @@ fn bench_handler_dispatch(c: &mut Criterion) {
 
     // 0 params
     {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
         let mut handler = (|_event: u64| {}).into_handler(world.registry());
 
@@ -97,7 +104,7 @@ fn bench_callback_dispatch(c: &mut Criterion) {
 
     // 0 params
     {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
 
         fn step(ctx: &mut Ctx, _event: u64) {
@@ -143,7 +150,7 @@ fn bench_pipeline_dispatch(c: &mut Criterion) {
 
     // 3-stage bare (no World access)
     {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
         let reg = world.registry();
 
@@ -184,7 +191,10 @@ fn bench_pipeline_dispatch(c: &mut Criterion) {
             .then(store, reg);
 
         group.bench_function("3_stage_world_access", |b| {
-            b.iter(|| black_box(p.run(black_box(&mut world), black_box(42u64))));
+            b.iter(|| {
+                p.run(black_box(&mut world), black_box(42u64));
+                black_box(())
+            });
         });
     }
 
@@ -277,7 +287,7 @@ fn bench_world_access(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_template(c: &mut Criterion) {
-    use nexus_rt::template::{Blueprint, HandlerTemplate};
+    use nexus_rt::template::HandlerTemplate;
 
     let mut group = c.benchmark_group("template");
     group.throughput(Throughput::Elements(1));
@@ -327,7 +337,7 @@ fn bench_reactor_dispatch(c: &mut Criterion) {
 
     // 1 reactor, noop
     {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
 
         let src = world.register_source();
@@ -345,7 +355,7 @@ fn bench_reactor_dispatch(c: &mut Criterion) {
 
     // 10 reactors, noop
     {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
 
         let src = world.register_source();
@@ -365,7 +375,7 @@ fn bench_reactor_dispatch(c: &mut Criterion) {
 
     // 50 reactors, noop
     {
-        let mut wb = WorldBuilder::new();
+        let wb = WorldBuilder::new();
         let mut world = wb.build();
 
         let src = world.register_source();

@@ -373,7 +373,7 @@ fn bench_contended() {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mode = args.get(1).map(|s| s.as_str());
+    let mode = args.get(1).map(String::as_str);
 
     println!("nexus-notify ReadySet benchmark (MPSC queue + dedup flags)");
     println!("Samples: {SAMPLES}, warmup: {WARMUP}");

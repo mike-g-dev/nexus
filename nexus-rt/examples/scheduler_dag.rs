@@ -99,9 +99,9 @@ fn main() {
     // Build the staged chain: compute_theo → compute_quotes → check_risk
     let mut scheduler = wb.install_driver(
         SchedulerBuilder::new()
-            .root(compute_theo, &reg)
-            .then(compute_quotes, &reg)
-            .then(check_risk, &reg),
+            .root(compute_theo, reg)
+            .then(compute_quotes, reg)
+            .then(check_risk, reg),
     );
 
     // Event handler for market data

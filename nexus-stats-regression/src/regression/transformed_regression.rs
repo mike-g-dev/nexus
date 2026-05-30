@@ -716,7 +716,7 @@ mod tests {
         let mut r = LogarithmicRegressionF64::new();
         for x in 1..200 {
             let xf = x as f64;
-            r.update(xf, 3.0 * xf.ln() + 1.0).unwrap();
+            r.update(xf, 3.0f64.mul_add(xf.ln(), 1.0)).unwrap();
         }
         let slope = r.slope().unwrap();
         assert!((slope - 3.0).abs() < 1e-6, "slope = {slope}");
@@ -792,7 +792,8 @@ mod tests {
             .build()
             .unwrap();
         for x in 1..300 {
-            r.update(x as f64, 2.0 * (x as f64).ln() + 5.0).unwrap();
+            r.update(x as f64, 2.0f64.mul_add((x as f64).ln(), 5.0))
+                .unwrap();
         }
         assert!(r.is_primed());
     }

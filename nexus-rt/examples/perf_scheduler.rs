@@ -111,7 +111,7 @@ fn main() {
         let mut wb = WorldBuilder::new();
         wb.register(ResU64(0));
         let reg = wb.registry();
-        let mut scheduler = wb.install_driver(SchedulerBuilder::new().root(sys_true, &reg));
+        let mut scheduler = wb.install_driver(SchedulerBuilder::new().root(sys_true, reg));
         let mut world = wb.build();
         bench_batched("chain 1 system", || {
             black_box(scheduler.run(&mut world));
@@ -123,10 +123,10 @@ fn main() {
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
             SchedulerBuilder::new()
-                .root(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg),
+                .root(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg),
         );
         let mut world = wb.build();
         bench_batched("chain 4 systems", || {
@@ -139,14 +139,14 @@ fn main() {
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
             SchedulerBuilder::new()
-                .root(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg),
+                .root(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg),
         );
         let mut world = wb.build();
         bench_batched("chain 8 systems", || {
@@ -164,7 +164,7 @@ fn main() {
         wb.register(ResU64(0));
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
-            SchedulerBuilder::new().root((sys_true, sys_true, sys_true, sys_true), &reg),
+            SchedulerBuilder::new().root((sys_true, sys_true, sys_true, sys_true), reg),
         );
         let mut world = wb.build();
         bench_batched("stage with 4 systems", || {
@@ -179,7 +179,7 @@ fn main() {
             (
                 sys_true, sys_true, sys_true, sys_true, sys_true, sys_true, sys_true, sys_true,
             ),
-            &reg,
+            reg,
         ));
         let mut world = wb.build();
         bench_batched("stage with 8 systems", || {
@@ -198,9 +198,9 @@ fn main() {
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
             SchedulerBuilder::new()
-                .root(sys_true, &reg)
-                .then((sys_true, sys_true), &reg)
-                .then(sys_true, &reg),
+                .root(sys_true, reg)
+                .then((sys_true, sys_true), reg)
+                .then(sys_true, reg),
         );
         let mut world = wb.build();
         bench_batched("diamond fan=2 (4 systems)", || {
@@ -213,9 +213,9 @@ fn main() {
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
             SchedulerBuilder::new()
-                .root(sys_true, &reg)
-                .then((sys_true, sys_true, sys_true, sys_true), &reg)
-                .then(sys_true, &reg),
+                .root(sys_true, reg)
+                .then((sys_true, sys_true, sys_true, sys_true), reg)
+                .then(sys_true, reg),
         );
         let mut world = wb.build();
         bench_batched("diamond fan=4 (6 systems)", || {
@@ -228,15 +228,15 @@ fn main() {
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
             SchedulerBuilder::new()
-                .root(sys_true, &reg)
+                .root(sys_true, reg)
                 .then(
                     (
                         sys_true, sys_true, sys_true, sys_true, sys_true, sys_true, sys_true,
                         sys_true,
                     ),
-                    &reg,
+                    reg,
                 )
-                .then(sys_true, &reg),
+                .then(sys_true, reg),
         );
         let mut world = wb.build();
         bench_batched("diamond fan=8 (10 systems)", || {
@@ -255,10 +255,10 @@ fn main() {
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
             SchedulerBuilder::new()
-                .root(sys_false, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg),
+                .root(sys_false, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg),
         );
         let mut world = wb.build();
         bench_batched("skipped chain 4 (1 runs, 3 skip)", || {
@@ -271,14 +271,14 @@ fn main() {
         let reg = wb.registry();
         let mut scheduler = wb.install_driver(
             SchedulerBuilder::new()
-                .root(sys_false, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg)
-                .then(sys_true, &reg),
+                .root(sys_false, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg)
+                .then(sys_true, reg),
         );
         let mut world = wb.build();
         bench_batched("skipped chain 8 (1 runs, 7 skip)", || {

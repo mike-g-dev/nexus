@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 //! Randomized stress tests for channel correctness.
 //!
 //! Uses std::thread for concurrent access. No runtime needed for
@@ -217,18 +235,15 @@ fn spsc_bytes_random_sizes() {
         let consumer = std::thread::spawn(move || {
             let mut count = 0u32;
             loop {
-                match rx.try_recv() {
-                    Some(msg) => {
-                        let size = 1 + (pseudo_random_seeded(count as u64, 1, 200) as usize);
-                        assert_eq!(msg.len(), size, "size mismatch at msg {count}");
-                        count += 1;
+                if let Some(msg) = rx.try_recv() {
+                    let size = 1 + (pseudo_random_seeded(count as u64, 1, 200) as usize);
+                    assert_eq!(msg.len(), size, "size mismatch at msg {count}");
+                    count += 1;
+                } else {
+                    if count >= msg_count {
+                        break;
                     }
-                    None => {
-                        if count >= msg_count as u32 {
-                            break;
-                        }
-                        std::hint::spin_loop();
-                    }
+                    std::hint::spin_loop();
                 }
             }
         });
@@ -291,7 +306,7 @@ fn mpsc_bytes_concurrent_random_sizes() {
             if received >= expected {
                 break;
             }
-            let all_joined = handles.iter().all(|h| h.is_finished());
+            let all_joined = handles.iter().all(std::thread::JoinHandle::is_finished);
             if all_joined {
                 // One more drain attempt.
                 if rx.try_recv().is_none() {
@@ -351,7 +366,7 @@ fn mpsc_rapid_clone_drop() {
 
         // Drain.
         let mut received = 0u64;
-        while let Ok(_) = rx.try_recv() {
+        while rx.try_recv().is_ok() {
             received += 1;
         }
 

@@ -340,7 +340,7 @@ mod tests {
         for i in 0..200 {
             let x1 = (i as f64 * 0.7).sin();
             let x2 = (i as f64 * 1.3).cos();
-            let target = 2.0 * x1 + 3.0 * x2;
+            let target = 2.0f64.mul_add(x1, 3.0 * x2);
             filter.update(&[x1, x2], target).unwrap();
         }
 
@@ -415,7 +415,7 @@ mod tests {
 
         let features = [2.0, 4.0, 6.0];
         let w = filter.weights();
-        let expected = w[0] * 2.0 + w[1] * 4.0 + w[2] * 6.0;
+        let expected = w[2].mul_add(6.0, w[0].mul_add(2.0, w[1] * 4.0));
         let prediction = filter.predict(&features);
         assert!(
             (prediction - expected).abs() < 1e-12,

@@ -500,7 +500,7 @@ mod tests {
         let mut builder = WorldBuilder::new();
         builder.register::<u64>(0);
         let reg = builder.registry();
-        let mut scheduler = builder.install_driver(SchedulerBuilder::new().root(increment, &reg));
+        let mut scheduler = builder.install_driver(SchedulerBuilder::new().root(increment, reg));
         let mut world = builder.build();
 
         assert_eq!(scheduler.run(&mut world), 1);
@@ -514,9 +514,9 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root(source, &reg)
-                .then(middle, &reg)
-                .then(leaf, &reg),
+                .root(source, reg)
+                .then(middle, reg)
+                .then(leaf, reg),
         );
         let mut world = builder.build();
 
@@ -531,8 +531,8 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root(false_source, &reg)
-                .then(should_not_run, &reg),
+                .root(false_source, reg)
+                .then(should_not_run, reg),
         );
         let mut world = builder.build();
 
@@ -548,9 +548,9 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root(increment, &reg)
-                .then((increment, set_flag), &reg)
-                .then(increment, &reg),
+                .root(increment, reg)
+                .then((increment, set_flag), reg)
+                .then(increment, reg),
         );
         let mut world = builder.build();
 
@@ -565,7 +565,7 @@ mod tests {
         builder.register::<u64>(0);
         let reg = builder.registry();
         let mut scheduler = builder
-            .install_driver(SchedulerBuilder::new().root((increment, increment, increment), &reg));
+            .install_driver(SchedulerBuilder::new().root((increment, increment, increment), reg));
         let mut world = builder.build();
 
         assert_eq!(scheduler.run(&mut world), 3);
@@ -577,7 +577,7 @@ mod tests {
         let mut builder = WorldBuilder::new();
         builder.register::<u64>(0);
         let reg = builder.registry();
-        let mut scheduler = builder.install_driver(SchedulerBuilder::new().root(increment, &reg));
+        let mut scheduler = builder.install_driver(SchedulerBuilder::new().root(increment, reg));
         let mut world = builder.build();
 
         let before = world.current_sequence();
@@ -590,11 +590,8 @@ mod tests {
         let mut builder = WorldBuilder::new();
         builder.register::<u64>(1);
         let reg = builder.registry();
-        let mut scheduler = builder.install_driver(
-            SchedulerBuilder::new()
-                .root(double, &reg)
-                .then(double, &reg),
-        );
+        let mut scheduler =
+            builder.install_driver(SchedulerBuilder::new().root(double, reg).then(double, reg));
         let mut world = builder.build();
 
         scheduler.run(&mut world);
@@ -610,7 +607,7 @@ mod tests {
         builder.register::<bool>(false);
         let reg = builder.registry();
         let mut scheduler = builder
-            .install_driver(SchedulerBuilder::new().root((increment, increment, set_flag), &reg));
+            .install_driver(SchedulerBuilder::new().root((increment, increment, set_flag), reg));
         let mut world = builder.build();
 
         assert_eq!(scheduler.run(&mut world), 3);
@@ -630,8 +627,8 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root((false_increment, increment), &reg)
-                .then(increment, &reg),
+                .root((false_increment, increment), reg)
+                .then(increment, reg),
         );
         let mut world = builder.build();
 
@@ -651,8 +648,8 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root((false_increment, false_increment), &reg)
-                .then(should_not_run, &reg),
+                .root((false_increment, false_increment), reg)
+                .then(should_not_run, reg),
         );
         let mut world = builder.build();
 
@@ -671,8 +668,8 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root(void_increment, &reg)
-                .then(increment, &reg),
+                .root(void_increment, reg)
+                .then(increment, reg),
         );
         let mut world = builder.build();
 
@@ -696,8 +693,8 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root((false_increment, void_increment), &reg)
-                .then(increment, &reg),
+                .root((false_increment, void_increment), reg)
+                .then(increment, reg),
         );
         let mut world = builder.build();
 
@@ -715,9 +712,9 @@ mod tests {
         let reg = builder.registry();
         let scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root(increment, &reg)
-                .then((increment, set_flag), &reg)
-                .then(double, &reg),
+                .root(increment, reg)
+                .then((increment, set_flag), reg)
+                .then(double, reg),
         );
         assert_send(&scheduler);
     }
@@ -730,9 +727,9 @@ mod tests {
         let reg = builder.registry();
         let mut scheduler = builder.install_driver(
             SchedulerBuilder::new()
-                .root(increment, &reg)
-                .then((increment, set_flag), &reg)
-                .then(double, &reg),
+                .root(increment, reg)
+                .then((increment, set_flag), reg)
+                .then(double, reg),
         );
         let mut world = builder.build();
 

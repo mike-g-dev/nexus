@@ -1,3 +1,4 @@
+#![allow(clippy::large_stack_frames)]
 //! Benchmark: nexus-slab vs Box across value sizes.
 //!
 //! Uses batched unrolled timing (64 ops per rdtsc pair) to amortize

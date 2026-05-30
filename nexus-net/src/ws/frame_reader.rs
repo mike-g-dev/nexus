@@ -374,11 +374,11 @@ impl FrameReader {
                         let payload_len = parsed.payload_len;
 
                         // Unmask in-place if needed
-                        if let Some(mask) = parsed.mask_key {
-                            if payload_len > 0 {
-                                let data = &mut self.buf.data_mut()[..payload_len];
-                                apply_mask(data, mask);
-                            }
+                        if let Some(mask) = parsed.mask_key
+                            && payload_len > 0
+                        {
+                            let data = &mut self.buf.data_mut()[..payload_len];
+                            apply_mask(data, mask);
                         }
 
                         let is_single = parsed.fin && !self.assembling;

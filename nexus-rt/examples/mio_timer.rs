@@ -126,7 +126,7 @@ fn startup(
     let token = driver.insert(Box::new(h));
     driver
         .registry()
-        .register(&mut listener.0, token.into(), mio::Interest::READABLE)
+        .register(&mut listener.0, token, mio::Interest::READABLE)
         .expect("register listener");
 
     // Schedule initial heartbeat.
@@ -149,7 +149,7 @@ fn on_accept(
         let token = driver.insert(Box::new(h));
         driver
             .registry()
-            .register(&mut stream, token.into(), mio::Interest::READABLE)
+            .register(&mut stream, token, mio::Interest::READABLE)
             .expect("register stream");
         conns.0.push(stream);
         stats.accepts += 1;
@@ -159,7 +159,7 @@ fn on_accept(
     let token = driver.insert(Box::new(h));
     driver
         .registry()
-        .reregister(&mut listener.0, token.into(), mio::Interest::READABLE)
+        .reregister(&mut listener.0, token, mio::Interest::READABLE)
         .expect("reregister listener");
 }
 
@@ -186,7 +186,7 @@ fn on_echo(
     let token = driver.insert(Box::new(h));
     driver
         .registry()
-        .reregister(stream, token.into(), mio::Interest::READABLE)
+        .reregister(stream, token, mio::Interest::READABLE)
         .expect("reregister stream");
 }
 
@@ -352,7 +352,7 @@ fn main() {
         let token = driver.insert(Box::new(h));
         driver
             .registry()
-            .register(&mut bench_listener, token.into(), mio::Interest::READABLE)
+            .register(&mut bench_listener, token, mio::Interest::READABLE)
             .expect("register bench listener");
         mio_poller
             .poll(&mut world, Some(Duration::from_millis(100)))
@@ -364,7 +364,7 @@ fn main() {
             let t = driver.insert(Box::new(h));
             driver
                 .registry()
-                .reregister(&mut bench_listener, t.into(), mio::Interest::READABLE)
+                .reregister(&mut bench_listener, t, mio::Interest::READABLE)
                 .expect("reregister warmup");
             mio_poller
                 .poll(&mut world, Some(Duration::from_millis(100)))
@@ -377,7 +377,7 @@ fn main() {
             let t = driver.insert(Box::new(h));
             driver
                 .registry()
-                .reregister(&mut bench_listener, t.into(), mio::Interest::READABLE)
+                .reregister(&mut bench_listener, t, mio::Interest::READABLE)
                 .expect("reregister bench");
 
             let start = rdtsc_start();
@@ -431,7 +431,7 @@ fn main() {
         let token = driver.insert(Box::new(h));
         driver
             .registry()
-            .register(&mut bench_listener, token.into(), mio::Interest::READABLE)
+            .register(&mut bench_listener, token, mio::Interest::READABLE)
             .expect("register combined");
         mio_poller
             .poll(&mut world, Some(Duration::from_millis(100)))
@@ -443,7 +443,7 @@ fn main() {
             let t = driver.insert(Box::new(h));
             driver
                 .registry()
-                .reregister(&mut bench_listener, t.into(), mio::Interest::READABLE)
+                .reregister(&mut bench_listener, t, mio::Interest::READABLE)
                 .expect("reregister combined warmup");
 
             let h = bench_timer.into_handler(world.registry());
@@ -467,7 +467,7 @@ fn main() {
             let t = driver.insert(Box::new(h));
             driver
                 .registry()
-                .reregister(&mut bench_listener, t.into(), mio::Interest::READABLE)
+                .reregister(&mut bench_listener, t, mio::Interest::READABLE)
                 .expect("reregister combined bench");
 
             let h = bench_timer.into_handler(world.registry());

@@ -35,6 +35,18 @@ fn bench_notify(c: &mut Criterion) {
 // Poll
 // ============================================================================
 
+fn shuffled_tokens(n: usize, cap: usize) -> Vec<Token> {
+    let stride = cap / n;
+    let mut tokens: Vec<Token> = (0..n).map(|i| Token::new(i * stride)).collect();
+    let mut rng = 12345u64;
+    for i in (1..tokens.len()).rev() {
+        rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        let j = (rng as usize) % (i + 1);
+        tokens.swap(i, j);
+    }
+    tokens
+}
+
 fn bench_poll(c: &mut Criterion) {
     let mut group = c.benchmark_group("poll");
 
@@ -45,21 +57,6 @@ fn bench_poll(c: &mut Criterion) {
             poller.poll(&mut events);
         });
     });
-
-    // Shuffled notify order for realistic cache access patterns.
-    // Deterministic seed for reproducibility.
-    fn shuffled_tokens(n: usize, cap: usize) -> Vec<Token> {
-        let stride = cap / n;
-        let mut tokens: Vec<Token> = (0..n).map(|i| Token::new(i * stride)).collect();
-        // Fisher-Yates shuffle with deterministic seed
-        let mut rng = 12345u64;
-        for i in (1..tokens.len()).rev() {
-            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            let j = (rng as usize) % (i + 1);
-            tokens.swap(i, j);
-        }
-        tokens
-    }
 
     for n in [1, 8, 32, 128, 256] {
         group.throughput(Throughput::Elements(n as u64));

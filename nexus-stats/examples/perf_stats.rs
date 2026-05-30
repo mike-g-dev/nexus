@@ -19,8 +19,7 @@ use nexus_stats::{
     },
     signal::{AutocorrelationF64, CrossCorrelationF64, EntropyF64, TransferEntropyF64},
     smoothing::{
-        AsymEmaF64, EmaF64, HoltF64, Kalman1dF64, KamaF64, SlewF64, SpringF64,
-        WindowedMedianF64,
+        AsymEmaF64, EmaF64, HoltF64, Kalman1dF64, KamaF64, SlewF64, SpringF64, WindowedMedianF64,
     },
     statistics::{CovarianceF64, EwmaVarF64, MomentsF64, WelfordF64},
 };
@@ -644,12 +643,12 @@ fn bench_bool_window(samples: &mut [u64]) {
     let mut bw = BoolWindow::new(64).unwrap();
     let mut rng = 12345u64;
     for _ in 0..WARMUP {
-        bw.update(next_val(&mut rng) % 10 > 0);
+        bw.update(!next_val(&mut rng).is_multiple_of(10));
     }
     for s in samples.iter_mut() {
         let start = rdtsc_start();
         for _ in 0..BATCH {
-            bw.update(next_val(&mut rng) % 10 > 0);
+            bw.update(!next_val(&mut rng).is_multiple_of(10));
         }
         let end = rdtsc_end();
         black_box(bw.failure_rate());

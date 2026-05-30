@@ -540,19 +540,19 @@ fn derive_view_impl(input: &DeriveInput) -> Result<proc_macro2::TokenStream, syn
         }
     }
     // Strip where-clause predicates referencing the view lifetime
-    if let Some(lt) = &lifetime_param {
-        if let Some(where_clause) = &mut marker_generics.where_clause {
-            let lt_ident = lt.ident.to_string();
-            where_clause.predicates = where_clause
-                .predicates
-                .iter()
-                .filter(|pred| {
-                    let tokens = quote! { #pred }.to_string();
-                    !tokens.contains(&lt_ident)
-                })
-                .cloned()
-                .collect();
-        }
+    if let Some(lt) = &lifetime_param
+        && let Some(where_clause) = &mut marker_generics.where_clause
+    {
+        let lt_ident = lt.ident.to_string();
+        where_clause.predicates = where_clause
+            .predicates
+            .iter()
+            .filter(|pred| {
+                let tokens = quote! { #pred }.to_string();
+                !tokens.contains(&lt_ident)
+            })
+            .cloned()
+            .collect();
     }
     // View::StaticViewType: 'static requires all type params to be 'static
     {

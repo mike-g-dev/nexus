@@ -10,29 +10,47 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  lint:
     runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@1.94.0
+      with:
+        components: rustfmt, clippy
+    - name: Check formatting
+      run: cargo fmt --all --check
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets -- -D warnings
 
+  build:
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@1.94.0
     - name: Build
-      run: cargo build --verbose
+      run: cargo build
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
     - name: Run tests (all features, excluding nexus-net and nexus-async-net)
-      run: cargo test --workspace --all-features --verbose --exclude nexus-net --exclude nexus-async-net
+      run: cargo test --workspace --all-features --exclude nexus-net --exclude nexus-async-net
     - name: Test nexus-net (default - sync)
-      run: cargo test -p nexus-net --verbose
+      run: cargo test -p nexus-net
     - name: Test nexus-net (sync + TLS)
-      run: cargo test -p nexus-net --features tls --verbose
+      run: cargo test -p nexus-net --features tls
     - name: Test nexus-async-net (tokio-rt + tls, default)
-      run: cargo test -p nexus-async-net --verbose
+      run: cargo test -p nexus-async-net
     - name: Test nexus-async-net (nexus + tls)
-      run: cargo test -p nexus-async-net --no-default-features --features nexus,tls --lib --verbose
+      run: cargo test -p nexus-async-net --no-default-features --features nexus,tls --lib
     - name: Test nexus-async-net (nexus, no tls)
-      run: cargo test -p nexus-async-net --no-default-features --features nexus --lib --verbose
+      run: cargo test -p nexus-async-net --no-default-features --features nexus --lib
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@1.94.0
+    - name: Verify MSRV
+      run: cargo build --workspace
 
   test-avx2:
     runs-on: ubuntu-latest
@@ -42,7 +60,7 @@ jobs:
     - name: Test nexus-inference (AVX2 SIMD path)
       run: |
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+avx2" \
-          cargo test -p nexus-inference --target x86_64-unknown-linux-gnu --verbose
+          cargo test -p nexus-inference --target x86_64-unknown-linux-gnu
 
   verify-pytorch:
     runs-on: ubuntu-latest
@@ -59,12 +77,12 @@ jobs:
     - name: Generate fixtures from PyTorch
       run: python nexus-inference/tests/fixtures/generate_all.py
     - name: Verify Rust matches PyTorch (scalar)
-      run: cargo test -p nexus-inference --features safetensors --test safetensors_integration --verbose
+      run: cargo test -p nexus-inference --features safetensors --test safetensors_integration
     - name: Verify Rust matches PyTorch (AVX2)
       run: |
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-feature=+avx2" \
           cargo test -p nexus-inference --features safetensors --test safetensors_integration \
-          --target x86_64-unknown-linux-gnu --verbose
+          --target x86_64-unknown-linux-gnu
 
   verify-lightgbm:
     runs-on: ubuntu-latest
@@ -81,4 +99,4 @@ jobs:
     - name: Verify fixtures are in sync
       run: git diff --exit-code nexus-inference/tests/fixtures/lgb_*
     - name: Verify Rust matches LightGBM
-      run: cargo test -p nexus-inference --features loader-lightgbm --test lightgbm_integration --verbose
+      run: cargo test -p nexus-inference --features loader-lightgbm --test lightgbm_integration

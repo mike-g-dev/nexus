@@ -33,7 +33,7 @@ use alloc::vec;
 ///
 /// let mut s: u64 = 42;
 /// let mut rng = || -> f64 {
-///     s = s.wrapping_mul(6364136223846793005).wrapping_add(1);
+///     s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
 ///     (s >> 33) as f64 / (1u64 << 31) as f64
 /// };
 /// let arm = bandit.select(&mut rng);
@@ -286,8 +286,8 @@ mod tests {
         let mut state = seed;
         move || {
             state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             (state >> 33) as f64 / (1u64 << 31) as f64
         }
     }

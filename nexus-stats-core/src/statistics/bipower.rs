@@ -199,7 +199,7 @@ mod tests {
     fn smooth_series() {
         let mut bv = BipowerVariationF64::new();
         for i in 0..100 {
-            bv.update(100.0 + (i as f64) * 0.01).unwrap();
+            bv.update((i as f64).mul_add(0.01, 100.0)).unwrap();
         }
         let bipower = bv.bipower_variation().unwrap();
         let rv = bv.realized_variance().unwrap();
@@ -214,11 +214,11 @@ mod tests {
     fn series_with_jump() {
         let mut bv = BipowerVariationF64::new();
         for i in 0..50 {
-            bv.update(100.0 + (i as f64) * 0.01).unwrap();
+            bv.update((i as f64).mul_add(0.01, 100.0)).unwrap();
         }
         bv.update(110.0).unwrap(); // jump
         for i in 51..100 {
-            bv.update(110.0 + ((i - 51) as f64) * 0.01).unwrap();
+            bv.update(((i - 51) as f64).mul_add(0.01, 110.0)).unwrap();
         }
         let jv = bv.jump_variation().unwrap();
         assert!(jv > 0.0, "jump variation should be positive, got {jv}");
@@ -228,11 +228,11 @@ mod tests {
     fn jump_ratio_range() {
         let mut bv = BipowerVariationF64::new();
         for i in 0..50 {
-            bv.update(100.0 + (i as f64) * 0.01).unwrap();
+            bv.update((i as f64).mul_add(0.01, 100.0)).unwrap();
         }
         bv.update(110.0).unwrap();
         for i in 51..100 {
-            bv.update(110.0 + ((i - 51) as f64) * 0.01).unwrap();
+            bv.update(((i - 51) as f64).mul_add(0.01, 110.0)).unwrap();
         }
         let ratio = bv.jump_ratio().unwrap();
         assert!(
@@ -283,7 +283,7 @@ mod tests {
     fn reset_clears() {
         let mut bv = BipowerVariationF64::new();
         for i in 0..50 {
-            bv.update(100.0 + (i as f64) * 0.1).unwrap();
+            bv.update((i as f64).mul_add(0.1, 100.0)).unwrap();
         }
         bv.reset();
         assert_eq!(bv.count(), 0);

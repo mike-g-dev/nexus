@@ -874,6 +874,15 @@ impl Executor {
 // =============================================================================
 
 #[cfg(test)]
+#[allow(
+    unused_must_use,
+    clippy::float_cmp,
+    dead_code,
+    clippy::ref_option,
+    clippy::redundant_closure_for_method_calls,
+    clippy::let_underscore_future,
+    clippy::semicolon_if_nothing_returned
+)]
 mod tests {
     use super::*;
     use std::hint::black_box;
@@ -1075,12 +1084,12 @@ mod tests {
         impl Future for WakeOnce {
             type Output = ();
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-                if !self.0 {
+                if self.0 {
+                    Poll::Ready(())
+                } else {
                     self.0 = true;
                     cx.waker().wake_by_ref();
                     Poll::Pending
-                } else {
-                    Poll::Ready(())
                 }
             }
         }

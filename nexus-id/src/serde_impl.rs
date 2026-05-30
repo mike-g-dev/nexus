@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn snowflake_id64_serde_roundtrip() {
-        let id = SnowflakeId64::<42, 6, 16>::from_raw(123456789);
+        let id = SnowflakeId64::<42, 6, 16>::from_raw(123_456_789);
         let json = serde_json::to_string(&id).unwrap();
         assert_eq!(json, "123456789");
         let restored: SnowflakeId64<42, 6, 16> = serde_json::from_str(&json).unwrap();
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn mixed_id64_serde_roundtrip() {
-        let id = MixedId64::<42, 6, 16>::from_raw(987654321);
+        let id = MixedId64::<42, 6, 16>::from_raw(987_654_321);
         let json = serde_json::to_string(&id).unwrap();
         let restored: MixedId64<42, 6, 16> = serde_json::from_str(&json).unwrap();
         assert_eq!(id, restored);

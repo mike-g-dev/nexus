@@ -355,18 +355,18 @@ impl ReactorNotify {
     /// Idempotent — subscribing twice is a no-op.
     /// No-op if `source` has been removed.
     pub fn subscribe(&mut self, reactor: Token, source: DataSource) {
-        if let Some(subscribers) = self.interests.get_mut(source.0) {
-            if !subscribers.contains(&reactor) {
-                subscribers.push(reactor);
-                // Maintain reverse index for O(subscriptions) removal.
-                let idx = reactor.index();
-                debug_assert!(
-                    idx < self.reactor_sources.len(),
-                    "reactor_sources missing entry for reactor token {}",
-                    idx,
-                );
-                self.reactor_sources[idx].push(source);
-            }
+        if let Some(subscribers) = self.interests.get_mut(source.0)
+            && !subscribers.contains(&reactor)
+        {
+            subscribers.push(reactor);
+            // Maintain reverse index for O(subscriptions) removal.
+            let idx = reactor.index();
+            debug_assert!(
+                idx < self.reactor_sources.len(),
+                "reactor_sources missing entry for reactor token {}",
+                idx,
+            );
+            self.reactor_sources[idx].push(source);
         }
     }
 
@@ -1010,7 +1010,7 @@ mod tests {
     fn dummy_reactor() -> ReactorFn<(), fn(&mut ()), ()> {
         ReactorFn {
             ctx: (),
-            f: (|_: &mut ()| {}) as fn(&mut ()),
+            f: (|(): &mut ()| {}) as fn(&mut ()),
             state: (),
             name: "dummy",
         }
@@ -1087,6 +1087,7 @@ mod tests {
     // Helper: registry() borrows &World, resource_mut() borrows &mut World.
     // In tests, we use unsafe get_mut via the notify_id to avoid the conflict,
     // same pattern as production dispatch code.
+    #[allow(clippy::mut_from_ref)]
     fn notify_mut(world: &World, id: ResourceId) -> &mut ReactorNotify {
         unsafe { world.get_mut::<ReactorNotify>(id) }
     }

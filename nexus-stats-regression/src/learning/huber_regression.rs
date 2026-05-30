@@ -259,7 +259,7 @@ mod tests {
         for i in 0..5000 {
             let x1 = (i % 10) as f64;
             let x2 = (i % 7) as f64;
-            let y = 2.0 * x1 + 3.0 * x2;
+            let y = 2.0f64.mul_add(x1, 3.0 * x2);
             reg.update(&[x1, x2], y).unwrap();
         }
 
@@ -321,7 +321,7 @@ mod tests {
 
         let w = reg.weights();
         let pred = reg.predict(&[10.0, 1.0]);
-        let expected = w[0] * 10.0 + w[1] * 1.0;
+        let expected = w[0].mul_add(10.0, w[1] * 1.0);
         assert!((pred - expected).abs() < 1e-10);
     }
 

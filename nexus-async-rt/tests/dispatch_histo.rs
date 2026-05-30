@@ -1,3 +1,21 @@
+#![allow(
+    unused_must_use,
+    unused_imports,
+    dead_code,
+    unknown_lints,
+    clippy::float_cmp,
+    clippy::ref_option,
+    clippy::used_underscore_binding,
+    clippy::redundant_locals,
+    clippy::semicolon_if_nothing_returned,
+    clippy::let_underscore_future,
+    clippy::while_let_loop,
+    clippy::needless_continue,
+    clippy::match_wild_err_arm,
+    clippy::collection_is_never_read,
+    clippy::async_yields_async,
+    clippy::match_same_arms
+)]
 #![cfg(target_arch = "x86_64")]
 //! Per-poll (not batched) histogram for nexus-async-rt dispatch.
 //! Shows exactly which polls are slow and by how much.
@@ -25,7 +43,7 @@ fn rdtsc() -> u64 {
 fn rdtscp() -> u64 {
     unsafe {
         let mut aux: u32 = 0;
-        let tsc = core::arch::x86_64::__rdtscp(&mut aux);
+        let tsc = core::arch::x86_64::__rdtscp(&raw mut aux);
         core::arch::x86_64::_mm_lfence();
         tsc
     }

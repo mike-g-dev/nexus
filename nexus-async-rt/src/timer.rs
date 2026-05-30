@@ -390,7 +390,10 @@ mod tests {
         let now = Instant::now();
         let waker = noop_waker();
 
-        driver.schedule(now - Duration::from_millis(10), waker.clone());
+        driver.schedule(
+            now.checked_sub(Duration::from_millis(10)).unwrap(),
+            waker.clone(),
+        );
         driver.schedule(now + Duration::from_secs(100), waker);
 
         let fired = driver.fire_expired(now);

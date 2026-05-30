@@ -258,7 +258,8 @@ mod tests {
             } else {
                 0.0
             };
-            tsrv.update(100.0 + (i as f64) * 0.001 + noise).unwrap();
+            tsrv.update((i as f64).mul_add(0.001, 100.0) + noise)
+                .unwrap();
         }
 
         let fast = tsrv.fast_rv().unwrap();
@@ -278,7 +279,7 @@ mod tests {
             .unwrap();
 
         for i in 0..200 {
-            tsrv.update(100.0 + (i as f64) * 0.01).unwrap();
+            tsrv.update((i as f64).mul_add(0.01, 100.0)).unwrap();
         }
 
         let corrected = tsrv.realized_variance().unwrap();
@@ -316,7 +317,7 @@ mod tests {
             .unwrap();
 
         for i in 0..200 {
-            tsrv.update(100.0 + (i as f64) * 0.01).unwrap();
+            tsrv.update((i as f64).mul_add(0.01, 100.0)).unwrap();
         }
 
         let var = tsrv.realized_variance().unwrap();
@@ -333,7 +334,7 @@ mod tests {
         let prices: alloc::vec::Vec<f64> = (0..500)
             .map(|i| {
                 let noise = if i % 2 == 0 { 0.1 } else { -0.1 };
-                100.0 + (i as f64) * 0.001 + noise
+                (i as f64).mul_add(0.001, 100.0) + noise
             })
             .collect();
 
@@ -367,7 +368,7 @@ mod tests {
             .unwrap();
 
         for i in 0..50 {
-            tsrv.update(100.0 + (i as f64) * 0.01).unwrap();
+            tsrv.update((i as f64).mul_add(0.01, 100.0)).unwrap();
         }
         tsrv.reset();
         assert_eq!(tsrv.count(), 0);

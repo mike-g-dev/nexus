@@ -432,15 +432,14 @@ impl<S: Read + Write> Client<S> {
         self.poisoned = true;
         // On timeout, check if the socket is actually dead (stale connection)
         // vs the server just being slow.
-        if let RestError::Io(ref io_err) = err {
-            if io_err.kind() == std::io::ErrorKind::TimedOut
-                || io_err.kind() == std::io::ErrorKind::WouldBlock
-            {
-                if self.peek_is_dead() {
-                    return Err(RestError::ConnectionStale);
-                }
-                return Err(RestError::ReadTimeout);
+        if let RestError::Io(ref io_err) = err
+            && (io_err.kind() == std::io::ErrorKind::TimedOut
+                || io_err.kind() == std::io::ErrorKind::WouldBlock)
+        {
+            if self.peek_is_dead() {
+                return Err(RestError::ConnectionStale);
             }
+            return Err(RestError::ReadTimeout);
         }
         Err(err)
     }

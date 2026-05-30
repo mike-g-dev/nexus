@@ -127,10 +127,7 @@ mod tests {
             size: 200,
             max: 125,
         };
-        assert_eq!(
-            err.to_string(),
-            "payload too large: 200 bytes (max 125)"
-        );
+        assert_eq!(err.to_string(), "payload too large: 200 bytes (max 125)");
     }
 
     #[test]

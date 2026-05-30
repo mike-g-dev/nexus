@@ -317,8 +317,8 @@ mod tests {
         // UCB bonus for arm 1 after few pulls
         let early_bonus = {
             let total: f64 = bandit.counts.iter().sum();
-            let ln_t = (total as f64).ln();
-            bandit.exploration * (ln_t / bandit.counts[1] as f64).sqrt()
+            let ln_t = total.ln();
+            bandit.exploration * (ln_t / bandit.counts[1]).sqrt()
         };
 
         for _ in 0..100 {
@@ -330,8 +330,8 @@ mod tests {
 
         let late_bonus = {
             let total: f64 = bandit.counts.iter().sum();
-            let ln_t = (total as f64).ln();
-            bandit.exploration * (ln_t / bandit.counts[1] as f64).sqrt()
+            let ln_t = total.ln();
+            bandit.exploration * (ln_t / bandit.counts[1]).sqrt()
         };
 
         assert!(

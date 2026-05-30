@@ -261,6 +261,9 @@ mod tests {
             HandshakeError::UnexpectedStatus(404),
             HandshakeError::UnexpectedStatus(500)
         );
-        assert_ne!(HandshakeError::MissingUpgrade, HandshakeError::MissingConnection);
+        assert_ne!(
+            HandshakeError::MissingUpgrade,
+            HandshakeError::MissingConnection
+        );
     }
 }
