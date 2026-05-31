@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Shared-memory IPC primitives for multi-process trading systems"
+readme = "README.md"
 repository.workspace = true
 keywords = ["shared-memory", "ipc", "mmap", "low-latency", "lock-free"]
 categories = ["concurrency", "data-structures", "os::unix-apis"]
