@@ -449,26 +449,35 @@ schema.
 
 ---
 
-## Open Questions
+## Design Decisions
 
-- **Tag lookup strategy for the watermark scanner:** The generated
-  code knows every valid tag for a message type. Should the scanner
-  use a match statement (compiler picks jump table vs binary
-  search), a generated perfect hash, or a direct-indexed small
-  array (most standard tags are < 1000)? Needs benchmarking.
+**Tag dispatch in the watermark scanner:** The generated scan loop
+uses a `match` on the tag number to route each discovered field
+into its `Cell<FieldSpan>` slot. The compiler picks the optimal
+dispatch strategy (jump table for dense ranges, binary search for
+sparse). No perfect hash or direct-indexed array needed.
 
-- **Encoder validation:** Should generated encoders validate
-  required fields at compile time (builder state machine via
-  typestate), at runtime (check before `finish()`), or not at
-  all (caller's responsibility)? Typestate is elegant but
-  generates complex types. Runtime check is simple. No validation
-  is fastest.
+```rust
+// Generated per message type — inside the scan loop:
+match tag {
+    11 => self.cl_ord_id.set(span),
+    44 => self.price.set(span),
+    54 => self.side.set(span),
+    55 => self.symbol.set(span),
+    _  => { /* skip: not in dictionary */ }
+}
+```
 
-- **Custom/unknown tags:** When the scanner hits a tag not in the
-  dictionary, should it skip it silently (advance watermark past
-  it), collect it into an overflow area, or error? Exchanges
-  routinely add undocumented tags. Silent skip is safest for
-  forward compatibility.
+**Encoder validation:** None. The encoder wraps a buffer and
+writes fields — same model as SBE. Required-field validation is
+a business logic concern that belongs in the session engine or
+application layer, not in the byte-level codec.
+
+**Unknown tags:** Silent skip. When the scanner hits a tag not
+in the dictionary, it advances the watermark past it and
+continues. Exchanges routinely add undocumented tags — erroring
+on a valid message because of an extra tag is a production outage
+waiting to happen.
 
 ---
 
