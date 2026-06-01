@@ -390,6 +390,14 @@ impl FieldReader<'_> {
 /// SWAR sets the high bit of each matching byte (bits 7, 15, 23, ...).
 /// This converts to one-bit-per-byte (bits 0, 1, 2, ...) for uniform
 /// handling via `emit_soh_mask`.
+///
+/// A branchless multiply-shift gather (shift right 7, multiply by the
+/// magic `0x0102_0408_1020_4080`, shift right 56) is correct and tempting
+/// here, but measured slower on realistic decode and was rejected: this
+/// result feeds `emit_soh_mask` on the critical path, so the multiply's
+/// full latency lands on the returned position. For the common sparse case
+/// (one SOH in the tail window) the loop runs a single cheap iteration and
+/// wins by doing less work for the common input.
 #[inline]
 fn swar_to_byte_mask(swar_mask: u64) -> u64 {
     let mut packed = 0u64;
@@ -647,6 +655,29 @@ mod tests {
         assert_eq!(swar_to_byte_mask(0x80_00_00_00), 0x08);
         // Matches at bytes 0 and 7
         assert_eq!(swar_to_byte_mask(0x80_00_00_00_00_00_00_80), 0x81);
+    }
+
+    #[test]
+    fn swar_mask_conversion_exhaustive() {
+        // For every subset of matched bytes, build the SWAR mask (high bit
+        // per matched byte) and check `swar_to_byte_mask` against the
+        // reference mapping: matched byte k -> output bit k.
+        for pattern in 0u32..256 {
+            let mut swar = 0u64;
+            let mut expected = 0u64;
+            for k in 0..8 {
+                if pattern & (1 << k) != 0 {
+                    swar |= 0x80u64 << (k * 8);
+                    expected |= 1u64 << k;
+                }
+            }
+            assert_eq!(
+                swar_to_byte_mask(swar),
+                expected,
+                "pattern={:#010b}",
+                pattern
+            );
+        }
     }
 
     // =========================================================================

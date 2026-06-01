@@ -66,16 +66,42 @@ impl<'a> FieldWriter<'a> {
 ///
 /// This is the standalone version of [`FieldWriter::field`] for use
 /// without the struct wrapper.
+///
+/// # Panics
+///
+/// Panics if `buf` is too small to hold the encoded field
+/// (`pos + tag_digits + 1 + value.len() + 1` bytes). The capacity is
+/// checked once up front; on success every byte is written without
+/// further per-byte bounds checks.
 #[inline]
 pub fn encode_field(buf: &mut [u8], pos: usize, tag: u32, value: &[u8]) -> usize {
-    let mut p = pos;
-    p = write_tag(buf, p, tag);
-    buf[p] = b'=';
-    p += 1;
-    buf[p..p + value.len()].copy_from_slice(value);
-    p += value.len();
-    buf[p] = 0x01;
-    p + 1
+    let digits = tag_digits(tag);
+    // Bytes this field needs: `digits` tag bytes + `=` + value + SOH. Computed
+    // without overflow — `digits <= 10` and `value.len() <= isize::MAX`, so the
+    // sum stays below `usize::MAX`. The `pos <= buf.len()` guard is checked
+    // first so `buf.len() - pos` cannot underflow.
+    let need = digits + 2 + value.len();
+    assert!(
+        pos <= buf.len() && need <= buf.len() - pos,
+        "encode_field: buffer too small (need {need} at pos {pos}, have {})",
+        buf.len()
+    );
+
+    // SAFETY: the assert guarantees `pos + need <= buf.len()`. Every write below
+    // lands in `pos..pos + need`: `digits` tag bytes, the `=`, `value.len()`
+    // value bytes, then the trailing SOH — so all indices are in bounds.
+    // `value` is a `&[u8]` and `buf` a `&mut [u8]`; the borrow checker forbids
+    // them from aliasing, so the copy is genuinely non-overlapping.
+    unsafe {
+        write_tag_unchecked(buf, pos, tag, digits);
+        let mut p = pos + digits;
+        *buf.get_unchecked_mut(p) = b'=';
+        p += 1;
+        core::ptr::copy_nonoverlapping(value.as_ptr(), buf.as_mut_ptr().add(p), value.len());
+        p += value.len();
+        *buf.get_unchecked_mut(p) = 0x01;
+        p + 1
+    }
 }
 
 /// Format a checksum value as 3 zero-padded ASCII digits.
@@ -99,33 +125,56 @@ pub fn format_checksum(sum: u8) -> [u8; 3] {
 // Internal: tag number → ASCII digits
 // =============================================================================
 
+/// Number of ASCII digits needed to represent `tag`.
+///
+/// FIX tags are always `>= 1`; tag `0` still reports one digit so the
+/// encoding round-trips. When `tag` is a compile-time constant (the
+/// generated-encoder case), this folds to a constant and the caller's
+/// length math and digit writes collapse to straight-line stores.
 #[inline]
-fn write_tag(buf: &mut [u8], pos: usize, tag: u32) -> usize {
-    if tag >= 10000 {
-        buf[pos] = (tag / 10000) as u8 + b'0';
-        buf[pos + 1] = ((tag / 1000) % 10) as u8 + b'0';
-        buf[pos + 2] = ((tag / 100) % 10) as u8 + b'0';
-        buf[pos + 3] = ((tag / 10) % 10) as u8 + b'0';
-        buf[pos + 4] = (tag % 10) as u8 + b'0';
-        pos + 5
-    } else if tag >= 1000 {
-        buf[pos] = (tag / 1000) as u8 + b'0';
-        buf[pos + 1] = ((tag / 100) % 10) as u8 + b'0';
-        buf[pos + 2] = ((tag / 10) % 10) as u8 + b'0';
-        buf[pos + 3] = (tag % 10) as u8 + b'0';
-        pos + 4
-    } else if tag >= 100 {
-        buf[pos] = (tag / 100) as u8 + b'0';
-        buf[pos + 1] = ((tag / 10) % 10) as u8 + b'0';
-        buf[pos + 2] = (tag % 10) as u8 + b'0';
-        pos + 3
-    } else if tag >= 10 {
-        buf[pos] = (tag / 10) as u8 + b'0';
-        buf[pos + 1] = (tag % 10) as u8 + b'0';
-        pos + 2
-    } else {
-        buf[pos] = tag as u8 + b'0';
-        pos + 1
+fn tag_digits(tag: u32) -> usize {
+    match tag {
+        0..=9 => 1,
+        10..=99 => 2,
+        100..=999 => 3,
+        1_000..=9_999 => 4,
+        10_000..=99_999 => 5,
+        100_000..=999_999 => 6,
+        1_000_000..=9_999_999 => 7,
+        10_000_000..=99_999_999 => 8,
+        100_000_000..=999_999_999 => 9,
+        _ => 10,
+    }
+}
+
+/// Write `tag` as exactly `digits` ASCII characters starting at `pos`.
+///
+/// # Safety
+///
+/// `buf[pos..pos + digits]` must be in bounds, and `digits` must equal
+/// `tag_digits(tag)` so the value fits exactly in the written span.
+#[inline]
+unsafe fn write_tag_unchecked(buf: &mut [u8], pos: usize, tag: u32, digits: usize) {
+    // Internal contract, guaranteed by construction in `encode_field` and
+    // proven by its capacity assert. Debug-only: a development tripwire, not a
+    // release-time guard (those would belong on external input, not here).
+    debug_assert_eq!(digits, tag_digits(tag), "digit count must match tag width");
+    debug_assert!(
+        pos + digits <= buf.len(),
+        "tag write span must be in bounds"
+    );
+
+    let mut t = tag;
+    let mut i = pos + digits;
+    // Least-significant digit first, walking back to `pos`. Trip count is
+    // `digits` (constant when `tag` is constant), so no data-dependent exit.
+    while i > pos {
+        i -= 1;
+        // SAFETY: `i` ranges over `pos..pos + digits`, in bounds by precondition.
+        unsafe {
+            *buf.get_unchecked_mut(i) = b'0' + (t % 10) as u8;
+        }
+        t /= 10;
     }
 }
 
@@ -175,6 +224,47 @@ mod tests {
         let mut buf = [0u8; 16];
         let end = encode_field(&mut buf, 0, 35, b"");
         assert_eq!(&buf[..end], b"35=\x01");
+    }
+
+    #[test]
+    fn exact_fit_buffer() {
+        // "35=D\x01" is exactly 5 bytes — no slack.
+        let mut buf = [0u8; 5];
+        let end = encode_field(&mut buf, 0, 35, b"D");
+        assert_eq!(&buf[..end], b"35=D\x01");
+    }
+
+    #[test]
+    #[should_panic(expected = "buffer too small")]
+    fn panics_when_too_small() {
+        let mut buf = [0u8; 4]; // needs 5 for "35=D\x01"
+        encode_field(&mut buf, 0, 35, b"D");
+    }
+
+    #[test]
+    #[should_panic(expected = "buffer too small")]
+    fn panics_when_pos_past_end() {
+        let mut buf = [0u8; 8];
+        encode_field(&mut buf, 9, 35, b"D");
+    }
+
+    #[test]
+    fn wide_tag_widths_roundtrip() {
+        // tag_digits boundaries: every width writes the exact digit count.
+        for &(tag, expected) in &[
+            (9u32, "9"),
+            (99, "99"),
+            (999, "999"),
+            (9_999, "9999"),
+            (99_999, "99999"),
+            (999_999, "999999"),
+            (4_294_967_295, "4294967295"), // u32::MAX, 10 digits
+        ] {
+            let mut buf = [0u8; 32];
+            let end = encode_field(&mut buf, 0, tag, b"v");
+            let want = format!("{expected}=v\u{1}");
+            assert_eq!(&buf[..end], want.as_bytes(), "tag={tag}");
+        }
     }
 
     #[test]

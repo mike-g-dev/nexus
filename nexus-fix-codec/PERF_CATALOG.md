@@ -1,0 +1,229 @@
+# nexus-fix-codec Performance Optimization Catalog
+
+Systematic record of the optimizations applied to the FIX read/write
+primitives, and — just as importantly — the optimizations that were
+*tried and rejected*. Intended as an audit reference so future work
+doesn't rediscover dead ends or miss the context on why something was
+(or wasn't) done.
+
+The hot paths are `FieldReader::next_field` (decode) and
+`FieldWriter::field` / `encode_field` (encode). SIMD scanning targets
+SSE2 (x86_64 baseline), AVX2, and AVX-512BW via compile-time `cfg`
+dispatch, with a SWAR + scalar fallback for the tail and other
+architectures. Build with `target-cpu=native` (or `+avx2`) to get the
+wide tiers; a default `cargo build` is SSE2-only.
+
+Numbers below were measured on an Intel Core Ultra 7 165U (Meteor Lake;
+AVX2 + BMI2, **no** AVX-512), pinned with `taskset -c 0`, best-of-N to
+suppress turbo/thermal noise. See [BENCHMARKS.md](./BENCHMARKS.md) for
+the full tables and methodology.
+
+---
+
+## Methodology notes (read first)
+
+Two measurement hazards dominated this work and are worth stating up front:
+
+- **Measurement floor.** The original cycle harness timed a single call
+  between a bare `rdtsc()` pair. That bottoms out at a ~16–30 cycle
+  floor (the timestamp + `black_box` barrier cost), which *masks* any
+  kernel cheaper than the floor. The scan and `checksum()` rows all read
+  a flat ~16 cyc regardless of size — pure floor. The harness now
+  **batches** `BATCH` back-to-back calls between a single
+  `lfence`-serialized `rdtsc`/`rdtscp` pair and divides, resolving
+  per-call costs well below the floor. (`examples/perf_scan.rs`.)
+
+- **Code-layout noise.** These kernels are 150–180 cycles, and a change
+  to *one* function shifts the binary layout enough to move an
+  *unrelated* function's measured p50 by ±8–10 cycles. Several apparent
+  "regressions" were this artifact. The defence: prove the machine code
+  of the unchanged function is byte-identical (`cargo asm` diff), and
+  use `perf stat` **instructions-retired** (layout- and
+  frequency-independent) when cycle counts are ambiguous.
+
+---
+
+## Writer: `encode_field` / `write_tag` (`src/writer.rs`) — OPTIMIZED
+
+The single real win of this pass. The original `encode_field` wrote each
+byte through a separately bounds-checked store, and copied the value via
+`copy_from_slice` (a `memcpy` *call* for a runtime length). For a typical
+field that is ~7–8 per-byte bounds-check branches plus a call.
+
+### Single up-front capacity check + unchecked interior
+
+`encode_field` now computes the bytes the field needs and bounds-checks
+**once**, then writes the tag digits, `=`, value, and SOH through
+unchecked stores:
+
+```rust
+let need = digits + 2 + value.len();
+assert!(pos <= buf.len() && need <= buf.len() - pos, ...);
+// SAFETY: assert proves pos + need <= buf.len(); all writes land in pos..pos+need.
+unsafe { /* write_tag_unchecked; '='; copy_nonoverlapping(value); SOH */ }
+```
+
+- The capacity check is `assert!` (release-active), not `debug_assert!`:
+  it is the **sole guard** between caller-provided buffer sizing and the
+  unchecked writes, and buffer length is external, fallible input.
+  Downgrading it to `debug_assert!` would make a too-small buffer silent
+  UB in a release trading build. (The `digits == tag_digits(tag)` /
+  in-bounds-span contract inside `write_tag_unchecked` *is* a
+  `debug_assert!` — it is guaranteed by construction, so it's a
+  development tripwire at zero release cost.)
+- The `need` computation is overflow-free (`digits <= 10`,
+  `value.len() <= isize::MAX`), and `pos <= buf.len()` is checked first so
+  the `buf.len() - pos` subtraction cannot underflow.
+- `copy_from_slice` → `core::ptr::copy_nonoverlapping`: skips the
+  length-equality assert and the surrounding bounds machinery, inlining
+  the value copy. Non-overlap is guaranteed by the borrow checker
+  (`value: &[u8]` cannot alias `buf: &mut [u8]`).
+- `write_tag` magnitude cascade → `tag_digits` + `write_tag_unchecked`
+  (back-to-front `% 10` / `/ 10`). When `tag` is a compile-time constant
+  — the generated-encoder case — `tag_digits` folds to a constant and
+  the digit loop unrolls to straight-line stores, so the per-field
+  overhead nearly vanishes in real usage.
+
+### Latent bug fixed
+
+The old `write_tag` had no branch beyond 5 digits, so tags `>= 100000`
+emitted a corrupt `:` byte (digit `10 + b'0'`) and the wrong length. The
+new path handles 1–10 digit tags up to `u32::MAX` correctly. (No real
+FIX tag is that wide, but the rewrite is strictly more correct.)
+
+### Codegen verification
+
+`cargo asm` confirms the per-byte bounds checks collapse to a single
+`cmp/ja → panic_fmt`, with the panic path out-of-line (cold). The value
+copy is a clean `memcpy` with no length assert.
+
+### Soundness
+
+Adversarially reviewed: the full `(buf.len(), pos, tag, value)` grid was
+brute-forced (buf_len 0..=40 × pos 0..=42 incl. `pos > buf_len`/empty ×
+all tag-width boundaries incl. `u32::MAX` × value_len 0..=20) with zero
+out-of-bounds writes, and all 2³² `u32` values verified that
+`tag_digits(tag)` equals the true width and `write_tag_unchecked` writes
+exactly that many correct digit bytes. Miri clean across the writer tests.
+
+### Result
+
+~**−12%** on a 15-field NewOrderSingle encode (AVX2, batched/fenced:
+178 → 156 cyc; 11.8 → 10.3 cyc/field). Single-shot deltas were larger
+(AVX2 158→134, SSE2 172→132); the bounds-hoist is SIMD-independent so it
+helps both tiers. Real-world (constant-tag) gains are larger than this
+runtime-tag worst case.
+
+---
+
+## Reader: `find_next_soh` / `next_field` (`src/reader.rs`) — LEFT AS-IS
+
+Investigated thoroughly; **already near-optimal**, left unchanged.
+
+- The scan/checksum fusion (`cmpeq` for SOH + `PSADBW` for checksum on
+  one chunk load) is sound; the SIMD mask cache means the chunk loop
+  fires once per ~16/32/64 bytes, not per field.
+- `parse_tag` compiles to a `lea`-based `tag*10 + digit` chain (no
+  `imul`, no `div`); the structural validation is 3 well-predicted
+  branches.
+- Decode is ~11 cyc/field, and **AVX2 ≈ SSE2** for full decode — the
+  scan is not the bottleneck (it's ~20–26 cyc); the per-field cost is
+  real tag-parse + checksum + bookkeeping work that's already lean.
+
+The decode machine code (`find_next_soh`, the inlined `next_field`) is
+**byte-identical before and after this pass** — every reader experiment
+below was reverted.
+
+---
+
+## `checksum()` standalone (`src/reader.rs`) — LEFT AS-IS
+
+The encode-side body sum (`data.iter().map(|&b| b as u32).sum() as u8`)
+*looks* scalar but LLVM auto-vectorizes it well: because the result is
+`as u8`, it accumulates in **byte lanes** with `vpaddb` (mod-256 wrap is
+correct) and does a single `vpsadbw` reduction at the end. Measured
+**0.02 cyc/byte** at 512 B once the harness floor was removed. A
+hand-rolled kernel would not beat it. Left untouched.
+
+---
+
+## Rejected approaches
+
+These were implemented, measured, and reverted. Documented so they
+aren't re-attempted.
+
+### Branchless `swar_to_byte_mask` (multiply-shift gather)
+
+The SWAR tail converts a high-bit-per-byte mask to bit-per-byte via a
+`trailing_zeros` loop. A branchless gather
+(`(m >> 7).wrapping_mul(0x0102_0408_1020_4080) >> 56`) is correct
+(verified exhaustively over all 256 patterns — the test
+`swar_mask_conversion_exhaustive` stays as a guard) and tempting.
+
+**Rejected:** measured slower on realistic decode. The result feeds
+`emit_soh_mask` on the **critical path** (it becomes the returned SOH
+position), so the multiply's latency lands directly on the dependency
+chain. For the common sparse case (one SOH in the 8-byte tail window)
+the loop runs a *single* cheap iteration and wins by doing less work.
+Branchless ≠ faster when the branchy version does less for the common
+input.
+
+### `parse_tag` digit cap (`MAX_TAG_DIGITS`)
+
+Capping the digit loop at 9 (the widest `u32`-safe width) bounds
+worst-case work and prevents silent `u32` overflow on adversarial
+all-digit input.
+
+**Rejected (for now):** a constant trip-count ceiling let LLVM unroll
+the digit loop, pessimizing the common 1–2 digit case across 15 fields.
+The robustness benefit is real but did not justify a hot-path
+regression; the overflow is also benign for the checksum (mod 256
+survives the wrap) and a `>9`-digit tag fails the trailing-`=` check
+anyway. Parked, not killed — revisit if a hardened decoder variant is
+wanted.
+
+### Tag-10 exclusion as a `#[cold] #[inline(never)]` helper
+
+The FIX-checksum tag-10 exclusion loop auto-vectorizes inside
+`next_field` into a ~30-instruction AVX2 block with a `>= 32`-byte fast
+path that is **dead** (tag 10 is always the 7-byte `10=XXX\x01`).
+Out-of-lining it shrank the hot decode function from 252 → 187
+instructions (36 → 3 vector ops; the 3 survivors are the legitimate scan
+PSADBW).
+
+**Rejected:** despite *fewer* instructions, it **regressed decode ~8%**
+(reproducible: ~4.65B → ~5.03B cycles for 20M decodes; IPC 5.9 → 4.8).
+The `call` into the `#[inline]` hot loop clobbers caller-saved registers
+and wrecks the loop's register allocation — a cost larger than the
+footprint it reclaims. Crucially, the dead vector block sits *past a
+not-taken branch*, so it is never fetched/executed in a warm loop and
+costs **zero** cycles there; its only cost is static I-cache footprint,
+which this fix made *worse* (the call) rather than better. Lesson:
+out-lining a cold path is not free when it's called from inside an
+inlined hot function.
+
+### Deferred PSADBW horizontal sum
+
+The per-chunk `hsum_sad_*` reduction (~5 instrs) and the per-chunk
+`self.checksum` store could be deferred — accumulate lane sums in a
+vector across chunks and reduce once.
+
+**Not done:** off the critical path (OoO hides the SAD→hsum→add behind
+the `cmpeq`→branch chain), and with mask caching the chunk loop usually
+runs *once* per `next_field` call, so there's nothing to defer for the
+realistic short-field workload. It only helps value-heavy messages
+(long values spanning many chunks), and storing a SIMD accumulator in
+the struct (cfg-gated, per-tier) adds complexity disproportionate to
+that narrow gain.
+
+---
+
+## Open / deferred
+
+- **Runtime SIMD detection.** Dispatch is compile-time only (no
+  `is_x86_feature_detected!`), matching the workspace's
+  build-for-your-target stance. Documented here rather than changed.
+- **`parse_tag` hardening** parked above, pending a real caller that
+  needs adversarial-input bounds.
+- The stale `.claude/perf.md` (reader-only, references the old
+  `parser.rs` name) is superseded by this catalog.

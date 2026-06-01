@@ -17,22 +17,38 @@
 #[path = "_bench_utils.rs"]
 mod _bench_utils;
 
-use _bench_utils::{ITERATIONS, WARMUP, percentile, print_intro, rdtsc};
-use nexus_fix_codec::reader::FieldReader;
+use _bench_utils::{BATCH, WARMUP, percentile, print_intro, rdtsc_fenced_end, rdtsc_fenced_start};
+use nexus_fix_codec::reader::{FieldReader, checksum};
 use nexus_fix_codec::scan;
+use nexus_fix_codec::writer::FieldWriter;
 use std::hint::black_box;
 
+/// Number of batches sampled per benchmark. Each batch averages `BATCH`
+/// calls, so this is the number of percentile data points.
+const SAMPLES: usize = 50_000;
+
+/// Cycle cost per call, reported as percentiles over `SAMPLES` batches.
+///
+/// Each sample times `BATCH` back-to-back calls between a single
+/// `lfence`-serialized `rdtsc`/`rdtscp` pair and divides by `BATCH`. This
+/// amortizes the ~20-30 cycle timestamp+fence overhead that a single-shot
+/// `rdtsc(); f(); rdtsc()` cannot resolve below — so sub-30-cycle kernels
+/// (scan, checksum) report their real per-call throughput instead of the
+/// measurement floor. Numbers are sustained per-call cost (back-to-back),
+/// not isolated single-call latency.
 fn benchmark<T, F: FnMut() -> T>(mut f: F) -> (u64, u64, u64) {
     for _ in 0..WARMUP {
         black_box(f());
     }
 
-    let mut samples = Vec::with_capacity(ITERATIONS);
-    for _ in 0..ITERATIONS {
-        let start = rdtsc();
-        black_box(f());
-        let end = rdtsc();
-        samples.push(end.wrapping_sub(start));
+    let mut samples = Vec::with_capacity(SAMPLES);
+    for _ in 0..SAMPLES {
+        let start = rdtsc_fenced_start();
+        for _ in 0..BATCH {
+            black_box(f());
+        }
+        let end = rdtsc_fenced_end();
+        samples.push(end.wrapping_sub(start) / BATCH);
     }
 
     samples.sort_unstable();
@@ -236,4 +252,83 @@ fn main() {
             0.0
         }
     );
+
+    // =========================================================================
+    // FieldWriter: encode a full NewOrderSingle (write hot path)
+    // =========================================================================
+
+    println!("\n=== FieldWriter: encode NewOrderSingle ===\n");
+
+    // Same 15-field NewOrderSingle the reader decodes above.
+    let fields: &[(u32, &[u8])] = &[
+        (8, b"FIX.4.4"),
+        (9, b"120"),
+        (35, b"D"),
+        (49, b"SENDER"),
+        (56, b"TARGET"),
+        (34, b"42"),
+        (52, b"20260530-12:00:00.000"),
+        (11, b"order-001"),
+        (55, b"BTC-USD"),
+        (54, b"1"),
+        (38, b"1.50000000"),
+        (40, b"2"),
+        (44, b"67500.00"),
+        (59, b"0"),
+        (10, b"178"),
+    ];
+    let n_fields = fields.len();
+
+    let mut out = [0u8; 256];
+    let (p50_enc, p99_enc, p999_enc) = benchmark(|| {
+        let mut w = FieldWriter::wrap(&mut out);
+        for &(tag, val) in black_box(fields) {
+            w.field(tag, val);
+        }
+        // black_box the written bytes (not just the cursor) so the stores
+        // are observably live and cannot be dead-code-eliminated.
+        black_box(w.data()).len()
+    });
+    let enc_len = {
+        let mut w = FieldWriter::wrap(&mut out);
+        for &(tag, val) in fields {
+            w.field(tag, val);
+        }
+        w.pos()
+    };
+
+    println!("  FieldWriter (encode {} fields):", n_fields);
+    println!(
+        "    p50={} p99={} p999={} cycles",
+        p50_enc, p99_enc, p999_enc
+    );
+    println!(
+        "    {:.1} cycles/field, {:.2} cycles/byte",
+        p50_enc as f64 / n_fields as f64,
+        p50_enc as f64 / enc_len as f64
+    );
+
+    // =========================================================================
+    // checksum(): standalone byte-sum over message body (encode-side tag 10)
+    // =========================================================================
+
+    println!("\n=== checksum(): standalone body sum ===\n");
+    println!(
+        "{:<30} {:>8} {:>8} {:>8} {:>10}",
+        "Length", "p50", "p99", "p999", "cyc/byte"
+    );
+    println!("{}", "-".repeat(70));
+
+    for &len in &[16usize, 32, 64, 128, 143, 256, 512] {
+        let buf = vec![b'5'; len];
+        let (p50, p99, p999) = benchmark(|| checksum(black_box(&buf)));
+        println!(
+            "{:<30} {:>8} {:>8} {:>8} {:>10.2}",
+            format!("{}B", len),
+            p50,
+            p99,
+            p999,
+            p50 as f64 / len as f64
+        );
+    }
 }
