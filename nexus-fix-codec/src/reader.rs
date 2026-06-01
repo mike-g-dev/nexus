@@ -964,4 +964,134 @@ mod tests {
         assert_eq!(entries[0][1].value.slice(msg), b"100");
         assert_eq!(entries[1][1].value.slice(msg), b"200");
     }
+
+    // =========================================================================
+    // Repeating group error cases
+    // =========================================================================
+
+    #[test]
+    fn repeating_group_truncated() {
+        // Count says 3 but buffer only has 2 entries.
+        let msg = b"268=3\x01269=0\x01270=100\x01269=1\x01270=200\x01";
+
+        let group_tags: &[u32] = &[269, 270];
+        let mut reader = FieldReader::new(msg, 0);
+        reader.next_field();
+        let group = crate::GroupSpan::new(reader.pos() as u32, 3);
+
+        let mut group_reader = FieldReader::new(msg, group.offset as usize);
+        let mut entry_count = 0u16;
+        while let Some(f) = group_reader.next_field() {
+            if !group_tags.contains(&f.tag) {
+                break;
+            }
+            if f.tag == 269 {
+                entry_count += 1;
+            }
+        }
+
+        // Reader yields what's there without panicking.
+        // Codegen detects the mismatch: found 2, expected 3.
+        assert_eq!(entry_count, 2);
+        assert!(entry_count < group.count);
+    }
+
+    #[test]
+    fn repeating_group_no_delimiter() {
+        // Count says 2 but the delimiter tag (269) never appears.
+        let msg = b"268=2\x01270=100\x01271=200\x0110=999\x01";
+
+        let group_tags: &[u32] = &[269, 270, 271];
+        let mut reader = FieldReader::new(msg, 0);
+        reader.next_field();
+        let group = crate::GroupSpan::new(reader.pos() as u32, 2);
+
+        let mut group_reader = FieldReader::new(msg, group.offset as usize);
+        let mut entry_count = 0u16;
+        while let Some(f) = group_reader.next_field() {
+            if !group_tags.contains(&f.tag) {
+                break;
+            }
+            if f.tag == 269 {
+                entry_count += 1;
+            }
+        }
+
+        // No delimiter seen — codegen would flag this as malformed.
+        assert_eq!(entry_count, 0);
+    }
+
+    #[test]
+    fn repeating_group_count_zero() {
+        // Count is 0 — group has no entries.
+        let msg = b"268=0\x0135=W\x01";
+
+        let mut reader = FieldReader::new(msg, 0);
+        reader.next_field();
+        let group = crate::GroupSpan::new(reader.pos() as u32, 0);
+
+        assert!(!group.is_present());
+
+        // Reading from the offset just yields the next non-group field.
+        let mut group_reader = FieldReader::new(msg, group.offset as usize);
+        let next = group_reader.next_field().unwrap();
+        assert_eq!(next.tag, 35);
+    }
+
+    // =========================================================================
+    // Bogus / adversarial input
+    // =========================================================================
+
+    #[test]
+    fn bogus_no_soh() {
+        let mut reader = FieldReader::new(b"just random garbage", 0);
+        assert!(reader.next_field().is_none());
+    }
+
+    #[test]
+    fn bogus_adjacent_soh() {
+        // Empty spans between SOH bytes.
+        let mut reader = FieldReader::new(b"\x01\x01\x01", 0);
+        assert!(reader.next_field().is_none());
+    }
+
+    #[test]
+    fn bogus_equals_no_tag() {
+        let mut reader = FieldReader::new(b"=value\x01", 0);
+        assert!(reader.next_field().is_none());
+    }
+
+    #[test]
+    fn bogus_non_digit_in_tag() {
+        // parse_tag reads "1", stops at "a", then field_bytes[1] != '='.
+        let mut reader = FieldReader::new(b"1a2=value\x01", 0);
+        assert!(reader.next_field().is_none());
+    }
+
+    #[test]
+    fn bogus_all_soh() {
+        let buf = vec![0x01; 64];
+        let mut reader = FieldReader::new(&buf, 0);
+        assert!(reader.next_field().is_none());
+    }
+
+    #[test]
+    fn bogus_before_valid_field() {
+        // Garbage field stops the iterator; valid field after it is not reached.
+        let msg = b"garbage\x0135=D\x01";
+        let count = FieldReader::new(msg, 0).count();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn bogus_only_equals_and_soh() {
+        let mut reader = FieldReader::new(b"=\x01=\x01=\x01", 0);
+        assert!(reader.next_field().is_none());
+    }
+
+    #[test]
+    fn bogus_tag_no_value_no_equals() {
+        let mut reader = FieldReader::new(b"35\x01", 0);
+        assert!(reader.next_field().is_none());
+    }
 }
