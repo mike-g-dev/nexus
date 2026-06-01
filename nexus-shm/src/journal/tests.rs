@@ -177,10 +177,18 @@ fn read_range_by_seq() {
         claim.commit();
     }
 
-    let got: Vec<u64> = r.read_range(3..=6).unwrap().map(|rec| rec.header().seq).collect();
+    let got: Vec<u64> = r
+        .read_range(3..=6)
+        .unwrap()
+        .map(|rec| rec.header().seq)
+        .collect();
     assert_eq!(got, vec![3, 4, 5, 6]);
 
-    let got: Vec<u64> = r.read_range(8..).unwrap().map(|rec| rec.header().seq).collect();
+    let got: Vec<u64> = r
+        .read_range(8..)
+        .unwrap()
+        .map(|rec| rec.header().seq)
+        .collect();
     assert_eq!(got, vec![8, 9, 10]);
 
     drop((w, r));

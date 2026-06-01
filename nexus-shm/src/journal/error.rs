@@ -15,7 +15,10 @@ impl fmt::Display for JournalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RecordTooLarge { frame, capacity } => {
-                write!(f, "record frame {frame} exceeds segment capacity {capacity}")
+                write!(
+                    f,
+                    "record frame {frame} exceeds segment capacity {capacity}"
+                )
             }
             Self::EmptyRecord => write!(f, "record frames to zero bytes"),
             Self::Shm(e) => write!(f, "{e}"),

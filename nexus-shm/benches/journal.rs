@@ -26,16 +26,23 @@ fn bench_write(c: &mut Criterion) {
     let payload = [0u8; 32];
     let mut seq = 0u64;
 
-    c.benchmark_group("journal").bench_function("try_claim_commit", |b| {
-        b.iter(|| {
-            seq += 1;
-            let mut claim = w
-                .try_claim(FixHeader { seq, timestamp: seq }, payload.len())
-                .unwrap();
-            claim.as_mut_slice().copy_from_slice(&payload);
-            claim.commit();
+    c.benchmark_group("journal")
+        .bench_function("try_claim_commit", |b| {
+            b.iter(|| {
+                seq += 1;
+                let mut claim = w
+                    .try_claim(
+                        FixHeader {
+                            seq,
+                            timestamp: seq,
+                        },
+                        payload.len(),
+                    )
+                    .unwrap();
+                claim.as_mut_slice().copy_from_slice(&payload);
+                claim.commit();
+            });
         });
-    });
 
     drop((w, _r));
     cleanup(&base);
@@ -51,7 +58,13 @@ fn bench_read(c: &mut Criterion) {
         let payload = [0u8; 32];
         for seq in 1..=N {
             let mut claim = w
-                .try_claim(FixHeader { seq, timestamp: seq }, payload.len())
+                .try_claim(
+                    FixHeader {
+                        seq,
+                        timestamp: seq,
+                    },
+                    payload.len(),
+                )
                 .unwrap();
             claim.as_mut_slice().copy_from_slice(&payload);
             claim.commit();
