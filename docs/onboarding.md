@@ -39,27 +39,27 @@ There are three layers:
 
 ```
 ┌───────────────────────────────────────────────────┐
-│  Application layer                                 │
-│  (strategies, market data gateways, order routers) │
+│  Application layer                                │
+│  (strategies, market data gateways, order routers)│
 └─────────────────┬─────────────────────────────────┘
                   │
 ┌─────────────────┴─────────────────────────────────┐
-│  Runtime layer                                     │
-│  nexus-rt        — sync dispatch (handlers, World) │
-│  nexus-async-rt  — single-threaded async executor  │
-│  nexus-net       — sans-IO WebSocket / HTTP / TLS  │
-│  nexus-async-web — tokio adapter for nexus-net     │
+│  Runtime layer                                    │
+│  nexus-rt        — sync dispatch (handlers, World)│
+│  nexus-async-rt  — single-threaded async executor │
+│  nexus-web       — sans-IO WebSocket / HTTP / TLS │
+│  nexus-async-web — tokio adapter for nexus-net    │
 └─────────────────┬─────────────────────────────────┘
                   │
 ┌─────────────────┴─────────────────────────────────┐
-│  Primitive layer                                   │
-│  Data movement:  queue, channel, slot, logbuf,     │
-│                  notify                            │
-│  Memory:         slab, pool, smartptr              │
-│  Data:           collections, bits, ascii, id,     │
-│                  decimal                           │
-│  Stats/rate:     stats (+ subcrates), rate         │
-│  Time:           timer                             │
+│  Primitive layer                                  │
+│  Data movement:  queue, channel, slot, logbuf,    │
+│                  notify, net                      │
+│  Memory:         slab, pool, smartptr             │
+│  Data:           collections, bits, ascii, id,    │
+│                  decimal                          │
+│  Stats/rate:     stats (+ subcrates), rate        │
+│  Time:           timer                            │
 └───────────────────────────────────────────────────┘
 ```
 
