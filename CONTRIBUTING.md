@@ -247,7 +247,7 @@ construction" and "mutate after construction."
 Example:
 
 ```rust
-use nexus_async_net::ws::WsStreamBuilder;
+use nexus_async_web::ws::WsStreamBuilder;
 
 // Builder — no `set_` prefix; chains `mut self -> Self`.
 let mut stream = WsStreamBuilder::new()
@@ -302,7 +302,7 @@ The `bump` argument is `patch`, `minor`, `major`, or an explicit version.
 
 - **Tagged at the publish point.** Every published version maps to a `<crate>-v<version>` tag in git, so `git switch <crate>-v<version>` reproduces the exact tree state that was published.
 - **CHANGELOG is dated at release time.** The `## [Unreleased]` block in `CHANGELOG.md` accumulates entries as PRs land; cargo-release renames it to `## [<version>] — <date>` automatically.
-- **Dependency-graph ordering.** When releasing a crate that's depended on by others (e.g., nexus-net before nexus-async-net), cargo-release updates the dependents' `Cargo.toml` declarations to the new version and stops there — bumping the dependents themselves is a separate decision.
+- **Dependency-graph ordering.** When releasing a crate that's depended on by others (e.g., nexus-net before nexus-async-web), cargo-release updates the dependents' `Cargo.toml` declarations to the new version and stops there — bumping the dependents themselves is a separate decision.
 - **GitHub Release page.** Each tag gets a corresponding GitHub Release with the CHANGELOG section as notes — browseable per crate at https://github.com/<owner>/<repo>/releases.
 
 ### Hotfix policy: forward-only

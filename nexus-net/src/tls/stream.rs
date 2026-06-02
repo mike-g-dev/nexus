@@ -2,7 +2,7 @@
 //!
 //! Wraps a transport stream `S` and a [`TlsCodec`] into a single type
 //! that transparently encrypts/decrypts. Sync only — async TLS lives
-//! in `nexus-async-net::maybe_tls` (which drives the same sans-IO
+//! in `nexus-async-web::maybe_tls` (which drives the same sans-IO
 //! codec at the poll level).
 
 use std::io::{self, Read, Write};

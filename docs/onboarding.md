@@ -39,27 +39,27 @@ There are three layers:
 
 ```
 ┌───────────────────────────────────────────────────┐
-│  Application layer                                 │
-│  (strategies, market data gateways, order routers) │
+│  Application layer                                │
+│  (strategies, market data gateways, order routers)│
 └─────────────────┬─────────────────────────────────┘
                   │
 ┌─────────────────┴─────────────────────────────────┐
-│  Runtime layer                                     │
-│  nexus-rt        — sync dispatch (handlers, World) │
-│  nexus-async-rt  — single-threaded async executor  │
-│  nexus-net       — sans-IO WebSocket / HTTP / TLS  │
-│  nexus-async-net — tokio adapter for nexus-net     │
+│  Runtime layer                                    │
+│  nexus-rt        — sync dispatch (handlers, World)│
+│  nexus-async-rt  — single-threaded async executor │
+│  nexus-web       — sans-IO WebSocket / HTTP / TLS │
+│  nexus-async-web — tokio adapter for nexus-net    │
 └─────────────────┬─────────────────────────────────┘
                   │
 ┌─────────────────┴─────────────────────────────────┐
-│  Primitive layer                                   │
-│  Data movement:  queue, channel, slot, logbuf,     │
-│                  notify                            │
-│  Memory:         slab, pool, smartptr              │
-│  Data:           collections, bits, ascii, id,     │
-│                  decimal                           │
-│  Stats/rate:     stats (+ subcrates), rate         │
-│  Time:           timer                             │
+│  Primitive layer                                  │
+│  Data movement:  queue, channel, slot, logbuf,    │
+│                  notify, net                      │
+│  Memory:         slab, pool, smartptr             │
+│  Data:           collections, bits, ascii, id,    │
+│                  decimal                          │
+│  Stats/rate:     stats (+ subcrates), rate        │
+│  Time:           timer                            │
 └───────────────────────────────────────────────────┘
 ```
 
@@ -100,7 +100,7 @@ canonical list. Short form, organized by category:
 
 **Networking**
 - `nexus-net` — sans-IO WebSocket/HTTP/TLS
-- `nexus-async-net` — tokio adapter for `nexus-net`
+- `nexus-async-web` — tokio adapter for `nexus-net`
 
 **Runtime**
 - `nexus-rt` (+ `nexus-rt-derive`) — sync handler runtime (World,
@@ -132,7 +132,7 @@ Use this as a decision tree when you don't know where to start.
 | Timer wheel (scheduled callbacks) | `nexus-timer` |
 | Dispatch events to handlers with resource injection | `nexus-rt` |
 | Single-threaded async executor | `nexus-async-rt` |
-| Connect to an exchange WebSocket | `nexus-async-net` (tokio), or `nexus-net` (sans-IO) |
+| Connect to an exchange WebSocket | `nexus-async-web` (tokio), or `nexus-net` (sans-IO) |
 
 If you find yourself reaching outside the workspace for something
 foundational, **stop and ask**. There's a good chance we either

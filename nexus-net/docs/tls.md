@@ -46,7 +46,7 @@ Builder methods:
 ## Using TLS with WebSocket
 
 ```rust
-use nexus_net::ws::Client;
+use nexus_web::ws::Client;
 use nexus_net::tls::TlsConfig;
 
 let tls = TlsConfig::new()?;
@@ -66,7 +66,7 @@ You get the same `Client` API either way.
 ## Using TLS with REST
 
 ```rust
-use nexus_net::rest::Client;
+use nexus_web::rest::Client;
 use nexus_net::tls::TlsConfig;
 
 let tls = TlsConfig::new()?;

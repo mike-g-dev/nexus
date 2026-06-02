@@ -5,7 +5,7 @@ parses frames, archives raw bytes, publishes the latest price, fans
 out to multiple consumers, and monitors feed health.
 
 **Crates used:**
-`nexus-async-net` (WebSocket), `nexus-async-rt` (executor),
+`nexus-async-web` (WebSocket), `nexus-async-rt` (executor),
 `nexus-queue` (SPMC fan-out), `nexus-slot` (latest-price conflation),
 `nexus-logbuf` (archival), `nexus-stats` (feed health),
 `nexus-id` (message IDs), `nexus-ascii` (symbol).
@@ -21,7 +21,7 @@ a complete library.
 ```
    ┌──────────────┐      ┌──────────────┐
    │ Binance WS   │──────▶│ Reader task  │
-   │  (TLS)       │      │ (nexus-net)  │
+   │  (TLS)       │      │ (nexus-web)  │
    └──────────────┘      └──────┬───────┘
                                 │
           ┌─────────────┬───────┼────────┬────────────┐
@@ -162,9 +162,9 @@ This is the only place IO happens. It's async because we're on
 over threading.
 
 ```rust
-// fixed: nexus-async-net exports `WsStreamBuilder`, not `WebSocketClient`.
+// fixed: nexus-async-web exports `WsStreamBuilder`, not `WebSocketClient`.
 // `WsStreamBuilder::new().connect(url).await` returns `WsStream<MaybeTls>`.
-use nexus_async_net::ws::{WsStreamBuilder, Message};
+use nexus_async_web::ws::{WsStreamBuilder, Message};
 
 async fn reader_task(
     gw: &mut Gateway,
@@ -399,7 +399,7 @@ and reconnects. Downstream consumers watch for that event and reset.
 
 ## Further reading
 
-- `nexus-async-net/docs/` — full WebSocket API
+- `nexus-async-web/docs/` — full WebSocket API
 - `nexus-net/docs/` — sans-IO layer if you aren't on tokio
 - `nexus-logbuf/docs/` — claim-based write API details
 - `nexus-slot/docs/` — Pod requirements, ordering guarantees

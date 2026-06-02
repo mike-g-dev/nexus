@@ -2,12 +2,11 @@
 //!
 //! [`WireStream`] is the trait `WsStream`/`HttpConnection` consume —
 //! abstracts over plain TCP, TLS-wrapped TCP, and any user-provided
-//! transport (via the `AsyncReadAdapter` types in `nexus-async-net`,
+//! transport (via the `AsyncReadAdapter` types in `nexus-async-web`,
 //! one per supported runtime).
 //! [`ParserSink`] is the parser-side buffer; implemented by
-//! [`FrameReader`](crate::ws::FrameReader) and the HTTP response
-//! parser, plus any third-party parser that follows the
-//! `spare`/`filled` discipline.
+//! nexus-web's `FrameReader` and the HTTP response parser, plus any
+//! third-party parser that follows the `spare`/`filled` discipline.
 //!
 //! The split lets implementations skip the `&mut [u8]` intermediate
 //! that `AsyncRead`'s contract requires when a faster path is
@@ -22,7 +21,7 @@ use std::task::{Context, Poll};
 /// A bidirectional byte-level stream that fills a parser's buffer.
 ///
 /// Abstracts over plain TCP, TLS-wrapped TCP, and any user-provided
-/// transport (wrap in `nexus_async_net::AsyncReadAdapter` /
+/// transport (wrap in `nexus_async_web::AsyncReadAdapter` /
 /// `NexusAsyncReadAdapter` for the latter, depending on backend).
 ///
 /// Implementations may take advantage of zero-copy paths when

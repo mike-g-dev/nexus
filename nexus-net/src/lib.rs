@@ -1,26 +1,26 @@
-//! nexus-net — low-latency network protocol primitives.
+//! nexus-net — low-latency networking primitives.
 //!
-//! Sans-IO protocol implementations that operate on byte slices.
-//! No async runtime, no I/O layer — pure protocol state machines.
+//! Buffer types, TLS codec, and wire abstractions for protocol engines.
 //!
 //! # Modules
 //!
 //! - [`buf`] — Buffer primitives (`ReadBuf`, `WriteBuf`, `WriteBufWriter`)
-//! - [`ws`] — WebSocket framing (RFC 6455)
-//! - [`http`] — HTTP/1.1 response parsing, chunked decoding, request/response writers
-//! - [`rest`] — HTTP/1.1 REST client (`RequestWriter`, `Client`, typestate builder)
+//! - [`maybe_tls`] — Plain-or-TLS stream wrapper
+//! - [`wire`] — `WireStream` and `ParserSink` composition traits
 //! - `tls` — TLS codec via rustls (feature: `tls`)
+//!
+//! # Protocol implementations
+//!
+//! WebSocket, HTTP, and REST moved to [`nexus-web`](https://docs.rs/nexus-web)
+//! in 0.8.0.
 
 #![warn(missing_docs)]
 
 pub mod buf;
-pub mod http;
 pub mod maybe_tls;
-pub mod rest;
 #[cfg(feature = "tls")]
 pub mod tls;
 pub mod wire;
-pub mod ws;
 
 pub use maybe_tls::MaybeTls;
 pub use wire::{ParserSink, WireStream};

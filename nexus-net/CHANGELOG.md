@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- **`ws`, `http`, `rest` modules extracted to `nexus-web` 0.8.0.**
+  nexus-net is now a primitives-only crate: `buf`, `tls`, `wire`,
+  `maybe_tls`. Protocol implementations (WebSocket RFC 6455, HTTP/1.1
+  parsing, REST client) live in
+  [`nexus-web`](https://crates.io/crates/nexus-web), which depends on
+  nexus-net for buffer, TLS, and wire abstractions.
+  ([#413](https://github.com/Abso1ut3Zer0/nexus/issues/413))
+
+### Migration
+
+| 0.7.x | 0.8.0 |
+|---|---|
+| `nexus_net::ws::*` | `nexus_web::ws::*` |
+| `nexus_net::http::*` | `nexus_web::http::*` |
+| `nexus_net::rest::*` | `nexus_web::rest::*` |
+| `nexus_net::buf::*` | unchanged |
+| `nexus_net::tls::*` | unchanged |
+| `nexus_net::wire::*` | unchanged |
+| `nexus_net::MaybeTls` | unchanged |
+| `nexus_net::WireStream` | unchanged |
+| `nexus_net::ParserSink` | unchanged |
+
+Add `nexus-web = "0.8"` to your `Cargo.toml` and update `use` paths
+for ws/http/rest types. All primitives (`buf`, `tls`, `wire`,
+`MaybeTls`, `WireStream`, `ParserSink`) remain in nexus-net.
+
 ## [0.7.1] — 2026-05-10
 
 Doc + small additive release.

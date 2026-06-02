@@ -22,7 +22,7 @@ gotchas called out.
 
 - [**cookbook-market-data-gateway.md**](./cookbook-market-data-gateway.md) —
   WebSocket feed → parse → archive → fan out → monitor. Combines
-  `nexus-async-net`, `nexus-async-rt`, `nexus-queue`, `nexus-slot`,
+  `nexus-async-web`, `nexus-async-rt`, `nexus-queue`, `nexus-slot`,
   `nexus-logbuf`, `nexus-stats`.
 
 - [**cookbook-strategy-handler.md**](./cookbook-strategy-handler.md) —
@@ -36,7 +36,7 @@ gotchas called out.
 
 - [**cookbook-exchange-connection.md**](./cookbook-exchange-connection.md) —
   End-to-end exchange connectivity: TLS, reconnect, rate limiting,
-  order IDs, archival. Combines `nexus-async-net`, `nexus-async-rt`,
+  order IDs, archival. Combines `nexus-async-web`, `nexus-async-rt`,
   `nexus-rate`, `nexus-id`, `nexus-logbuf`.
 
 ## Benchmarking
@@ -68,7 +68,8 @@ a specific primitive, go there — not here.
 | `nexus-rate` | `nexus-rate/docs/` |
 | `nexus-decimal` | `nexus-decimal/docs/` |
 | `nexus-net` | `nexus-net/docs/` |
-| `nexus-async-net` | `nexus-async-net/docs/` |
+| `nexus-web` | `nexus-web/docs/` |
+| `nexus-async-web` | `nexus-async-web/docs/` |
 | `nexus-rt` | `nexus-rt/docs/` (extensive — start with `INDEX.md`) |
 | `nexus-async-rt` | `nexus-async-rt/docs/`, `nexus-async-rt/BENCHMARKS.md` |
 | `nexus-timer` | `nexus-timer/docs/` |

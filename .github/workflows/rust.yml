@@ -31,18 +31,22 @@ jobs:
       run: cargo build
     - name: Run tests
       run: cargo test
-    - name: Run tests (all features, excluding nexus-net and nexus-async-net)
-      run: cargo test --workspace --all-features --exclude nexus-net --exclude nexus-async-net
+    - name: Run tests (all features, excluding nexus-net, nexus-web, nexus-async-web)
+      run: cargo test --workspace --all-features --exclude nexus-net --exclude nexus-web --exclude nexus-async-web
     - name: Test nexus-net (default - sync)
       run: cargo test -p nexus-net
     - name: Test nexus-net (sync + TLS)
       run: cargo test -p nexus-net --features tls
-    - name: Test nexus-async-net (tokio-rt + tls, default)
-      run: cargo test -p nexus-async-net
-    - name: Test nexus-async-net (nexus + tls)
-      run: cargo test -p nexus-async-net --no-default-features --features nexus,tls --lib
-    - name: Test nexus-async-net (nexus, no tls)
-      run: cargo test -p nexus-async-net --no-default-features --features nexus --lib
+    - name: Test nexus-web (default)
+      run: cargo test -p nexus-web
+    - name: Test nexus-web (all features)
+      run: cargo test -p nexus-web --all-features
+    - name: Test nexus-async-web (tokio-rt + tls, default)
+      run: cargo test -p nexus-async-web
+    - name: Test nexus-async-web (nexus + tls)
+      run: cargo test -p nexus-async-web --no-default-features --features nexus,tls --lib
+    - name: Test nexus-async-web (nexus, no tls)
+      run: cargo test -p nexus-async-web --no-default-features --features nexus --lib
 
   msrv:
     runs-on: ubuntu-latest

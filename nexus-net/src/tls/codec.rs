@@ -105,7 +105,7 @@ impl TlsCodec {
     ///
     /// **No production callers in this crate** — kept as a
     /// user-facing safety helper. The async `TlsInner::connect`
-    /// (nexus-async-net) and sync `TlsStream::connect` drive their
+    /// (nexus-async-web) and sync `TlsStream::connect` drive their
     /// own loops over [`read_tls`](Self::read_tls) /
     /// [`read_tls_from`](Self::read_tls_from). External adapter
     /// authors who pre-buffer ciphertext can reach for this helper
@@ -161,7 +161,7 @@ impl TlsCodec {
         Ok(n)
     }
 
-    /// Drain decrypted plaintext into a [`ParserSink`].
+    /// Drain decrypted plaintext into a [`ParserSink`](crate::ParserSink).
     ///
     /// Direct-feed path: uses `BufRead::fill_buf` to borrow rustls's
     /// internal plaintext queue and copy directly into `sink.spare()`,
@@ -501,7 +501,7 @@ mod tests {
     /// Regression test for issue #200.
     ///
     /// Pre-fix: `read_tls(&buf)` may consume only part of `buf`. Calling
-    /// code in nexus-async-net + nexus-net's tls/stream.rs ignored the
+    /// code in nexus-async-web + nexus-net's tls/stream.rs ignored the
     /// returned consumed count, dropping the unconsumed tail and stalling
     /// the TLS handshake. Post-fix: `read_and_process_tls` loops until the
     /// entire slice is consumed.

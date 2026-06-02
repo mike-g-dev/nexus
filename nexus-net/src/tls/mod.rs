@@ -11,7 +11,7 @@
 //!
 //! ```ignore
 //! use nexus_net::tls::TlsConfig;
-//! use nexus_net::ws::Client;
+//! use nexus_web::ws::Client;
 //!
 //! let tls = TlsConfig::new()?;
 //! let mut ws = Client::builder()
@@ -33,7 +33,7 @@
 //!   (use for in-memory tests or custom adapters that pre-buffer
 //!   known-bounded ciphertext; no production callers in this crate).
 //! - [`TlsCodec::read_plaintext`] / [`TlsCodec::drain_plaintext_into`]
-//!   drain decrypted plaintext (the latter feeds a [`ParserSink`]
+//!   drain decrypted plaintext (the latter feeds a [`ParserSink`](crate::ParserSink)
 //!   directly, zero-copy).
 //! - [`TlsCodec::encrypt`] / [`TlsCodec::write_tls_to`] handle the
 //!   outbound side.

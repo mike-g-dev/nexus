@@ -273,7 +273,7 @@ its numbers against the committed reference.
 | `nexus-stats` | `PERF.md` | criterion (`update_bench`) |
 | `nexus-rate` | `README.md` | criterion |
 | `nexus-net` | `README.md` | criterion + TCP loopback harness |
-| `nexus-async-net` | `README.md` | criterion + TCP loopback |
+| `nexus-async-web` | `README.md` | criterion + TCP loopback |
 | `nexus-async-rt` | `BENCHMARKS.md` | criterion + examples |
 | `nexus-rt` | `nexus-rt/docs/` | criterion |
 

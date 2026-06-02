@@ -5,7 +5,7 @@ enforce the exchange's rate limit on outbound orders, mint unique
 client order IDs, and archive every byte for compliance / replay.
 
 **Crates used:**
-`nexus-async-net` (WebSocket + TLS), `nexus-async-rt` (executor),
+`nexus-async-web` (WebSocket + TLS), `nexus-async-rt` (executor),
 `nexus-rate` (GCRA / token bucket), `nexus-id` (Snowflake), `nexus-logbuf`
 (archival), `nexus-ascii` (exchange symbol).
 
@@ -162,16 +162,16 @@ can read it.
 
 ---
 
-## 4. TLS WebSocket with `nexus-async-net`
+## 4. TLS WebSocket with `nexus-async-web`
 
 ```rust
-// fixed: nexus-async-net exposes `WsStream` + `WsStreamBuilder`, not
+// fixed: nexus-async-web exposes `WsStream` + `WsStreamBuilder`, not
 // `WebSocketClient`. `MaybeTls` is re-exported from the same module
 // and is the transport produced by `WsStreamBuilder::connect`.
-use nexus_async_net::ws::{MaybeTls, Message, WsStream, WsStreamBuilder};
+use nexus_async_web::ws::{MaybeTls, Message, WsStream, WsStreamBuilder};
 
 async fn connect()
-    -> Result<WsStream<MaybeTls>, nexus_async_net::ws::WsError>
+    -> Result<WsStream<MaybeTls>, nexus_async_web::ws::WsError>
 {
     let url = "wss://ws-feed.exchange.coinbase.com";
     WsStreamBuilder::new().connect(url).await
@@ -342,7 +342,7 @@ too.
 
 ```rust
 async fn heartbeat(ws: &mut WsStream<MaybeTls>)
-    -> Result<(), nexus_async_net::ws::WsError>
+    -> Result<(), nexus_async_web::ws::WsError>
 {
     let msg = r#"{"type":"ping"}"#;
     ws.send_text(msg).await
@@ -362,7 +362,7 @@ state machines inline — define one `Exchange` struct (as above) and
 spawn one per venue on the executor. Each venue gets its own rate
 limiter, archive writer, and id factory.
 
-> NOTE: `nexus-async-net` does not ship a `ClientPool` abstraction;
+> NOTE: `nexus-async-web` does not ship a `ClientPool` abstraction;
 > venue multiplexing is user code. The pattern is: hold a
 > `HashMap<VenueId, Exchange>` in your supervisor task, spawn each
 > `Exchange::run()` as a `tokio::task::spawn_local` future, and merge
@@ -394,7 +394,7 @@ limiter, archive writer, and id factory.
 
 ## Further reading
 
-- `nexus-async-net/docs/` — `WsStream`, `WsStreamBuilder`, TLS config
+- `nexus-async-web/docs/` — `WsStream`, `WsStreamBuilder`, TLS config
 - `nexus-net/docs/` — sans-IO layer (non-tokio use cases)
 - `nexus-rate/docs/` — algorithm selection, checked Duration,
   token rebate semantics

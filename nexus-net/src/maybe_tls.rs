@@ -5,7 +5,7 @@
 //!
 //! Protocol clients use `MaybeTls<S>` as their stream type when the
 //! TLS decision happens at runtime (`ws://` vs `wss://`). For async
-//! TLS, see `nexus-async-net::maybe_tls`.
+//! TLS, see `nexus-async-web::maybe_tls`.
 
 use std::io::{self, Read, Write};
 

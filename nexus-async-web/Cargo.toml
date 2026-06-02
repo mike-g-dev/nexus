@@ -1,0 +1,99 @@
+[package]
+name = "nexus-async-web"
+version = "0.10.0"
+description = "Async WebSocket and REST adapter for nexus-web. Tokio-compatible, zero-copy, SIMD-accelerated."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["tokio-tls"]
+
+# Runtime backends — pick one. Tokio is the supported path for production use.
+tokio-rt = ["dep:tokio", "dep:futures-core", "dep:futures-sink"]
+nexus = ["dep:nexus-async-rt"]                          # experimental, see README
+
+# Generic protocol features (work with either backend).
+tls = ["nexus-web/tls", "nexus-net/tls"]
+socket-opts = ["dep:socket2"]
+bytes = ["nexus-web/bytes", "nexus-net/bytes"]
+
+# Per-backend composites.
+tokio-tls = ["tokio-rt", "tls", "dep:tokio-rustls"]
+tokio-full = ["tokio-tls", "socket-opts", "bytes"]
+nexus-tls = ["nexus", "tls"]
+nexus-full = ["nexus-tls", "socket-opts", "bytes"]
+
+# `full` defaults to the tokio bundle. Users on the experimental nexus
+# backend should opt in via `nexus-full` explicitly.
+full = ["tokio-full"]
+
+[package.metadata.docs.rs]
+features = ["tokio-tls", "socket-opts", "bytes"]
+
+[dependencies]
+nexus-web = { version = "0.8.0", path = "../nexus-web" }
+nexus-net = { version = "0.8.0", path = "../nexus-net" }
+nexus-pool = { version = "1.1.0", path = "../nexus-pool" }
+tokio = { version = "1", features = ["io-util", "net", "rt", "time"], optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+socket2 = { version = "0.5", optional = true }
+futures-core = { version = "0.3", optional = true }
+futures-sink = { version = "0.3", optional = true }
+nexus-async-rt = { version = "0.7.0", path = "../nexus-async-rt", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio-tungstenite = "0.26"
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+sonic-rs = "0.3"
+rcgen = "0.13"
+rustls = { version = "0.23", features = ["std", "tls12", "aws_lc_rs"] }
+tokio-rustls = "0.26"
+nexus-rt = { path = "../nexus-rt" }
+
+[[bench]]
+name = "perf_async_ws"
+harness = false
+required-features = ["tokio-rt"]
+
+[[bench]]
+name = "perf_ws_cycles_tokio"
+harness = false
+required-features = ["tokio-rt"]
+
+[[bench]]
+name = "perf_ws_cycles_nexus"
+harness = false
+required-features = ["nexus"]
+
+[[bench]]
+name = "perf_async_ws_nexus"
+harness = false
+required-features = ["nexus"]
+
+[[bench]]
+name = "bench_pool_throughput"
+harness = false
+required-features = ["tokio-rt"]
+
+[[test]]
+name = "httpbin"
+required-features = ["tokio-rt"]
+
+[[test]]
+name = "maybe_tls_nexus_backpressure"
+required-features = ["nexus", "tls"]
+
+[[test]]
+name = "tls_handshake_piggyback"
+required-features = ["nexus", "tls"]
+
+[lints]
+workspace = true

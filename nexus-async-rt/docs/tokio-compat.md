@@ -235,7 +235,7 @@ async fn tls_handshake(tcp: tokio::net::TcpStream) -> std::io::Result<tokio_rust
 fn make_client_config() -> rustls::ClientConfig { todo!() }
 ```
 
-For the hot path — market data over TLS — use `nexus-net` + `nexus-async-net`
+For the hot path — market data over TLS — use `nexus-net` + `nexus-async-web`
 directly. `with_tokio` is fine for one-off REST calls, order cancels on
 shutdown, etc.
 
