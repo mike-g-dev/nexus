@@ -231,6 +231,13 @@ impl SeqMut<'_> {
         self.0.set(next);
         next
     }
+
+    /// Reset the sequence to 0.
+    pub fn reset(&mut self) -> Sequence {
+        let reset = Sequence::ZERO;
+        self.0.set(reset);
+        reset
+    }
 }
 
 // =============================================================================
@@ -340,5 +347,7 @@ mod tests {
         let next = seq.advance();
         assert_eq!(next, Sequence(1));
         assert_eq!(cell.get(), Sequence(1));
+        let reset = seq.reset();
+        assert_eq!(reset, Sequence(0));
     }
 }
