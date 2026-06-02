@@ -1,5 +1,12 @@
 # nexus-async-net
 
+> **Deprecation notice:** This crate is being renamed to `nexus-async-web`
+> (starting at 0.10.0) as part of the networking crate restructure
+> ([#413](https://github.com/Abso1ut3Zer0/nexus/issues/413)). The underlying
+> protocol code is moving to `nexus-web` (extracted from `nexus-net`), and
+> this async adapter will follow under the new name. No further updates will
+> be published to `nexus-async-net`.
+
 Async adapters for [nexus-net](../nexus-net). Tokio-compatible.
 
 Same sans-IO primitives, same performance — just `.await` on socket I/O.

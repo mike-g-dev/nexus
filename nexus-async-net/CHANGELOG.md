@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.9.0] — 2026-05-30
+### Deprecated
+
+- **This crate is deprecated.** It is being renamed to `nexus-async-web`
+  (starting at 0.10.0) as part of the networking crate restructure
+  ([#413](https://github.com/Abso1ut3Zer0/nexus/issues/413)). WebSocket
+  and HTTP protocol code is moving from `nexus-net` to `nexus-web`, and
+  this async adapter follows under the new name. No further updates will
+  be published to `nexus-async-net` after this release.
 
 ## [0.9.0] — 2026-05-30
 
