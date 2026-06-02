@@ -10,6 +10,11 @@ contained.
 
 ## [Unreleased]
 
+### Added
+
+- `SeqMut::reset()` — reset the sequence counter to 0 and return `Sequence::ZERO`.
+- `World::reset_sequence()` — reset the world's current sequence to 0.
+
 ## [2.4.0] — 2026-05-17
 
 Eventless handlers and monomorphized scheduler.
