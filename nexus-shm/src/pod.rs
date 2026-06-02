@@ -21,3 +21,7 @@ impl_pod!(
 // SAFETY: an array of `Pod` is a contiguous run of `Pod` values with no added
 // layout, pointers, or Drop, so it inherits every requirement of the trait.
 unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
+
+// SAFETY: zero-sized, stable layout, no pointers, no Drop, valid for its single
+// bit pattern.
+unsafe impl Pod for () {}

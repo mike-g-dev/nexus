@@ -6,12 +6,17 @@
 
 pub(crate) mod control;
 mod error;
+mod journal;
 mod lock;
 mod pod;
 mod region;
 mod segment;
 
 pub use error::ShmError;
+pub use journal::{
+    FixHeader, Journal, JournalConfig, JournalError, ReadRange, ReadRecord, Reader, RecordHeader,
+    SeqHeader, WriteClaim, Writer,
+};
 pub use lock::Liveness;
 pub use pod::Pod;
 pub use region::MapOptions;
