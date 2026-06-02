@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-02
+
 Renamed from `nexus-async-net` to `nexus-async-web`. Protocol types
 now imported from `nexus-web` (extracted from `nexus-net` in the same
 restructure). Primitives (`buf`, `tls`, `wire`) remain in `nexus-net`.
