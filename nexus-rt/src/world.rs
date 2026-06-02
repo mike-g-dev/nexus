@@ -919,6 +919,11 @@ impl World {
         self.current_sequence.set(seq);
     }
 
+    /// Resets the current sequence number to 0.
+    pub fn reset_sequence(&mut self) {
+        self.current_sequence.set(Sequence::ZERO);
+    }
+
     // =========================================================================
     // Unsafe resource access (hot path — pre-resolved ResourceId)
     // =========================================================================
@@ -1459,6 +1464,8 @@ mod tests {
         assert_eq!(world.current_sequence(), Sequence(1));
         world.next_sequence();
         assert_eq!(world.current_sequence(), Sequence(2));
+        world.reset_sequence();
+        assert_eq!(world.current_sequence(), Sequence(0));
     }
 
     // -- run_startup tests ----------------------------------------------------
