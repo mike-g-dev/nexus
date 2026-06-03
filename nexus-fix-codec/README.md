@@ -84,8 +84,38 @@ Standalone helpers: `encode_field`, `format_checksum`.
 
 ### `error` — Error Types
 
-`DecodeError` and `ChecksumError`. Manual `Display` + `Error` impls
-(no `thiserror` — workspace convention).
+`DecodeError` (frame structure) and `ChecksumError`, plus `FixValueError`
+for value-level parse failures. Manual `Display` + `Error` impls (no
+`thiserror` — workspace convention).
+
+### `types` — FIX Field Data Types
+
+Parsers and encoders for the FIX 5.0 SP2 field data types. Every parser
+takes `&[u8]` wire bytes and returns `Result<T, FixValueError>` — a present
+but malformed value is an error; an *absent* optional field is an `Option`
+at the lookup layer (`find_tag`), never a parse error. Encoders write into a
+caller buffer, return the byte count, and do a single up-front capacity
+`assert!`.
+
+- **Numerics** — `parse_fix_int`/`uint`/`seqnum`/`bool`,
+  `parse_fix_day_of_month`; shared SWAR digit parsing.
+- **Decimal** — `FixDecimal { mantissa: i64, scale: u8 }` (Price/Qty/Amt/
+  PriceOffset/Percentage/float), optional `nexus-decimal` conversions.
+- **Temporal (UTC)** — `FixDate`, `FixTime`, `FixTimestamp` (nanosecond,
+  Hinnant rata-die calendar math).
+- **Temporal (offset)** — `FixTzTime`, `FixTzTimestamp` carry a `±HH:MM`/`Z`
+  offset and re-encode byte-for-byte; the UTC types stay offset-free.
+- **`MonthYear`** — `FixMonthYear` (`YYYYMM` / `YYYYMMDD` / `YYYYMM`+`wW`),
+  each wire form preserved exactly.
+- **`Tenor`** — `FixTenor { unit, value }` (`[DWMY]<n>`, canonical form).
+- **Text / codes** — `parse_fix_text` → zero-copy `AsciiTextStr`
+  (printable-ASCII validated) for String/Currency/Exchange/Country/Language/
+  Symbol; extract an owned `AsciiText<CAP>` to use as a map key.
+- **Multi-value** — `parse_fix_multi_char` / `parse_fix_multi_string` yield
+  space-delimited tokens as zero-allocation borrowing iterators.
+
+The `char`→enum mapping (Side, OrdType, …), `SettlType`'s enum+Tenor union,
+and IMM-date derivation live in the generated/application layer, not here.
 
 ## Framing
 

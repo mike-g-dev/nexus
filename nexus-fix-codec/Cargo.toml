@@ -13,12 +13,27 @@ categories = ["parsing", "network-programming"]
 [lints]
 workspace = true
 
+[features]
+default = []
+nexus-decimal = ["dep:nexus-decimal"]
+
 [dependencies]
 nexus-ascii = { path = "../nexus-ascii" }
+nexus-decimal = { path = "../nexus-decimal", optional = true }
 
 [dev-dependencies]
+nexus-decimal = { path = "../nexus-decimal" }
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
 
 [[bench]]
 name = "scan"
+harness = false
+
+[[bench]]
+name = "parse_types"
+harness = false
+
+[[bench]]
+name = "perf_parse_cycles"
 harness = false

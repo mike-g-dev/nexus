@@ -64,6 +64,51 @@ impl fmt::Display for ChecksumError {
 
 impl std::error::Error for ChecksumError {}
 
+/// Value-level parse failure.
+///
+/// Returned when a field's value bytes are present but cannot be parsed
+/// into the requested type. This is distinct from two other concerns:
+/// frame-structure errors ([`DecodeError`]) and field *absence* — an
+/// optional field that simply was not sent is modeled as `Option` at the
+/// lookup layer, never as an error here. A present-but-empty value
+/// (`44=\x01`) is [`FixValueError::Empty`], not absence.
+///
+/// `Copy` and allocation-free; an error value is only constructed on the
+/// cold failure path, so it costs nothing on a successful parse.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FixValueError {
+    /// Field was present but its value was zero-length.
+    Empty,
+    /// A non-digit byte appeared where digits were required.
+    NotNumeric,
+    /// The digits were valid but the value exceeds the target type's range.
+    Overflow,
+    /// Structurally well-formed but semantically invalid (month 13,
+    /// hour 24, a tenor count of 0, ...).
+    OutOfRange,
+    /// The value does not match the expected shape (missing separator,
+    /// wrong fixed width, bad sign placement, unknown unit letter, ...).
+    BadFormat,
+    /// A text field contained a control or non-ASCII byte.
+    NotPrintable,
+}
+
+impl fmt::Display for FixValueError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "empty field value",
+            Self::NotNumeric => "non-digit byte in numeric field",
+            Self::Overflow => "value exceeds target range",
+            Self::OutOfRange => "value out of valid range",
+            Self::BadFormat => "malformed field value",
+            Self::NotPrintable => "non-printable byte in text field",
+        })
+    }
+}
+
+impl std::error::Error for FixValueError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +174,30 @@ mod tests {
         let src = de.source().unwrap();
         let downcasted = src.downcast_ref::<ChecksumError>().unwrap();
         assert_eq!(*downcasted, ce);
+    }
+
+    #[test]
+    fn fix_value_error_display() {
+        assert_eq!(FixValueError::Empty.to_string(), "empty field value");
+        assert_eq!(
+            FixValueError::NotNumeric.to_string(),
+            "non-digit byte in numeric field"
+        );
+        assert_eq!(
+            FixValueError::Overflow.to_string(),
+            "value exceeds target range"
+        );
+        assert_eq!(
+            FixValueError::OutOfRange.to_string(),
+            "value out of valid range"
+        );
+        assert_eq!(
+            FixValueError::BadFormat.to_string(),
+            "malformed field value"
+        );
+        assert_eq!(
+            FixValueError::NotPrintable.to_string(),
+            "non-printable byte in text field"
+        );
     }
 }

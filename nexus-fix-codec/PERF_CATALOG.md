@@ -218,6 +218,130 @@ that narrow gain.
 
 ---
 
+## Value-type layer: error contract + encode unification
+
+The FIX 5.0 SP2 domain-type batch (`FixMonthYear`, `FixTenor`,
+`FixTzTime`/`FixTzTimestamp`, `char`/text/multi-value parsers) plus the
+`Option → Result` migration. The perf-relevant decisions:
+
+- **`Option<T>` → `Result<T, FixValueError>` is free on the happy path.**
+  `Ok(v)` lowers identically to `Some(v)`; `FixValueError` is a one-byte,
+  `Copy`, fieldless enum, and an error value is only *constructed* on the cold
+  failure path. A successful parse has the same codegen as before — the
+  type-parser numbers in BENCHMARKS.md are expected to be unchanged by this
+  migration (re-confirm with a controlled run).
+
+- **Encode unification: the writer's unchecked pattern does NOT transfer.**
+  The plan was to apply `encode_field`'s "single up-front `assert!` +
+  unchecked interior" to `FixDecimal`/`Date`/`Time`/`Timestamp::encode`. On
+  inspection that win doesn't exist here: those encoders route digits through
+  `encode_u64`/`encode_u64_padded`, which build into a fixed stack buffer and
+  emit **one** `copy_from_slice` — there is no per-output-byte bounds-check
+  loop like the old writer had. So the change made is the single up-front
+  capacity `assert!` only: it gives an atomic, clearly-messaged failure
+  (replacing a mid-write index panic) and hands LLVM the length invariant to
+  elide the handful of in-method `buf[pos]` checks. Hand-written `unsafe`
+  stores were deliberately NOT added — they would buy a couple of
+  cross-function copy-length checks at the cost of real UB risk. The data
+  structure already avoids the per-byte tax.
+
+- **New types reuse the spine.** Every numeric/temporal type routes its digit
+  run through `parse_unsigned_digits` (SWAR) and emits through the shared
+  `DIGIT_PAIRS` LUT; fixed-width codes validate via one
+  `AsciiTextStr::try_from_bytes` printable scan; multi-value parsers validate
+  once then yield borrowing iterators (the `MultipleStringValue` iterator uses
+  `AsciiTextStr::from_bytes_unchecked` on validated subslices — miri-clean).
+
+### Measured cost — floor-free (`benches/perf_parse_cycles.rs`, `taskset -c 0`, turbo on)
+
+The cycle harness was rewritten from single-shot `rdtscp(); f(); rdtscp()` to
+**batched/fenced** — each sample times `BATCH = 100` back-to-back calls between
+one `lfence`-fenced `rdtsc`/`rdtscp` pair and divides (the same fix already in
+`examples/perf_scan.rs`). A single-shot pair bottoms out at a **~16–20 cycle
+floor** that masked the real cost of every cheap kernel — the older "Type
+parsers" table in BENCHMARKS.md is floor-inflated by that amount and should be
+re-run on the batched harness. p50 (turbo on) is the stable signal; the 4-figure
+`max` outliers are scheduler deschedules.
+
+| type | parse (cyc, p50) | encode (cyc, p50) |
+|---|--:|--:|
+| `char` / `bool` | ~2 | ~1 |
+| `FixDate` | 8 | 6 |
+| `FixTime` (no-frac / frac) | 18 / 26 | 10 / 22 |
+| text (`AsciiTextStr`) | 7 | copy |
+| `FixMonthYear` | 8–12 | 6–26 |
+| `FixTenor` | 28 | 11 |
+| multi-char / multi-string | 36 / 35 | — |
+| `parse_fix_int` (1–19 digit) | 21–38 | 19–25 |
+| `FixDecimal` | 28–77 | 21–42 |
+| `FixTimestamp` | 32–44 | 60–77 |
+| `FixTzTime` / `FixTzTimestamp` | 28 / 35 | 24 / 69 |
+
+**Cost ladder:** trivial char/bool ≈ 2 cyc → fixed-width date/time/MonthYear 6–18
+→ SWAR numerics (int/uint/seqnum/Tenor) 21–39 → decimal 52–77 → the timestamp
+family 32–77. Every numeric routes through the SWAR spine
+(`parse_unsigned_digits`, ~2 cyc/digit); the shared 200-byte `DIGIT_PAIRS` LUT
+carries all encode.
+
+### The one hot-path target: `i128` decompose
+
+`FixTimestamp::encode` (60–77) and `FixTzTimestamp::encode` (69) are the heaviest
+value-layer paths, and they track each other because both go through
+`FixTimestamp::decompose()` — an `i128` `div_euclid`/`rem_euclid` that splits
+nanos-since-epoch into (date, time). **The 128-bit division is the cost.** If a
+timestamp encoder ever lands on a hot loop, that is the single thing to attack:
+reciprocal-multiply instead of 128-bit division, or keep the epoch math in `i64`
+(the wire domain fits — years ≤ 9999). Parse is cheaper (32–44) because it builds
+the instant additively, with no decompose.
+
+### Leap second costs nothing
+
+Accepting `23:59:60` (FIX permits `SS=60`) uses a sentinel: the leap second lands
+in `nanos_since_midnight ∈ [NANOS_PER_DAY, +1s)`, which the `FixTime` accessors
+and encoder branch on. Measured: `FixTime` parse is **18 cyc normal vs 18 cyc
+leap** — the extra branch is free on the happy path. `:60` is restricted to
+`23:59` (elsewhere it would alias a normal time, e.g. `00:00:60 == 00:01:00`).
+
+### Error contract: three axes, zero hot-path tax
+
+`Result<T, FixValueError>` is free on success (`Ok` lowers like `Some`; the
+one-byte `Copy` error enum is built only on the cold path). The contract is a
+three-axis split, never conflated: frame-structure → `DecodeError` (reader);
+optional-field absence → `Option` (lookup layer); present-but-malformed value →
+`Result` (value parser). A typed accessor over an *optional* field composes to
+`Option<Result<T, FixValueError>>` (`None` = absent, `Some(Err)` = malformed).
+
+### Codegen integration: reconciliation done, richer shape deferred
+
+`nexus-fix-codegen` is the schema→codec layer; the codec does the real work. When
+the `Option → Result` migration met the generator:
+
+- The generator's duplicate `Option` parsers (`convert.rs`) were **removed** — the
+  codec's `Result` parsers are canonical. Generated accessors bridge with `.ok()`
+  (keeping the `Option<T>` accessor shape, zero behavior change; 15/15 roundtrips
+  pass), and DATA-length encoding uses `encode_fix_seqnum` (byte-exact drop-in for
+  the removed `format_uint`).
+- **Deferred (the architecture note):** generated accessors are a **flyweight over
+  the read buffer** — field offsets from one scan, typed values parsed lazily.
+  Today they are `Option<T>` (parse-failure folded into `None`). The intended shape
+  is `Option<Result<T, FixValueError>>` with **parse-once memoization** for the
+  expensive types — and the cost ladder above *is* the caching policy: memoize
+  `FixDecimal` (52–77) and the timestamp family (32–77); don't cache a 2-cyc char
+  (the memo check costs as much as re-parsing). Full integration path: extend the
+  dictionary `FieldType` (7 base types today; ~30 FIX 5.0 SP2 types fold into
+  `Ascii`) → extend `AccKind` to dispatch the typed parsers → pick the
+  error-propagation contract → optional parse-once cache + group iterators.
+
+### Robustness posture
+
+`tests/property.rs` (proptest) proves the two invariants a FIX engine depends on:
+every parser **never panics on arbitrary / printable / structured wire bytes**,
+and every type **round-trips** (`construct → encode → parse`) across its full
+domain (all `i64`×scale decimals, all dates, all times incl. the leap-second
+band, all tenors, every `MonthYear` form, the TZ types). 283 unit + 12 property +
+9 doctests on both SIMD tiers; the one new `unsafe` (the `MultipleStringValue`
+borrowing iterator over validated subslices) is miri-clean.
+
 ## Open / deferred
 
 - **Runtime SIMD detection.** Dispatch is compile-time only (no

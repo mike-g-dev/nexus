@@ -252,19 +252,19 @@ pub fn emit_value_accessor(s: &mut String, f: &RField) {
         AccKind::I64 => {
             let _ = write!(
                 s,
-                "    pub fn {name}(&self) -> Option<i64> {{\n        if self.{name}.is_present() {{ nexus_fix_codec::parse_fix_int(self.{name}.slice(self.buf)) }} else {{ None }}\n    }}\n\n"
+                "    pub fn {name}(&self) -> Option<i64> {{\n        if self.{name}.is_present() {{ nexus_fix_codec::parse_fix_int(self.{name}.slice(self.buf)).ok() }} else {{ None }}\n    }}\n\n"
             );
         }
         AccKind::U32 => {
             let _ = write!(
                 s,
-                "    pub fn {name}(&self) -> Option<u32> {{\n        if self.{name}.is_present() {{ nexus_fix_codec::parse_fix_uint(self.{name}.slice(self.buf)) }} else {{ None }}\n    }}\n\n"
+                "    pub fn {name}(&self) -> Option<u32> {{\n        if self.{name}.is_present() {{ nexus_fix_codec::parse_fix_uint(self.{name}.slice(self.buf)).ok() }} else {{ None }}\n    }}\n\n"
             );
         }
         AccKind::Bool => {
             let _ = write!(
                 s,
-                "    pub fn {name}(&self) -> Option<bool> {{\n        if self.{name}.is_present() {{ nexus_fix_codec::parse_fix_bool(self.{name}.slice(self.buf)) }} else {{ None }}\n    }}\n\n"
+                "    pub fn {name}(&self) -> Option<bool> {{\n        if self.{name}.is_present() {{ nexus_fix_codec::parse_fix_bool(self.{name}.slice(self.buf)).ok() }} else {{ None }}\n    }}\n\n"
             );
         }
     }
