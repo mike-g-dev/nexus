@@ -1,0 +1,40 @@
+<fix major="4" minor="2">
+  <header>
+    <field name="BeginString" required="Y"/>
+    <field name="MsgType" required="Y"/>
+  </header>
+  <trailer>
+    <field name="CheckSum" required="Y"/>
+  </trailer>
+  <messages>
+    <message name="Logon" msgtype="A" msgcat="admin">
+      <field name="EncryptMethod" required="Y"/>
+      <field name="HeartBtInt" required="Y"/>
+    </message>
+    <message name="MarketDataSnapshotFullRefresh" msgtype="W" msgcat="app">
+      <field name="Symbol" required="Y"/>
+      <group name="NoMDEntries" required="Y">
+        <field name="MDEntryType" required="Y"/>
+        <field name="MDEntryPx" required="N"/>
+        <field name="MDEntrySize" required="N"/>
+      </group>
+    </message>
+  </messages>
+  <components/>
+  <fields>
+    <field number="8" name="BeginString" type="STRING"/>
+    <field number="10" name="CheckSum" type="STRING"/>
+    <field number="35" name="MsgType" type="STRING"/>
+    <field number="98" name="EncryptMethod" type="INT"/>
+    <field number="108" name="HeartBtInt" type="INT"/>
+    <field number="55" name="Symbol" type="STRING"/>
+    <field number="268" name="NoMDEntries" type="NUMINGROUP"/>
+    <field number="269" name="MDEntryType" type="CHAR">
+      <value enum="0" description="BID"/>
+      <value enum="1" description="OFFER"/>
+      <value enum="2" description="TRADE"/>
+    </field>
+    <field number="270" name="MDEntryPx" type="PRICE"/>
+    <field number="271" name="MDEntrySize" type="QTY"/>
+  </fields>
+</fix>

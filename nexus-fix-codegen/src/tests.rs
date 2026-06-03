@@ -1,7 +1,7 @@
 use crate::dict::{self, FieldType};
 use crate::emit;
 
-const SAMPLE: &str = include_str!("../tests/fixtures/FIX_sample.xml");
+const SAMPLE: &str = include_str!("../tests/fixtures/venue_alpha.xml");
 
 fn file<'a>(files: &'a [emit::GeneratedFile], name: &str) -> &'a str {
     files
@@ -15,7 +15,7 @@ fn parses_structure() {
     let d = dict::parse(SAMPLE).unwrap();
     assert_eq!(d.major, "4");
     assert_eq!(d.minor, "4");
-    assert_eq!(d.messages.len(), 2);
+    assert_eq!(d.messages.len(), 3);
     assert!(d.field("Side").unwrap().is_enum());
     assert!(d.field("Side").unwrap().single_char());
     assert_eq!(d.field("RawData").unwrap().ftype, FieldType::Data);
