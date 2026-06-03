@@ -100,6 +100,6 @@ fn emit_data_setter(s: &mut String, len: &RField, data: &RField) {
     let len_tag = screaming(&len.name);
     let _ = write!(
         s,
-        "    pub fn {name}(mut self, value: &[u8]) -> Self {{\n        let mut tmp = [0u8; 20];\n        let len = nexus_fix_codec::format_uint(&mut tmp, value.len() as u64);\n        self.w.field(super::fields::TAG_{len_tag}, len);\n        self.w.field(super::fields::TAG_{data_tag}, value);\n        self\n    }}\n\n"
+        "    pub fn {name}(mut self, value: &[u8]) -> Self {{\n        let mut tmp = [0u8; 20];\n        let n = nexus_fix_codec::encode_fix_seqnum(value.len() as u64, &mut tmp);\n        self.w.field(super::fields::TAG_{len_tag}, &tmp[..n]);\n        self.w.field(super::fields::TAG_{data_tag}, value);\n        self\n    }}\n\n"
     );
 }
