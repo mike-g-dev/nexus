@@ -16,6 +16,7 @@
 //! Generated FIX codecs (from `nexus-fix-codegen`) depend on these primitives.
 
 mod error;
+mod field;
 mod span;
 mod types;
 
@@ -24,6 +25,7 @@ pub mod scan;
 pub mod writer;
 
 pub use error::{ChecksumError, DecodeError, FixValueError};
+pub use field::{FieldView, FromFixValue};
 pub use nexus_ascii::{AsciiChar, AsciiText, AsciiTextStr};
 pub use reader::{FieldReader, RawField, checksum, find_tag, parse_tag, validate_checksum};
 pub use scan::DelimiterScanner;

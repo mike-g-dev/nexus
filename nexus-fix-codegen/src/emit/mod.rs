@@ -283,54 +283,22 @@ fn acc_return_type(kind: AccKind) -> &'static str {
     }
 }
 
-fn acc_parse_expr(kind: AccKind) -> &'static str {
-    match kind {
-        AccKind::Bytes => "",
-        AccKind::Text => "nexus_fix_codec::parse_fix_text",
-        AccKind::Char => "nexus_fix_codec::parse_fix_char",
-        AccKind::I64 => "nexus_fix_codec::parse_fix_int",
-        AccKind::U32 => "nexus_fix_codec::parse_fix_uint",
-        AccKind::U64 => "nexus_fix_codec::parse_fix_seqnum",
-        AccKind::Bool => "nexus_fix_codec::parse_fix_bool",
-        AccKind::Decimal => "nexus_fix_codec::FixDecimal::parse",
-        AccKind::Timestamp => "nexus_fix_codec::FixTimestamp::parse",
-        AccKind::Date => "nexus_fix_codec::FixDate::parse",
-        AccKind::Time => "nexus_fix_codec::FixTime::parse",
-        AccKind::MonthYear => "nexus_fix_codec::FixMonthYear::parse",
-        AccKind::DayOfMonth => "nexus_fix_codec::parse_fix_day_of_month",
-        AccKind::TzTime => "nexus_fix_codec::FixTzTime::parse",
-        AccKind::TzTimestamp => "nexus_fix_codec::FixTzTimestamp::parse",
-        AccKind::Tenor => "nexus_fix_codec::FixTenor::parse",
-    }
-}
-
+/// One accessor per field, returning `Option<nexus_fix_codec::FieldView<'buf, T>>`.
+///
+/// `None` when the field is absent; otherwise a handle carrying the small fixed
+/// method set (`get` / `checked` / `is_valid` / `as_bytes`). Presence is the
+/// outer `Option`, validity is the handle's `checked()` — two separate axes —
+/// so the message struct stays at one method per field and the accessor logic
+/// lives in the codec, not in the generated boilerplate.
 pub fn emit_value_accessor(s: &mut String, f: &RField, buf_expr: &str) {
     let name = snake(&f.name);
-    let kind = acc_kind(f.ftype);
-    let ret = acc_return_type(kind);
-
-    if kind == AccKind::Bytes {
-        let _ = write!(
-            s,
-            "    pub fn {name}(&self) -> Option<{ret}> {{\n        \
-             if self.{name}.is_present() {{ Some(self.{name}.slice({buf_expr})) }} else {{ None }}\n    \
-             }}\n\n"
-        );
-    } else {
-        let parse = acc_parse_expr(kind);
-        let _ = write!(
-            s,
-            "    pub fn {name}_raw(&self) -> Option<&'buf [u8]> {{\n        \
-             if self.{name}.is_present() {{ Some(self.{name}.slice({buf_expr})) }} else {{ None }}\n    \
-             }}\n\n"
-        );
-        let _ = write!(
-            s,
-            "    pub fn {name}(&self) -> Option<{ret}> {{\n        \
-             if self.{name}.is_present() {{ {parse}(self.{name}.slice({buf_expr})).ok() }} else {{ None }}\n    \
-             }}\n\n"
-        );
-    }
+    let ty = acc_return_type(acc_kind(f.ftype));
+    let _ = write!(
+        s,
+        "    pub fn {name}(&self) -> Option<nexus_fix_codec::FieldView<'buf, {ty}>> {{\n        \
+         nexus_fix_codec::FieldView::new(self.{name}, {buf_expr})\n    \
+         }}\n\n"
+    );
     if f.is_enum {
         emit_enum_accessor(s, f, &name, buf_expr);
     }

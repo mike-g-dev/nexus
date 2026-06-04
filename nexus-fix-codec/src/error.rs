@@ -64,14 +64,15 @@ impl fmt::Display for ChecksumError {
 
 impl std::error::Error for ChecksumError {}
 
-/// Value-level parse failure.
+/// Value-level failure producing a typed field value.
 ///
-/// Returned when a field's value bytes are present but cannot be parsed
-/// into the requested type. This is distinct from two other concerns:
-/// frame-structure errors ([`DecodeError`]) and field *absence* — an
-/// optional field that simply was not sent is modeled as `Option` at the
-/// lookup layer, never as an error here. A present-but-empty value
-/// (`44=\x01`) is [`FixValueError::Empty`], not absence.
+/// Distinct from frame-structure errors ([`DecodeError`]) and from field
+/// *absence*. The bare value parsers (`parse_fix_*`, `FixDecimal::parse`, ...)
+/// are handed a present field's bytes, so they report only *content* problems
+/// (a present-but-empty value `44=\x01` is [`Empty`](Self::Empty)). Absence is
+/// not represented here at all: the generated accessors return an
+/// `Option<FieldView>` (see [`FieldView`](crate::FieldView)), so a missing
+/// field is `None`, never an error — presence and validity are separate axes.
 ///
 /// `Copy` and allocation-free; an error value is only constructed on the
 /// cold failure path, so it costs nothing on a successful parse.

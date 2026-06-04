@@ -6,7 +6,6 @@ struct HeaderField {
     tag: u32,
     name: &'static str,
     ret_type: &'static str,
-    parse_expr: &'static str,
 }
 
 const HEADER_FIELDS: &[HeaderField] = &[
@@ -14,49 +13,41 @@ const HEADER_FIELDS: &[HeaderField] = &[
         tag: 8,
         name: "begin_string",
         ret_type: "&'buf [u8]",
-        parse_expr: "",
     },
     HeaderField {
         tag: 9,
         name: "body_length",
         ret_type: "u32",
-        parse_expr: "nexus_fix_codec::parse_fix_uint",
     },
     HeaderField {
         tag: 35,
         name: "msg_type",
         ret_type: "&'buf [u8]",
-        parse_expr: "",
     },
     HeaderField {
         tag: 34,
         name: "msg_seq_num",
         ret_type: "u64",
-        parse_expr: "nexus_fix_codec::parse_fix_seqnum",
     },
     HeaderField {
         tag: 49,
         name: "sender_comp_id",
         ret_type: "&'buf nexus_fix_codec::AsciiTextStr",
-        parse_expr: "nexus_fix_codec::parse_fix_text",
     },
     HeaderField {
         tag: 56,
         name: "target_comp_id",
         ret_type: "&'buf nexus_fix_codec::AsciiTextStr",
-        parse_expr: "nexus_fix_codec::parse_fix_text",
     },
     HeaderField {
         tag: 43,
         name: "poss_dup_flag",
         ret_type: "bool",
-        parse_expr: "nexus_fix_codec::parse_fix_bool",
     },
     HeaderField {
         tag: 52,
         name: "sending_time",
         ret_type: "nexus_fix_codec::FixTimestamp",
-        parse_expr: "nexus_fix_codec::FixTimestamp::parse",
     },
 ];
 
@@ -112,31 +103,13 @@ fn emit_accessors(s: &mut String) {
     s.push_str("    pub fn buf(&self) -> &'buf [u8] { self.reader.buf() }\n\n");
 
     for f in HEADER_FIELDS {
-        let buf = "self.reader.buf()";
-        if f.parse_expr.is_empty() {
-            let _ = write!(
-                s,
-                "    pub fn {}(&self) -> Option<{}> {{\n        \
-                 if self.{}.is_present() {{ Some(self.{}.slice({buf})) }} else {{ None }}\n    \
-                 }}\n\n",
-                f.name, f.ret_type, f.name, f.name,
-            );
-        } else {
-            let _ = write!(
-                s,
-                "    pub fn {}_raw(&self) -> Option<&'buf [u8]> {{\n        \
-                 if self.{}.is_present() {{ Some(self.{}.slice({buf})) }} else {{ None }}\n    \
-                 }}\n\n",
-                f.name, f.name, f.name,
-            );
-            let _ = write!(
-                s,
-                "    pub fn {}(&self) -> Option<{}> {{\n        \
-                 if self.{}.is_present() {{ {}(self.{}.slice({buf})).ok() }} else {{ None }}\n    \
-                 }}\n\n",
-                f.name, f.ret_type, f.name, f.parse_expr, f.name,
-            );
-        }
+        let _ = write!(
+            s,
+            "    pub fn {}(&self) -> Option<nexus_fix_codec::FieldView<'buf, {}>> {{\n        \
+             nexus_fix_codec::FieldView::new(self.{}, self.reader.buf())\n    \
+             }}\n\n",
+            f.name, f.ret_type, f.name,
+        );
     }
 
     s.push_str("    pub fn msg_type_enum(&self) -> Option<super::MsgType> {\n");

@@ -306,31 +306,37 @@ leap** — the extra branch is free on the happy path. `:60` is restricted to
 
 `Result<T, FixValueError>` is free on success (`Ok` lowers like `Some`; the
 one-byte `Copy` error enum is built only on the cold path). The contract is a
-three-axis split, never conflated: frame-structure → `DecodeError` (reader);
-optional-field absence → `Option` (lookup layer); present-but-malformed value →
-`Result` (value parser). A typed accessor over an *optional* field composes to
-`Option<Result<T, FixValueError>>` (`None` = absent, `Some(Err)` = malformed).
+two-axis split, never conflated: **presence** and **validity** are orthogonal.
+Frame-structure → `DecodeError` (reader). Then, per field: presence → `Option`
+(the accessor returns `None` when the tag is absent); validity → `Result`
+(`FieldView::checked`, on a *present* field). `FixValueError` therefore carries
+only content variants — there is no `Missing` arm — because absence is the
+accessor's `None`, never an error.
 
-### Codegen integration: reconciliation done, richer shape deferred
+### Codegen integration: the FieldView flyweight (landed)
 
-`nexus-fix-codegen` is the schema→codec layer; the codec does the real work. When
-the `Option → Result` migration met the generator:
+`nexus-fix-codegen` is the schema→codec layer; the codec does the real work. The
+generated accessors are a **flyweight over the read buffer**: the decode does one
+scan recording a `FieldSpan` per field, and each accessor returns
+`Option<FieldView<'buf, T>>` — `None` if absent, else a zero-sized-after-inlining
+handle that parses the value *on demand* via the monomorphized `FromFixValue`
+trait (no `fn`-pointer indirection). One method per field, not five: the handle
+carries `get` / `checked` / `is_valid` / `as_bytes`.
 
-- The generator's duplicate `Option` parsers (`convert.rs`) were **removed** — the
-  codec's `Result` parsers are canonical. Generated accessors bridge with `.ok()`
-  (keeping the `Option<T>` accessor shape, zero behavior change; 15/15 roundtrips
-  pass), and DATA-length encoding uses `encode_fix_seqnum` (byte-exact drop-in for
-  the removed `format_uint`).
-- **Deferred (the architecture note):** generated accessors are a **flyweight over
-  the read buffer** — field offsets from one scan, typed values parsed lazily.
-  Today they are `Option<T>` (parse-failure folded into `None`). The intended shape
-  is `Option<Result<T, FixValueError>>` with **parse-once memoization** for the
-  expensive types — and the cost ladder above *is* the caching policy: memoize
-  `FixDecimal` (52–77) and the timestamp family (32–77); don't cache a 2-cyc char
-  (the memo check costs as much as re-parsing). Full integration path: extend the
-  dictionary `FieldType` (7 base types today; ~30 FIX 5.0 SP2 types fold into
-  `Ascii`) → extend `AccKind` to dispatch the typed parsers → pick the
-  error-propagation contract → optional parse-once cache + group iterators.
+This realizes the two-axis contract directly. Presence is the outer `Option`;
+validity is `FieldView::checked() -> Result<T, FixValueError>`. The bare value
+parsers stay canonical — the generator's duplicate `Option` parsers (`convert.rs`)
+were **removed**, and DATA-length encoding uses `encode_fix_seqnum` (byte-exact
+drop-in for the removed `format_uint`). `FieldView::new` is a fallible constructor
+(`Option<Self>`, like `NonZero::new`) so a `FieldView` always denotes a present
+field. The header decoder uses the same shape. 39/39 roundtrips pass.
+
+- **Staged (parse-once memoization):** the flyweight re-parses on each `get()`.
+  The cost ladder above *is* the caching policy: memoize `FixDecimal` (52–77) and
+  the timestamp family (32–77) via a message-owned `Cell` the handle reads/writes;
+  don't cache a 2-cyc char (the memo check costs as much as re-parsing). The
+  `FieldView`/`Option` API is forward-compatible — memoization is a body change
+  behind the same accessors, no signature churn.
 
 ### Robustness posture
 
@@ -338,7 +344,7 @@ the `Option → Result` migration met the generator:
 every parser **never panics on arbitrary / printable / structured wire bytes**,
 and every type **round-trips** (`construct → encode → parse`) across its full
 domain (all `i64`×scale decimals, all dates, all times incl. the leap-second
-band, all tenors, every `MonthYear` form, the TZ types). 283 unit + 12 property +
+band, all tenors, every `MonthYear` form, the TZ types). 288 unit + 12 property +
 9 doctests on both SIMD tiers; the one new `unsafe` (the `MultipleStringValue`
 borrowing iterator over validated subslices) is miri-clean.
 
