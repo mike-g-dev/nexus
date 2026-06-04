@@ -8,11 +8,16 @@ use super::{
     screaming, snake,
 };
 
-pub fn emit(messages: &[RMessage]) -> String {
+/// Tags owned by FrameWriter — excluded from the header encoder typestate.
+const FRAME_TAGS: &[u32] = &[8, 9, 10, 35];
+
+pub fn emit(messages: &[RMessage], header_fields: &[RField]) -> String {
     let mut s = String::new();
     s.push_str(HEADER);
     s.push_str("use core::marker::PhantomData;\n\n");
-    emit_header_encoder(&mut s);
+
+    let enc_fields = build_enc_fields(header_fields);
+    emit_header_encoder(&mut s, &enc_fields);
     for m in messages {
         emit_encoder(&mut s, m);
     }
@@ -23,64 +28,60 @@ pub fn emit(messages: &[RMessage]) -> String {
 // Venue-shared header encoder (ordered typestate)
 // =============================================================================
 
-/// How a standard-header field is encoded from its typed value.
+/// How a header field is encoded from its typed value.
 enum HStyle {
-    /// Already wire bytes (CompIDs) — written as-is.
     Bytes,
-    /// `bool` → `Y`/`N`.
     Bool,
-    /// `u64` sequence number → canonical digits.
+    Char,
+    Int,
     SeqNum,
-    /// `FixTimestamp` → `value.encode(..)`.
+    Uint,
     Timestamp,
+    Encoded,
 }
 
 struct EncHeaderField {
     tag: u32,
-    method: &'static str,
+    method: String,
     required: bool,
     style: HStyle,
+    kind: AccKind,
 }
 
-/// The standard header fields a caller sets, in canonical FIX wire order.
-/// `8`/`9`/`35` are owned by the frame, not set here. PossDupFlag(43) is the
-/// one optional, and it sits *between* MsgSeqNum(34) and SendingTime(52) — which
-/// is exactly why this is an ordered typestate rather than positional args.
-const ENC_HEADER_FIELDS: &[EncHeaderField] = &[
-    EncHeaderField {
-        tag: 49,
-        method: "sender_comp_id",
-        required: true,
-        style: HStyle::Bytes,
-    },
-    EncHeaderField {
-        tag: 56,
-        method: "target_comp_id",
-        required: true,
-        style: HStyle::Bytes,
-    },
-    EncHeaderField {
-        tag: 34,
-        method: "msg_seq_num",
-        required: true,
-        style: HStyle::SeqNum,
-    },
-    EncHeaderField {
-        tag: 43,
-        method: "poss_dup_flag",
-        required: false,
-        style: HStyle::Bool,
-    },
-    EncHeaderField {
-        tag: 52,
-        method: "sending_time",
-        required: true,
-        style: HStyle::Timestamp,
-    },
-];
+fn build_enc_fields(header_fields: &[RField]) -> Vec<EncHeaderField> {
+    header_fields
+        .iter()
+        .filter(|f| !FRAME_TAGS.contains(&f.number))
+        .map(|f| {
+            let style = match acc_kind(f.ftype) {
+                AccKind::Bytes | AccKind::Text => HStyle::Bytes,
+                AccKind::Bool => HStyle::Bool,
+                AccKind::Char => HStyle::Char,
+                AccKind::I64 => HStyle::Int,
+                AccKind::U64 => HStyle::SeqNum,
+                AccKind::U32 | AccKind::DayOfMonth => HStyle::Uint,
+                AccKind::Timestamp => HStyle::Timestamp,
+                AccKind::Decimal
+                | AccKind::Date
+                | AccKind::Time
+                | AccKind::MonthYear
+                | AccKind::TzTime
+                | AccKind::TzTimestamp
+                | AccKind::Tenor => HStyle::Encoded,
+            };
+            let kind = acc_kind(f.ftype);
+            EncHeaderField {
+                tag: f.number,
+                method: snake(&f.name),
+                required: f.required,
+                style,
+                kind,
+            }
+        })
+        .collect()
+}
 
-fn emit_header_encoder(s: &mut String) {
-    let fields = ENC_HEADER_FIELDS;
+fn emit_header_encoder(s: &mut String, fields: &[EncHeaderField]) {
     let n = fields.len();
 
     s.push_str(
@@ -121,22 +122,30 @@ fn emit_header_encoder(s: &mut String) {
         s.push_str("}\n\n");
     }
 
-    // `finish()` is available once no required field remains (here: the final
-    // state, since SendingTime is required and last). It completes the header
-    // and continues to the message body stage.
-    let _ = write!(
-        s,
-        "impl<'buf, B: nexus_fix_codec::FromFrame<'buf>> HeaderEncoder<'buf, HeaderS{n}, B> {{\n    \
-         /// Finish the header and continue to the message body stage.\n    \
-         #[inline]\n    \
-         pub fn finish(self) -> B {{\n        \
-         B::from_frame(self.frame)\n    }}\n}}\n\n"
-    );
+    // `finish()` is available on any state where no required field remains.
+    // This includes the final state SN, plus any earlier state where all
+    // remaining fields are optional (e.g., trailing optional fields).
+    let finish_impl = |s: &mut String, state: usize| {
+        let _ = write!(
+            s,
+            "impl<'buf, B: nexus_fix_codec::FromFrame<'buf>> HeaderEncoder<'buf, HeaderS{state}, B> {{\n    \
+             /// Finish the header and continue to the message body stage.\n    \
+             #[inline]\n    \
+             pub fn finish(self) -> B {{\n        \
+             B::from_frame(self.frame)\n    }}\n}}\n\n"
+        );
+    };
+    for i in 0..=n {
+        let all_remaining_optional = fields[i..].iter().all(|f| !f.required);
+        if all_remaining_optional {
+            finish_impl(s, i);
+        }
+    }
 }
 
 fn emit_header_setter(s: &mut String, f: &EncHeaderField, next: usize) {
     let tag = f.tag;
-    let method = f.method;
+    let method = &f.method;
     let (param, body) = match f.style {
         HStyle::Bytes => (
             "&[u8]".to_string(),
@@ -146,11 +155,31 @@ fn emit_header_setter(s: &mut String, f: &EncHeaderField, next: usize) {
             "bool".to_string(),
             format!("self.frame.field({tag}, &[nexus_fix_codec::encode_fix_bool(value)]);"),
         ),
+        HStyle::Char => (
+            "nexus_fix_codec::AsciiChar".to_string(),
+            format!("self.frame.field({tag}, &[nexus_fix_codec::encode_fix_char(value)]);"),
+        ),
+        HStyle::Int => (
+            "i64".to_string(),
+            format!(
+                "let mut tmp = [0u8; 20];\n        \
+                 let n = nexus_fix_codec::encode_fix_int(value, &mut tmp);\n        \
+                 self.frame.field({tag}, &tmp[..n]);"
+            ),
+        ),
         HStyle::SeqNum => (
             "u64".to_string(),
             format!(
                 "let mut tmp = [0u8; 20];\n        \
                  let n = nexus_fix_codec::encode_fix_seqnum(value, &mut tmp);\n        \
+                 self.frame.field({tag}, &tmp[..n]);"
+            ),
+        ),
+        HStyle::Uint => (
+            "u32".to_string(),
+            format!(
+                "let mut tmp = [0u8; 10];\n        \
+                 let n = nexus_fix_codec::encode_fix_uint(value, &mut tmp);\n        \
                  self.frame.field({tag}, &tmp[..n]);"
             ),
         ),
@@ -162,6 +191,17 @@ fn emit_header_setter(s: &mut String, f: &EncHeaderField, next: usize) {
                  self.frame.field({tag}, &tmp[..n]);"
             ),
         ),
+        HStyle::Encoded => {
+            let param = acc_return_type(f.kind);
+            (
+                param.to_string(),
+                format!(
+                    "let mut tmp = [0u8; 32];\n        \
+                     let n = value.encode(&mut tmp);\n        \
+                     self.frame.field({tag}, &tmp[..n]);"
+                ),
+            )
+        }
     };
     let _ = write!(
         s,

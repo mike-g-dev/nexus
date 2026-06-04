@@ -1,6 +1,7 @@
 mod encoders;
 mod fields;
 mod groups;
+mod header;
 mod messages;
 
 use std::fmt::{self, Write};
@@ -91,10 +92,16 @@ pub fn generate(dict: &Dictionary) -> Result<Vec<GeneratedFile>, EmitError> {
         }
     }
 
+    let header_fields = resolve_header_fields(dict)?;
+
     Ok(vec![
         GeneratedFile {
             name: "fields.rs".to_string(),
             source: fields::emit(dict),
+        },
+        GeneratedFile {
+            name: "header.rs".to_string(),
+            source: header::emit(&header_fields),
         },
         GeneratedFile {
             name: "messages.rs".to_string(),
@@ -106,13 +113,48 @@ pub fn generate(dict: &Dictionary) -> Result<Vec<GeneratedFile>, EmitError> {
         },
         GeneratedFile {
             name: "encoders.rs".to_string(),
-            source: encoders::emit(&messages),
+            source: encoders::emit(&messages, &header_fields),
         },
         GeneratedFile {
             name: "mod.rs".to_string(),
             source: emit_mod(&messages, &dict.major, &dict.minor),
         },
     ])
+}
+
+/// Resolve the dictionary's `<header>` members into flat `RField` entries.
+/// Components are expanded; groups in the header are flattened to fields.
+fn resolve_header_fields(dict: &Dictionary) -> Result<Vec<RField>, EmitError> {
+    let resolved = resolve(dict, &dict.header)?;
+    let mut fields = Vec::new();
+    flatten_to_fields(&resolved, &mut fields);
+    Ok(fields)
+}
+
+fn flatten_to_fields(members: &[RMember], out: &mut Vec<RField>) {
+    for m in members {
+        match m {
+            RMember::Field(f) => out.push(RField {
+                name: f.name.clone(),
+                number: f.number,
+                ftype: f.ftype,
+                required: f.required,
+                is_enum: f.is_enum,
+                single_char: f.single_char,
+            }),
+            RMember::Group(g) => {
+                out.push(RField {
+                    name: g.name.clone(),
+                    number: g.number,
+                    ftype: FieldType::NumInGroup,
+                    required: g.required,
+                    is_enum: false,
+                    single_char: false,
+                });
+                flatten_to_fields(&g.members, out);
+            }
+        }
+    }
 }
 
 fn resolve(dict: &Dictionary, members: &[Member]) -> Result<Vec<RMember>, EmitError> {
@@ -328,6 +370,7 @@ fn emit_mod(messages: &[RMessage], major: &str, minor: &str) -> String {
     let mut s = String::new();
     s.push_str(HEADER);
     s.push_str("pub mod fields { include!(\"fields.rs\"); }\n");
+    s.push_str("pub mod header { include!(\"header.rs\"); }\n");
     s.push_str("pub mod messages { include!(\"messages.rs\"); }\n");
     s.push_str("pub mod groups { include!(\"groups.rs\"); }\n");
     s.push_str("pub mod encoders { include!(\"encoders.rs\"); }\n\n");
@@ -374,6 +417,7 @@ fn emit_mod(messages: &[RMessage], major: &str, minor: &str) -> String {
     s.push_str("pub struct Dict;\n\n");
     s.push_str("impl nexus_fix_codec::FixDictionary for Dict {\n");
     s.push_str("    type MsgType = MsgType;\n");
+    s.push_str("    type Header<'buf> = header::HeaderDecoder<'buf>;\n");
     let _ = writeln!(
         s,
         "    const BEGIN_STRING: &'static [u8] = {};",
@@ -394,12 +438,7 @@ fn emit_mod(messages: &[RMessage], major: &str, minor: &str) -> String {
             admin_variants.join(" | ")
         );
     }
-    s.push_str("    }\n}\n\n");
-
-    // Header re-export
-    s.push_str("pub mod header {\n");
-    s.push_str("    pub type HeaderDecoder<'buf> = nexus_fix_codec::HeaderDecoder<'buf>;\n");
-    s.push_str("}\n");
+    s.push_str("    }\n}\n");
     s
 }
 

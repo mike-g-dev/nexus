@@ -109,6 +109,9 @@ pub struct MessageDef {
 pub struct Dictionary {
     pub major: String,
     pub minor: String,
+    pub header: Vec<Member>,
+    #[allow(dead_code)]
+    pub trailer: Vec<Member>,
     pub fields: Vec<FieldDef>,
     pub components: Vec<(String, Vec<Member>)>,
     pub messages: Vec<MessageDef>,

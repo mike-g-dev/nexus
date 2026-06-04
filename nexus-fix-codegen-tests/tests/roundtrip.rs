@@ -615,8 +615,8 @@ fn beta_dict_trait() {
 fn header_decode_and_msg_type_conversion() {
     use nexus_fix_codec::FixDictionary;
     let msg = b"8=FIX.4.4\x0135=0\x0134=1\x0149=S\x0156=T\x01112=HB\x01";
-    let h = nexus_fix_codec::HeaderDecoder::decode(msg);
-    let mt = venue_alpha::MsgType::from_bytes(h.msg_type().unwrap().as_bytes()).unwrap();
+    let h = venue_alpha::header::HeaderDecoder::decode(msg);
+    let mt = h.msg_type().unwrap();
     assert_eq!(mt, venue_alpha::MsgType::Heartbeat);
     assert!(venue_alpha::Dict::is_admin(mt));
     assert_eq!(h.msg_seq_num().unwrap().get(), 1);

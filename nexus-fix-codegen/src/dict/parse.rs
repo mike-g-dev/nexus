@@ -49,6 +49,8 @@ pub fn parse(xml: &str) -> Result<Dictionary, ParseError> {
 
     let mut major = String::new();
     let mut minor = String::new();
+    let mut header = Vec::new();
+    let mut trailer = Vec::new();
     let mut fields = Vec::new();
     let mut components = Vec::new();
     let mut messages = Vec::new();
@@ -65,7 +67,8 @@ pub fn parse(xml: &str) -> Result<Dictionary, ParseError> {
                 b"fields" => fields = read_fields(&mut reader)?,
                 b"components" => components = read_components(&mut reader)?,
                 b"messages" => messages = read_messages(&mut reader)?,
-                b"header" | b"trailer" => skip_to_end(&mut reader, e.name().as_ref())?,
+                b"header" => header = read_members(&mut reader, b"header")?,
+                b"trailer" => trailer = read_members(&mut reader, b"trailer")?,
                 _ => {}
             },
             Event::Eof => break,
@@ -79,6 +82,8 @@ pub fn parse(xml: &str) -> Result<Dictionary, ParseError> {
     Ok(Dictionary {
         major,
         minor,
+        header,
+        trailer,
         fields,
         components,
         messages,

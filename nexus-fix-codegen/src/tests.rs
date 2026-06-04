@@ -61,9 +61,33 @@ fn emits_msgtype_dispatch_and_begin_string() {
     assert!(m.contains("b\"D\" => Some(Self::NewOrderSingle)"));
     assert!(m.contains("pub struct Dict;"));
     assert!(m.contains("impl nexus_fix_codec::FixDictionary for Dict"));
+    assert!(m.contains("type Header<'buf> = header::HeaderDecoder<'buf>;"));
     assert!(m.contains("fn is_admin(msg_type: MsgType) -> bool"));
     assert!(m.contains("MsgType::Heartbeat"));
-    assert!(m.contains("pub type HeaderDecoder<'buf> = nexus_fix_codec::HeaderDecoder<'buf>;",));
+    assert!(m.contains("pub mod header { include!(\"header.rs\"); }"));
+}
+
+#[test]
+fn emits_generated_header_decoder() {
+    let d = dict::parse(SAMPLE).unwrap();
+    let files = emit::generate(&d).unwrap();
+    let h = file(&files, "header.rs");
+    assert!(h.contains("pub struct HeaderDecoder<'buf>"));
+    assert!(h.contains("pub fn decode(buf: &'buf [u8]) -> Self"));
+    assert!(h.contains("pub fn msg_type(&self) -> Option<super::MsgType>"));
+    assert!(h.contains("impl<'buf> nexus_fix_codec::FixHeader<'buf> for HeaderDecoder<'buf>"));
+    assert!(h.contains("fn raw_msg_type(&self)"));
+    assert!(h.contains("fn msg_seq_num(&self)"));
+    assert!(h.contains("fn sender_comp_id(&self)"));
+    // Dict-specific header field
+    assert!(h.contains("sender_sub_id"));
+}
+
+#[test]
+fn parses_header_and_trailer() {
+    let d = dict::parse(SAMPLE).unwrap();
+    assert!(!d.header.is_empty());
+    assert!(!d.trailer.is_empty());
 }
 
 #[test]
