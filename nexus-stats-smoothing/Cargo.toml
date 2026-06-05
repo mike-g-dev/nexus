@@ -16,7 +16,7 @@ std = ["nexus-stats-core/std", "alloc"]
 alloc = ["nexus-stats-core/alloc"]
 
 [dependencies]
-nexus-stats-core = { version = "3.0.0", path = "../nexus-stats-core", default-features = false }
+nexus-stats-core = { version = "3.0.1", path = "../nexus-stats-core", default-features = false }
 
 [lints]
 workspace = true

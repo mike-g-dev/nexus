@@ -25,7 +25,7 @@ full = ["smoothing", "detection", "regression", "control"]
 all-features = true
 
 [dependencies]
-nexus-stats-core = { version = "3.0.0", path = "../nexus-stats-core", default-features = false }
+nexus-stats-core = { version = "3.0.1", path = "../nexus-stats-core", default-features = false }
 nexus-stats-smoothing = { version = "2.0.0", path = "../nexus-stats-smoothing", default-features = false, optional = true }
 nexus-stats-detection = { version = "2.0.0", path = "../nexus-stats-detection", default-features = false, optional = true }
 nexus-stats-regression = { version = "2.0.0", path = "../nexus-stats-regression", default-features = false, optional = true }
