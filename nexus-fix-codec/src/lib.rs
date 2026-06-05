@@ -3,7 +3,8 @@
 //! Provides the core building blocks for FIX message handling:
 //! - SOH and `=` delimiter scanning (SWAR + SSE2 + AVX2 + AVX-512)
 //! - [`DelimiterScanner`] iterator with SIMD mask caching
-//! - [`FieldReader`] with fused PSADBW checksum accumulation
+//! - [`FieldReader`], a pure SOH-delimited field scanner; the FIX checksum is a
+//!   separate single-pass verification, so trusted feeds can skip it
 //! - [`FieldWriter`] for writing `tag=value` fields into a buffer
 //! - [`FieldSpan`] / [`GroupSpan`] for zero-copy field access
 //! - [`validate_checksum`] for FIX checksum verification

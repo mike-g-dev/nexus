@@ -148,6 +148,41 @@ impl<'a> FieldReader<'a> {
             value: FieldSpan::new(value_start as u32, value_len as u32),
         })
     }
+
+    /// Read the next field **only if** its tag satisfies `pred` — a forward-only
+    /// boundary peek.
+    ///
+    /// The tag sits at the cursor (right after the previous SOH), so it is read
+    /// locally — no scan to *this* field's terminating SOH. If `pred(tag)` is
+    /// false the reader is left **completely untouched** (no scan, no advance),
+    /// so the next consumer reads the same field. This is how the header→body
+    /// and group boundaries hand off with no over-read, stash, or re-scan: the
+    /// boundary field's SOH is scanned exactly once, by whoever keeps it.
+    #[inline]
+    pub fn next_field_if(&mut self, pred: impl Fn(u32) -> bool) -> Option<RawField> {
+        let field_start = self.field_start;
+        // Peek the tag locally (digits before `=`); does not touch the SOH scan.
+        let (tag, tag_len) = parse_tag(self.buf.get(field_start..)?);
+        if tag_len == 0 || !pred(tag) {
+            return None;
+        }
+        // Kept: commit — now scan to the SOH, validate, and advance.
+        let soh_pos = self.next_soh()?;
+        self.field_start = soh_pos + 1;
+
+        let field_bytes = self.buf.get(field_start..soh_pos)?;
+        if tag_len >= field_bytes.len() || field_bytes[tag_len] != b'=' {
+            return None;
+        }
+
+        let value_start = field_start + tag_len + 1;
+        let value_len = soh_pos - value_start;
+
+        Some(RawField {
+            tag,
+            value: FieldSpan::new(value_start as u32, value_len as u32),
+        })
+    }
 }
 
 impl Iterator for FieldReader<'_> {
@@ -424,6 +459,27 @@ mod tests {
         assert_eq!(field.tag, 35);
         assert_eq!(field.value.slice(msg), b"D");
         assert!(parser.next_field().is_none());
+    }
+
+    #[test]
+    fn next_field_if_peeks_without_consuming() {
+        // The header→body / group boundary primitive: consume while `pred` holds,
+        // then stop *without* touching the first field that fails it.
+        let msg = b"8=FIX.4.4\x0135=D\x0111=ORD\x0155=BTC\x01";
+        let mut r = FieldReader::new(msg, 0);
+        let hdr = |t: u32| matches!(t, 8 | 35);
+
+        assert_eq!(r.next_field_if(hdr).unwrap().tag, 8);
+        assert_eq!(r.next_field_if(hdr).unwrap().tag, 35);
+        // Tag 11 fails the predicate → None, and the reader is left untouched.
+        assert!(r.next_field_if(hdr).is_none());
+        assert!(r.next_field_if(hdr).is_none()); // idempotent: still untouched
+        // The next consumer reads tag 11 normally — no re-scan, no lost field.
+        let f11 = r.next_field().unwrap();
+        assert_eq!(f11.tag, 11);
+        assert_eq!(f11.value.slice(msg), b"ORD");
+        assert_eq!(r.next_field().unwrap().tag, 55);
+        assert!(r.next_field().is_none());
     }
 
     #[test]

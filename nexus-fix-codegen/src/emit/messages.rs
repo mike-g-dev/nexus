@@ -173,17 +173,8 @@ fn emit_wrap(
 }
 
 fn emit_wrap_loop(s: &mut String, arms: &[(String, String)]) {
-    // Drain overflow field from header, then continue the reader
-    s.push_str("        loop {\n");
-    s.push_str("            let f = if let Some(of) = m.header.overflow.take() {\n");
-    s.push_str("                of\n");
-    s.push_str("            } else {\n");
-    s.push_str("                match m.header.reader.next_field() {\n");
-    s.push_str("                    Some(f) => f,\n");
-    s.push_str("                    None => break,\n");
-    s.push_str("                }\n");
-    s.push_str("            };\n");
-
+    // The header stopped at the first body field without consuming it; scan on.
+    s.push_str("        while let Some(f) = m.header.reader.next_field() {\n");
     s.push_str("            match f.tag {\n");
     for (tag, body) in arms {
         let _ = writeln!(s, "                super::fields::TAG_{tag} => {{");
@@ -244,17 +235,12 @@ fn group_body(g: &RGroup) -> String {
         "                m.{} = nexus_fix_codec::GroupSpan::new(m.header.reader.pos() as u32, count.min(u16::MAX as u32) as u16);",
         snake(&g.name)
     );
-    b.push_str("                loop {\n");
-    b.push_str("                    match m.header.reader.next_field() {\n");
+    // Consume group fields; stop *without* consuming the first non-group field
+    // (forward-only peek) so the outer loop reads it with no re-scan.
     let _ = writeln!(
         b,
-        "                        Some(gf) if matches!(gf.tag, {pat}) => {{}}"
+        "                while m.header.reader.next_field_if(|tag| matches!(tag, {pat})).is_some() {{}}"
     );
-    b.push_str("                        other => {\n");
-    b.push_str("                            m.header.overflow = other;\n");
-    b.push_str("                            break;\n");
-    b.push_str("                        }\n");
-    b.push_str("                    }\n                }\n");
     b
 }
 

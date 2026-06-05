@@ -84,7 +84,6 @@ fn build_synth_session_fields(dict_fields: &[RField]) -> Vec<RField> {
 fn emit_struct(s: &mut String, fields: &[&RField]) {
     s.push_str("pub struct HeaderDecoder<'buf> {\n");
     s.push_str("    pub reader: nexus_fix_codec::FieldReader<'buf>,\n");
-    s.push_str("    pub overflow: Option<nexus_fix_codec::reader::RawField>,\n");
     for f in fields {
         let _ = writeln!(s, "    {}: nexus_fix_codec::FieldSpan,", snake(&f.name));
     }
@@ -96,7 +95,6 @@ fn emit_decode(s: &mut String, fields: &[&RField]) {
     s.push_str("    pub fn decode(buf: &'buf [u8]) -> Self {\n");
     s.push_str("        let mut h = Self {\n");
     s.push_str("            reader: nexus_fix_codec::FieldReader::new(buf, 0),\n");
-    s.push_str("            overflow: None,\n");
     for f in fields {
         let _ = writeln!(
             s,
@@ -105,7 +103,18 @@ fn emit_decode(s: &mut String, fields: &[&RField]) {
         );
     }
     s.push_str("        };\n");
-    s.push_str("        while let Some(f) = h.reader.next_field() {\n");
+    // Forward-only boundary peek: consume header tags, and stop *without*
+    // consuming the first non-header tag, so the body decoder reads it with no
+    // re-scan (the tag is read locally; this field's SOH is never scanned here).
+    let pred = fields
+        .iter()
+        .map(|f| f.number.to_string())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let _ = writeln!(
+        s,
+        "        while let Some(f) = h.reader.next_field_if(|tag| matches!(tag, {pred})) {{"
+    );
     s.push_str("            match f.tag {\n");
     for f in fields {
         let _ = writeln!(
@@ -115,10 +124,7 @@ fn emit_decode(s: &mut String, fields: &[&RField]) {
             snake(&f.name)
         );
     }
-    s.push_str("                _ => {\n");
-    s.push_str("                    h.overflow = Some(f);\n");
-    s.push_str("                    break;\n");
-    s.push_str("                }\n");
+    s.push_str("                _ => {}\n");
     s.push_str("            }\n");
     s.push_str("        }\n");
     s.push_str("        h\n");
