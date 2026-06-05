@@ -135,7 +135,7 @@ for deep-dives on each algorithm.
 | `PeakHoldF64` | Peak envelope with hold + decay | 7 |
 | `MaxGaugeF64` | Reset-on-read maximum (Netflix pattern) | 5 |
 | `LivenessF64` | Source alive/dead detection | 6 |
-| `EventRateF64` | Smoothed events per unit time | 6 |
+| `EventRateU64` | Smoothed events per unit time | 6 |
 | `CoDelI64` | Queue backpressure detection (CoDel-inspired) | 7 |
 | `SaturationF64` | Resource utilization threshold (USE method) | 6 |
 | `ErrorRateF64` | Failure rate with weighted severity | 6 |

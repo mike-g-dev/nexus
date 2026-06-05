@@ -92,7 +92,7 @@ All allocation happens here. After this point no hot-path code calls
 use nexus_logbuf::spsc as logbuf_spsc;
 use nexus_queue::spmc;
 use nexus_slot::spsc as slot_spsc;
-use nexus_stats::{monitoring::EventRateF64, statistics::PercentileF64};
+use nexus_stats::{monitoring::EventRateU64, statistics::PercentileF64};
 
 pub struct Gateway {
     // Archival — raw WS frames, off the hot path, for replay/compliance.
@@ -111,7 +111,7 @@ pub struct Gateway {
 
     // Health metrics. Updated by reader task.
     inter_arrival: PercentileF64,
-    msg_rate: EventRateF64,
+    msg_rate: EventRateU64,
 }
 
 impl Gateway {
@@ -133,9 +133,7 @@ impl Gateway {
             trade_fanout,
             trade_rx,
             inter_arrival: PercentileF64::new(0.999).unwrap(),
-            // fixed: EventRateF64 uses a builder and takes an alpha smoothing
-            // factor; it does not accept a Duration.
-            msg_rate: EventRateF64::builder().alpha(0.1).build().unwrap(),
+            msg_rate: EventRateU64::builder().span(15).build().unwrap(),
         }
     }
 }
@@ -224,8 +222,7 @@ async fn reader_task(
         //    p999 of inter-arrival catches stalls before the feed
         //    stops entirely.
         gw.inter_arrival.update((now_ns as f64) / 1e9).ok();
-        // fixed: EventRateF64::update takes an f64 timestamp.
-        gw.msg_rate.update(now_ns as f64 / 1e9).ok();
+        gw.msg_rate.update(now_ns);
 
         // 4. Publish to SPMC. If the queue is full, we drop — a slow
         //    downstream does not block the reader.
@@ -353,7 +350,6 @@ pub struct GatewayHealth {
 impl Gateway {
     pub fn health(&self) -> GatewayHealth {
         GatewayHealth {
-            // fixed: EventRateF64::rate() returns Option<f64>.
             msg_rate_per_sec: self.msg_rate.rate().unwrap_or(0.0),
             // fixed: PercentileF64 query is `.percentile()`, not `.value()`.
             inter_arrival_p999_ms: self

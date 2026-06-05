@@ -14,7 +14,7 @@ use nexus_stats::{
     frequency::TopK,
     learning::{EpsilonGreedyF64, Exp3F64, ThompsonBetaF64, ThompsonGammaF64, Ucb1F64},
     monitoring::{
-        CoDelI64, DrawdownF64, EventRateF64, LivenessF64, PeakHoldF64, RunningMaxF64,
+        CoDelI64, DrawdownF64, EventRateU64, LivenessF64, PeakHoldF64, RunningMaxF64,
         RunningMinF64, WindowedMaxF64, WindowedMinF64,
     },
     signal::{AutocorrelationF64, CrossCorrelationF64, EntropyF64, TransferEntropyF64},
@@ -406,19 +406,19 @@ fn bench_running_max_f64(samples: &mut [u64]) {
     }
 }
 
-fn bench_event_rate_f64(samples: &mut [u64]) {
-    let mut er = EventRateF64::builder().alpha(0.3).build().unwrap();
+fn bench_event_rate_u64(samples: &mut [u64]) {
+    let mut er = EventRateU64::builder().span(15).build().unwrap();
     let mut rng = 12345u64;
-    let mut t = 0.0f64;
+    let mut t = 0u64;
     for _ in 0..WARMUP {
-        t += 10.0 + (next_val(&mut rng) % 5) as f64;
-        let _ = er.update(t);
+        t += 10 + next_val(&mut rng) % 5;
+        er.update(t);
     }
     for s in samples.iter_mut() {
         let start = rdtsc_start();
         for _ in 0..BATCH {
-            t += 10.0 + (next_val(&mut rng) % 5) as f64;
-            let _ = er.update(t);
+            t += 10 + next_val(&mut rng) % 5;
+            er.update(t);
         }
         let end = rdtsc_end();
         black_box(er.rate());
@@ -989,8 +989,8 @@ fn main() {
     print_row("RunningMinF64::update", &mut buf);
     bench_running_max_f64(&mut buf);
     print_row("RunningMaxF64::update", &mut buf);
-    bench_event_rate_f64(&mut buf);
-    print_row("EventRateF64::update", &mut buf);
+    bench_event_rate_u64(&mut buf);
+    print_row("EventRateU64::update", &mut buf);
     bench_codel_i64(&mut buf);
     print_row("CoDelI64::update", &mut buf);
 

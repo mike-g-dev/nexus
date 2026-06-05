@@ -38,7 +38,7 @@ pinned to a single core.
 | PeakHoldF64 | 7 | 9 | compare + decay |
 | MaxGaugeF64 | ~5 | ~5 | compare-and-swap |
 | LivenessF64 | 6 | 20 | EMA + deadline |
-| EventRateF64 | 6 | 9 | EMA + inversion |
+| EventRateU64 | 6 | 9 | bit-shift EMA + inversion |
 | CoDelI64 | 7 | 10 | WindowedMin + threshold |
 | SaturationF64 | ~6 | ~8 | EMA + threshold |
 | ErrorRateF64 | ~6 | ~8 | EMA of outcomes |

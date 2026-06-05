@@ -1,95 +1,94 @@
-use crate::math::MulAdd;
-
-/// Smoothed event rate tracker.
+/// Smoothed event rate tracker (unsigned integer timestamps).
 ///
-/// Uses an EMA of inter-arrival times, inverted on query to produce
-/// a rate (events per unit time). The rate adapts smoothly to changes
-/// in event frequency.
+/// Uses a fixed-point bit-shift EMA of inter-arrival times, inverted
+/// on query to produce a rate (events per unit time). Timestamps are
+/// unsigned ticks (e.g. nanoseconds from `Instant`).
 ///
 /// # Use Cases
 /// - Message throughput monitoring
 /// - Order rate tracking
 /// - Adaptive rate limiting input
 #[derive(Debug, Clone)]
-pub struct EventRateF64 {
-    alpha: f64,
-    one_minus_alpha: f64,
-    interval: f64,
-    last_timestamp: f64,
+pub struct EventRateU64 {
+    acc: i128,
+    shift: u32,
+    span: u64,
+    last_timestamp: u64,
     count: u64,
     min_samples: u64,
+    initialized: bool,
 }
 
-/// Builder for [`EventRateF64`].
+/// Builder for [`EventRateU64`].
 #[derive(Debug, Clone)]
-pub struct EventRateF64Builder {
-    alpha: Option<f64>,
+pub struct EventRateU64Builder {
+    span: Option<u64>,
     min_samples: u64,
 }
 
-impl EventRateF64 {
+impl EventRateU64 {
     /// Creates a builder.
     #[inline]
     #[must_use]
-    pub fn builder() -> EventRateF64Builder {
-        EventRateF64Builder {
-            alpha: None,
+    pub fn builder() -> EventRateU64Builder {
+        EventRateU64Builder {
+            span: None,
             min_samples: 2,
         }
     }
 
-    /// Updates with an event at the given timestamp.
-    ///
-    /// If two events share a timestamp, the interval is zero and
-    /// `rate()` returns `None` until a non-zero interval is observed.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DataError::NotANumber` if the timestamp is NaN, or
-    /// `DataError::Infinite` if the timestamp is infinite.
+    /// Updates with an event at the given tick.
     #[inline]
-    pub fn update(&mut self, timestamp: f64) -> Result<(), crate::DataError> {
-        check_finite!(timestamp);
+    pub fn update(&mut self, timestamp: u64) {
         self.count += 1;
 
         if self.count == 1 {
             self.last_timestamp = timestamp;
-            return Ok(());
+            return;
         }
 
-        let dt = timestamp - self.last_timestamp;
+        let dt = timestamp.wrapping_sub(self.last_timestamp) as i64;
         self.last_timestamp = timestamp;
 
-        if self.count == 2 {
-            self.interval = dt;
+        if self.initialized {
+            let dt_shifted = (dt as i128) << self.shift;
+            self.acc += (dt_shifted - self.acc) >> self.shift;
         } else {
-            self.interval = self.alpha.fma(dt, self.one_minus_alpha * self.interval);
+            self.acc = (dt as i128) << self.shift;
+            self.initialized = true;
         }
-        Ok(())
     }
 
     /// Current smoothed event rate (events per unit time).
     ///
-    /// Returns `None` if not primed or if interval is zero.
+    /// Returns `None` if not primed or if the smoothed interval is zero.
     #[inline]
     #[must_use]
     pub fn rate(&self) -> Option<f64> {
-        if self.count < self.min_samples || self.interval <= 0.0 {
+        let interval = self.interval()?;
+        if interval == 0 {
             None
         } else {
-            Some(1.0 / self.interval)
+            Some(1.0 / interval as f64)
         }
     }
 
-    /// Current smoothed inter-event interval, or `None` if < 2 events.
+    /// Current smoothed inter-event interval in ticks, or `None` if < 2 events.
     #[inline]
     #[must_use]
-    pub fn interval(&self) -> Option<f64> {
-        if self.count >= 2 {
-            Some(self.interval)
+    pub fn interval(&self) -> Option<u64> {
+        if self.count >= self.min_samples && self.initialized {
+            Some((self.acc >> self.shift) as u64)
         } else {
             None
         }
+    }
+
+    /// Effective span after rounding to `2^k - 1`.
+    #[inline]
+    #[must_use]
+    pub fn effective_span(&self) -> u64 {
+        self.span
     }
 
     /// Number of events recorded.
@@ -109,38 +108,19 @@ impl EventRateF64 {
     /// Resets to uninitialized state.
     #[inline]
     pub fn reset(&mut self) {
-        self.interval = 0.0;
-        self.last_timestamp = 0.0;
+        self.acc = 0;
+        self.last_timestamp = 0;
         self.count = 0;
+        self.initialized = false;
     }
 }
 
-impl EventRateF64Builder {
-    /// Direct smoothing factor for interval EMA.
-    #[inline]
-    #[must_use]
-    pub fn alpha(mut self, alpha: f64) -> Self {
-        self.alpha = Some(alpha);
-        self
-    }
-
-    /// Halflife for interval smoothing.
-    #[inline]
-    #[must_use]
-    #[cfg(any(feature = "std", feature = "libm"))]
-    pub fn halflife(mut self, halflife: f64) -> Self {
-        let ln2 = core::f64::consts::LN_2;
-        let alpha = 1.0 - crate::math::exp(-ln2 / halflife);
-        self.alpha = Some(alpha);
-        self
-    }
-
-    /// Span for interval smoothing.
+impl EventRateU64Builder {
+    /// Smoothing span. Rounded up to next `2^k - 1`.
     #[inline]
     #[must_use]
     pub fn span(mut self, n: u64) -> Self {
-        let alpha = 2.0 / (n as f64 + 1.0);
-        self.alpha = Some(alpha);
+        self.span = Some(n);
         self
     }
 
@@ -156,24 +136,181 @@ impl EventRateF64Builder {
     ///
     /// # Errors
     ///
-    /// - Alpha must have been set.
-    /// - Alpha must be in (0, 1) exclusive.
+    /// - Span must have been set and >= 1.
     #[inline]
-    pub fn build(self) -> Result<EventRateF64, crate::ConfigError> {
-        let alpha = self.alpha.ok_or(crate::ConfigError::Missing("alpha"))?;
-        if !(alpha > 0.0 && alpha < 1.0) {
-            return Err(crate::ConfigError::Invalid(
-                "EventRate alpha must be in (0, 1)",
-            ));
+    pub fn build(self) -> Result<EventRateU64, crate::ConfigError> {
+        let requested = self.span.ok_or(crate::ConfigError::Missing("span"))?;
+        if requested < 1 {
+            return Err(crate::ConfigError::Invalid("EventRate span must be >= 1"));
         }
 
-        Ok(EventRateF64 {
-            alpha,
-            one_minus_alpha: 1.0 - alpha,
-            interval: 0.0,
-            last_timestamp: 0.0,
+        let effective = crate::smoothing::ema::next_power_of_two_minus_one(requested);
+        let shift = crate::smoothing::ema::log2_of_span_plus_one(effective);
+
+        Ok(EventRateU64 {
+            acc: 0,
+            shift,
+            span: effective,
+            last_timestamp: 0,
             count: 0,
             min_samples: self.min_samples,
+            initialized: false,
+        })
+    }
+}
+
+/// Smoothed event rate tracker (signed integer timestamps).
+///
+/// Identical to [`EventRateU64`] but accepts `i64` timestamps for
+/// compatibility with signed time representations (e.g. offsets,
+/// relative ticks).
+#[derive(Debug, Clone)]
+pub struct EventRateI64 {
+    acc: i128,
+    shift: u32,
+    span: u64,
+    last_timestamp: i64,
+    count: u64,
+    min_samples: u64,
+    initialized: bool,
+}
+
+/// Builder for [`EventRateI64`].
+#[derive(Debug, Clone)]
+pub struct EventRateI64Builder {
+    span: Option<u64>,
+    min_samples: u64,
+}
+
+impl EventRateI64 {
+    /// Creates a builder.
+    #[inline]
+    #[must_use]
+    pub fn builder() -> EventRateI64Builder {
+        EventRateI64Builder {
+            span: None,
+            min_samples: 2,
+        }
+    }
+
+    /// Updates with an event at the given tick.
+    #[inline]
+    pub fn update(&mut self, timestamp: i64) {
+        self.count += 1;
+
+        if self.count == 1 {
+            self.last_timestamp = timestamp;
+            return;
+        }
+
+        let dt = timestamp - self.last_timestamp;
+        self.last_timestamp = timestamp;
+
+        if self.initialized {
+            let dt_shifted = (dt as i128) << self.shift;
+            self.acc += (dt_shifted - self.acc) >> self.shift;
+        } else {
+            self.acc = (dt as i128) << self.shift;
+            self.initialized = true;
+        }
+    }
+
+    /// Current smoothed event rate (events per unit time).
+    ///
+    /// Returns `None` if not primed or if the smoothed interval is zero.
+    #[inline]
+    #[must_use]
+    pub fn rate(&self) -> Option<f64> {
+        let interval = self.interval()?;
+        if interval == 0 {
+            None
+        } else {
+            Some(1.0 / interval as f64)
+        }
+    }
+
+    /// Current smoothed inter-event interval in ticks, or `None` if < 2 events.
+    #[inline]
+    #[must_use]
+    pub fn interval(&self) -> Option<i64> {
+        if self.count >= self.min_samples && self.initialized {
+            Some((self.acc >> self.shift) as i64)
+        } else {
+            None
+        }
+    }
+
+    /// Effective span after rounding to `2^k - 1`.
+    #[inline]
+    #[must_use]
+    pub fn effective_span(&self) -> u64 {
+        self.span
+    }
+
+    /// Number of events recorded.
+    #[inline]
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Whether the tracker has reached `min_samples`.
+    #[inline]
+    #[must_use]
+    pub fn is_primed(&self) -> bool {
+        self.count >= self.min_samples
+    }
+
+    /// Resets to uninitialized state.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.acc = 0;
+        self.last_timestamp = 0;
+        self.count = 0;
+        self.initialized = false;
+    }
+}
+
+impl EventRateI64Builder {
+    /// Smoothing span. Rounded up to next `2^k - 1`.
+    #[inline]
+    #[must_use]
+    pub fn span(mut self, n: u64) -> Self {
+        self.span = Some(n);
+        self
+    }
+
+    /// Minimum events before rate is valid. Default: 2.
+    #[inline]
+    #[must_use]
+    pub fn min_samples(mut self, min: u64) -> Self {
+        self.min_samples = min;
+        self
+    }
+
+    /// Builds the event rate tracker.
+    ///
+    /// # Errors
+    ///
+    /// - Span must have been set and >= 1.
+    #[inline]
+    pub fn build(self) -> Result<EventRateI64, crate::ConfigError> {
+        let requested = self.span.ok_or(crate::ConfigError::Missing("span"))?;
+        if requested < 1 {
+            return Err(crate::ConfigError::Invalid("EventRate span must be >= 1"));
+        }
+
+        let effective = crate::smoothing::ema::next_power_of_two_minus_one(requested);
+        let shift = crate::smoothing::ema::log2_of_span_plus_one(effective);
+
+        Ok(EventRateI64 {
+            acc: 0,
+            shift,
+            span: effective,
+            last_timestamp: 0,
+            count: 0,
+            min_samples: self.min_samples,
+            initialized: false,
         })
     }
 }
@@ -183,31 +320,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn constant_rate() {
-        let mut er = EventRateF64::builder().alpha(0.3).build().unwrap();
+    fn constant_rate_u64() {
+        let mut er = EventRateU64::builder().span(15).build().unwrap();
 
-        // Events every 10 units -> rate should converge to 0.1
-        for i in 0..100 {
-            er.update(i as f64 * 10.0).unwrap();
+        for i in 0..100u64 {
+            er.update(i * 10);
         }
 
+        let interval = er.interval().unwrap();
+        assert_eq!(interval, 10, "interval should converge to 10");
         let rate = er.rate().unwrap();
-        assert!((rate - 0.1).abs() < 0.01, "rate should be ~0.1, got {rate}");
+        assert!(
+            (rate - 0.1).abs() < 0.001,
+            "rate should be ~0.1, got {rate}"
+        );
+    }
+
+    #[test]
+    fn constant_rate_i64() {
+        let mut er = EventRateI64::builder().span(15).build().unwrap();
+
+        for i in 0..100i64 {
+            er.update(i * 10);
+        }
+
+        let interval = er.interval().unwrap();
+        assert_eq!(interval, 10, "interval should converge to 10");
+        let rate = er.rate().unwrap();
+        assert!(
+            (rate - 0.1).abs() < 0.001,
+            "rate should be ~0.1, got {rate}"
+        );
     }
 
     #[test]
     fn burst_increases_rate() {
-        let mut er = EventRateF64::builder().alpha(0.5).build().unwrap();
+        let mut er = EventRateU64::builder().span(7).build().unwrap();
 
-        // Normal rate: every 10 units
-        for i in 0..20 {
-            er.update(i as f64 * 10.0).unwrap();
+        for i in 0..20u64 {
+            er.update(i * 1000);
         }
         let normal_rate = er.rate().unwrap();
 
-        // Burst: events every 1 unit
-        for i in 0..20 {
-            er.update(200.0 + i as f64).unwrap();
+        for i in 0..20u64 {
+            er.update(20_000 + i * 100);
         }
         let burst_rate = er.rate().unwrap();
 
@@ -219,25 +375,38 @@ mod tests {
 
     #[test]
     fn priming() {
-        let mut er = EventRateF64::builder()
-            .alpha(0.3)
+        let mut er = EventRateU64::builder()
+            .span(7)
             .min_samples(5)
             .build()
             .unwrap();
 
-        for i in 0..4 {
-            er.update(i as f64 * 10.0).unwrap();
+        for i in 0..4u64 {
+            er.update(i * 10);
+            assert!(!er.is_primed());
             assert!(er.rate().is_none());
         }
-        er.update(40.0).unwrap();
+        er.update(40);
+        assert!(er.is_primed());
         assert!(er.rate().is_some());
     }
 
     #[test]
-    fn reset() {
-        let mut er = EventRateF64::builder().alpha(0.3).build().unwrap();
-        for i in 0..10 {
-            er.update(i as f64 * 10.0).unwrap();
+    fn reset_u64() {
+        let mut er = EventRateU64::builder().span(7).build().unwrap();
+        for i in 0..10u64 {
+            er.update(i * 10);
+        }
+        er.reset();
+        assert_eq!(er.count(), 0);
+        assert!(er.rate().is_none());
+    }
+
+    #[test]
+    fn reset_i64() {
+        let mut er = EventRateI64::builder().span(7).build().unwrap();
+        for i in 0..10i64 {
+            er.update(i * 10);
         }
         er.reset();
         assert_eq!(er.count(), 0);
@@ -246,32 +415,21 @@ mod tests {
 
     #[test]
     fn zero_interval_returns_none() {
-        let mut er = EventRateF64::builder().alpha(0.3).build().unwrap();
-        er.update(100.0).unwrap();
-        er.update(100.0).unwrap(); // same timestamp -> interval = 0
-        // rate() should return None (division by zero guard)
-        assert!(
-            er.rate().is_none(),
-            "rate should be None with zero interval"
-        );
+        let mut er = EventRateU64::builder().span(7).build().unwrap();
+        er.update(100);
+        er.update(100);
+        assert!(er.rate().is_none());
     }
 
     #[test]
-    fn errors_without_alpha() {
-        let result = EventRateF64::builder().build();
-        assert!(matches!(result, Err(crate::ConfigError::Missing("alpha"))));
+    fn errors_without_span() {
+        let result = EventRateU64::builder().build();
+        assert!(matches!(result, Err(crate::ConfigError::Missing("span"))));
     }
 
     #[test]
-    fn rejects_nan_and_inf() {
-        let mut er = EventRateF64::builder().alpha(0.3).build().unwrap();
-        assert!(matches!(
-            er.update(f64::NAN),
-            Err(crate::DataError::NotANumber)
-        ));
-        assert!(matches!(
-            er.update(f64::INFINITY),
-            Err(crate::DataError::Infinite)
-        ));
+    fn effective_span_rounds_up() {
+        let er = EventRateU64::builder().span(10).build().unwrap();
+        assert_eq!(er.effective_span(), 15);
     }
 }

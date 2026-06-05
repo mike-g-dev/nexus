@@ -8,6 +8,12 @@ with the project-specific allowance that a minor bump may carry small,
 narrowly-scoped breaking changes when external blast radius is
 contained.
 
+## [3.0.1] — 2026-06-04
+
+### Changed
+
+- **Breaking:** Replaced `EventRateF64` / `EventRateI64` with `EventRateU64` / `EventRateI64` using integer timestamps and bit-shift EMA (same pattern as `LivenessI64`). The old `EventRateF64` incorrectly used `f64` timestamps; the new types use `u64` / `i64` timestamps with fixed-point `i128` accumulator and `span()` builder instead of `alpha()`.
+
 ## [3.0.0] — 2026-05-28
 
 ### Removed

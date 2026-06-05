@@ -9,10 +9,10 @@ lives in the `nexus-rate` crate. This covers the *measurement* side.
 
 ```rust
 use nexus_stats::Condition;
-use nexus_stats::monitoring::{EventRateF64, SaturationF64};
+use nexus_stats::monitoring::{EventRateU64, SaturationF64};
 
 // Track our own order rate
-let mut order_rate = EventRateF64::builder().span(20).build().unwrap();
+let mut order_rate = EventRateU64::builder().span(15).build().unwrap();
 
 // Detect if we're approaching the limit
 let mut limit_sat = SaturationF64::builder()
@@ -21,7 +21,7 @@ let mut limit_sat = SaturationF64::builder()
     .build().unwrap();
 
 // On each order sent:
-order_rate.tick(now);
+order_rate.update(now_ns);
 
 if let Some(rate) = order_rate.rate() {
     let utilization = rate / exchange_rate_limit;
@@ -35,16 +35,16 @@ if let Some(rate) = order_rate.rate() {
 
 ```rust
 use nexus_stats::Direction;
-use nexus_stats::monitoring::EventRateF64;
+use nexus_stats::monitoring::EventRateU64;
 use nexus_stats::detection::CusumF64;
 
-let mut rate = EventRateF64::builder().span(30).build().unwrap();
+let mut rate = EventRateU64::builder().span(31).build().unwrap();
 let mut cusum = CusumF64::builder(expected_rate)
     .slack(expected_rate * 0.1)
     .threshold(expected_rate * 2.0)
     .build().unwrap();
 
-rate.tick(now);
+rate.update(now_ns);
 if let Some(r) = rate.rate() {
     if let Some(shift) = cusum.update(r) {
         match shift {

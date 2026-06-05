@@ -1,6 +1,6 @@
 [package]
 name = "nexus-stats-core"
-version = "3.0.0"
+version = "3.0.1"
 description = "Core types and utilities shared across nexus-stats subcrates"
 readme = "README.md"
 edition.workspace = true
