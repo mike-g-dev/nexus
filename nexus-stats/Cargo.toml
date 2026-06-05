@@ -1,6 +1,6 @@
 [package]
 name = "nexus-stats"
-version = "6.0.0"
+version = "6.0.1"
 description = "Fixed-memory, zero-allocation streaming statistics for real-time systems"
 readme = "README.md"
 edition.workspace = true

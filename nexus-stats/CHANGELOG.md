@@ -10,6 +10,8 @@ contained.
 
 ## [Unreleased]
 
+## [6.0.1] — 2026-06-05
+
 ### Changed
 
 - **nexus-stats-core** — Replaced `EventRateF64` with `EventRateU64` / `EventRateI64` using integer timestamps and bit-shift EMA. See core CHANGELOG for details.
